@@ -19,11 +19,6 @@ from pathlib import Path
 from fastapi.responses import FileResponse
 
 from main import app  # 复用现有后端应用
-from pathlib import Path
-
-from fastapi.responses import FileResponse
-
-from main import app  # 复用现有后端应用
 
 # 前端打包产物目录：backend 的上级目录下的 dist/
 DIST = (Path(__file__).resolve().parent.parent / "dist").resolve()

@@ -1,0 +1,53 @@
+# ==============================================================================
+#  MindScope · Git 属性
+#
+#  目的：让仓库在 Windows / Linux 之间克隆时行为一致，避免换行符把启动脚本弄坏。
+# ==============================================================================
+
+# 默认：由 Git 按文件类型自动决定换行符
+* text=auto
+
+# ------------------------------------------------------------------ Shell 脚本
+# ★ 必须强制 LF：Windows 上克隆后再推送到 Linux 服务器时，
+#   若被转成 CRLF，Linux 会报
+#     bash: ./启动-局域网共享.sh: /usr/bin/env: bad interpreter: No such file or directory
+*.sh text eol=lf
+
+# ------------------------------------------------------------------ Windows 脚本
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# ------------------------------------------------------------------ 文本文件
+*.py   text diff=python
+*.md   text
+*.txt  text
+*.json text
+*.json5 text
+*.ts   text
+*.ets  text
+*.vue  text
+*.html text
+*.css  text
+*.yml  text
+*.yaml text
+
+# ------------------------------------------------------------------ 二进制文件
+# 明确标记为二进制，避免 Git 尝试做文本 diff / 换行符转换
+*.pt    binary
+*.pth   binary
+*.db    binary
+*.sqlite binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.webp  binary
+*.ico   binary
+*.svg   text
+*.mp4   binary
+*.webm  binary
+*.avi   binary
+*.mov   binary
+*.zip   binary
+*.whl   binary
+*.hap   binary

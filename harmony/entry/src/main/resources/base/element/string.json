@@ -2,15 +2,23 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "module description"
+      "value": "MindScope 抑郁倾向智能评估"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "description"
+      "value": "MindScope 主入口"
     },
     {
       "name": "EntryAbility_label",
-      "value": "label"
+      "value": "MindScope"
+    },
+    {
+      "name": "reason_internet",
+      "value": "用于从服务端获取媒体素材与分析报告数据"
+    },
+    {
+      "name": "reason_network_info",
+      "value": "用于判断当前网络是否可用，以便在离线时使用本地缓存"
     }
   ]
 }

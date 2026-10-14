@@ -89,9 +89,12 @@ MindScope/
 │   ├── package.json  vite.config.ts  tsconfig*.json
 │   ├── 启动-仅本机.bat            一键启动（仅 127.0.0.1 可访问，安全默认）
 │   ├── 启动-局域网共享.bat        一键启动并开放局域网（演示用）
+│   ├── 启动-仅本机.sh             ↑ Linux / macOS 等价脚本
+│   ├── 启动-局域网共享.sh         ↑ Linux / macOS 等价脚本
 │   └── backend/                   FastAPI 推理服务
 │       ├── main.py                ASGI 入口：注册路由 + 挂载 /media 静态目录
 │       ├── config.py              配置（密钥从 .env / 环境变量读取）
+│       ├── .env.example           环境变量模板（复制为 .env 后填写）
 │       ├── serve_all.py           一体化启动：SPA + API + WS 同端口，规避跨域
 │       ├── routers/               auth / media / report / upload / ws
 │       ├── services/              face_alignment / frame_processor / inference / vlm / llm
@@ -102,13 +105,17 @@ MindScope/
 │       └── requirements.txt
 ├── harmony/                       鸿蒙端 DevEco Studio 工程（ArkTS）
 │   ├── AppScope/  entry/src/
+│   │   └── main/ets/              数据层：types/ common/ network/ persistence/ store/
 │   └── build-profile.json5  oh-package.json5  hvigorfile.ts
 ├── docs/                          设计文档与部署指南
 │   ├── 项目分析报告与HarmonyOS端构建方案.md
 │   ├── 鸿蒙端接口清单与登录注册实现.md
 │   ├── 鸿蒙端网络层与类型共享方案.md
+│   ├── 鸿蒙端数据获取使用指南.md   ★ 鸿蒙端取数接口与调用示例
+│   ├── Linux服务端部署指南.md      ★ 服务器（Linux）部署与验收
 │   ├── Windows复现部署指南.md
 │   └── images/                    系统界面截图
+├── .gitattributes                 换行符与二进制文件属性
 ├── .gitignore
 └── README.md
 ```
@@ -150,26 +157,53 @@ npm run build      # 产物输出到 dashboard/dist/
 
 ### 5.3 一键启动（推荐）
 
-| 脚本 | 用途 | 访问地址 |
-|---|---|---|
-| `dashboard/启动-仅本机.bat` | 本机演示，仅 `127.0.0.1` 可访问（安全默认） | http://127.0.0.1:8000 |
-| `dashboard/启动-局域网共享.bat` | 局域网演示，同网段设备均可访问 | http://<本机IP>:8000 |
+| 脚本 | 平台 | 用途 | 访问地址 |
+|---|---|---|---|
+| `dashboard/启动-仅本机.bat` / `.sh` | Windows / Linux | 本机演示，仅 `127.0.0.1` 可访问（安全默认） | http://127.0.0.1:8000 |
+| `dashboard/启动-局域网共享.bat` / `.sh` | Windows / Linux | 局域网演示，同网段设备 / 手机均可访问 | http://<本机IP>:8000 |
 
-> 两个脚本都会把工作目录切到 `backend/`，并用自带的 `venv` 启动 `serve_all.py`。
+```bash
+# Linux / macOS（首次需赋可执行权限）
+cd dashboard
+chmod +x 启动-局域网共享.sh 启动-仅本机.sh
+./启动-局域网共享.sh
+```
+
+> Windows 脚本会切到 `backend/` 并用自带的 `venv` 启动 `serve_all.py`。
 > 若你的 Python 不在 `D:\python\`，请按脚本内 `[ERROR]` 提示改 venv 重建路径。
+> Linux 脚本会自动探测 `venv/bin/python`，找不到时回退系统 `python3` 并给出提示。
 
 ### 5.4 手工启动（等价于上面的一键启动）
 
 ```bash
+# Windows
 cd dashboard/backend
 set KMP_DUPLICATE_LIB_OK=TRUE
 set HOST=0.0.0.0            # 仅本机演示时改为 127.0.0.1
 venv\Scripts\python.exe serve_all.py
+
+# Linux / macOS
+cd dashboard/backend
+export KMP_DUPLICATE_LIB_OK=TRUE
+export HOST=0.0.0.0
+venv/bin/python serve_all.py
 ```
 
 `serve_all.py` 会把 `dashboard/dist/` 的前端页面、`/api` 接口、`/ws` 信道与 `/media` 静态文件全部挂在**同一个端口**上，前端用相对路径访问，从根上避免 CORS / 跨域问题。
 
-### 5.5 纯前后端分离调试（可选）
+### 5.5 部署到 Linux 服务器
+
+完整步骤（依赖安装、CPU 版 torch 省流量、防火墙、systemd 常驻、部署验收命令）见
+**[docs/Linux服务端部署指南.md](docs/Linux服务端部署指南.md)**。
+
+要点速览：
+
+- 代码**无需为 Linux 改动**（无 Windows 专属 API、无硬编码路径）。
+- 手机要访问**必须** `HOST=0.0.0.0`，并在防火墙 / 云安全组放行 8000 端口。
+- `pip install torch` 在 Linux 上会拉带 CUDA 的版本（约 800 MB–2.5 GB）；本服务是 CPU 推理，
+  可先装 `torch --index-url https://download.pytorch.org/whl/cpu` 再装其余依赖以省流量。
+
+### 5.6 纯前后端分离调试（可选）
 
 ```bash
 # 后端
@@ -221,6 +255,8 @@ cd dashboard && npm run dev        # http://localhost:3000
 | [项目分析报告与 HarmonyOS 端构建方案](docs/项目分析报告与HarmonyOS端构建方案.md) | 项目定位、四层架构、两条数据链路、MSSTformer 细节、鸿蒙端落地方案 |
 | [鸿蒙端接口清单与登录注册实现](docs/鸿蒙端接口清单与登录注册实现.md) | 14 条真实接口清单、鉴权细节、错误码表、ArkTS 实现步骤 |
 | [鸿蒙端网络层与类型共享方案](docs/鸿蒙端网络层与类型共享方案.md) | WebSocket 时序与边界条件、ArkTS ↔ TS 类型零漂移方案 |
+| [鸿蒙端数据获取使用指南](docs/鸿蒙端数据获取使用指南.md) | **写 UI 必读**：`AppStore` 门面全部字段与方法、4 个可抄页面示例、离线与未登录处理 |
+| [Linux 服务端部署指南](docs/Linux服务端部署指南.md) | 服务器拉取部署全流程、依赖与流量注意事项、systemd 常驻、部署验收命令 |
 | [Windows 复现部署指南](docs/Windows复现部署指南.md) | 零依赖起步、依赖安装绕行方案、离线 wheelhouse 部署 |
 
 ---

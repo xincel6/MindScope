@@ -1,15 +1,40 @@
+# ==============================================================================
+#  MindScope 服务端依赖
+#
+#  安装：
+#      python -m venv venv
+#      venv\Scripts\python.exe -m pip install -r requirements.txt      # Windows
+#      venv/bin/pip install -r requirements.txt                        # Linux/macOS
+#  离线/内网：见 docs/Windows复现部署指南.md 的 wheelhouse 方案
+# ==============================================================================
+
+# ------------------------------------------------------------------ Web 框架
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0
+python-multipart>=0.0.9
+aiofiles>=24.0.0
+
+# ------------------------------------------------------------------ 数据层
 sqlalchemy>=2.0.0
 aiosqlite>=0.20.0
 pydantic>=2.0.0
-python-multipart>=0.0.9
-aiofiles>=24.0.0
+
+# ------------------------------------------------------------------ 鉴权
+python-jose[cryptography]>=3.3.0
+bcrypt>=4.0.0
+
+# ------------------------------------------------------------------ 视觉 / 深度学习
 numpy>=1.26.0
 pillow>=10.0.0
 opencv-python-headless>=4.9.0
-# MTCNN 人脸检测（face_alignment / face_detect）
 torch>=2.0.0
+# MTCNN 人脸检测（services/face_alignment.py、face_detect.py）
+# 注意：torchvision 由 facenet-pytorch 作为硬依赖自动拉取，无需单独声明
 facenet-pytorch>=2.5.3
-python-jose[cryptography]>=3.3.0
-bcrypt>=4.0.0
+# ⚠ 必需：LMTformer_model/LMTformer.py 顶层 `from einops import rearrange`
+#   缺它会导致 import main 直接失败（WS 推理链路全部不可用）
+einops>=0.7.0
+
+# ------------------------------------------------------------------ 可选
+# 仅 LMTformer.py 的 profile_model() 用到（模型 FLOPs 统计），不参与服务启动
+# thop>=0.1.1

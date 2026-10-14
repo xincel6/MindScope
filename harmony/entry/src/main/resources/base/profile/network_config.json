@@ -1,0 +1,11 @@
+{
+  "network-security-config": {
+    "base-config": {
+      "cleartextTrafficPermitted": true
+    },
+    "component-config": {
+      "@ohos.net.http": true,
+      "@ohos.net.webSocket": true
+    }
+  }
+}
