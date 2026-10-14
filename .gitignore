@@ -1,0 +1,93 @@
+# ==============================================================================
+#  MindScope  .gitignore
+#  目标：只上传「源码 + 文档 + 演示数据」，不上传环境、依赖、素材原件
+#  重要：dashboard/backend/depression.db（121条诊断报告）
+#        dashboard/backend/media/（15MB 图片视频）是演示数据，必须保留、必须上传！
+# ==============================================================================
+
+# ------------------------------------------------------------------ 密钥与本地配置
+# 绝对不要上传！config.py 已改为从环境变量读取
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.keystore
+.credentials*
+secrets.*
+
+# ------------------------------------------------------------------ 本地大体积素材
+# 演示视频.mp4(162MB) / 系统代码.zip(100MB) / 答辩ppt / 技术文档原件 / PPT导出图
+# 这些仅本地留存，GitHub 单文件上限 100MB，上传会直接失败
+_materials/
+
+# ------------------------------------------------------------------ Python / 后端
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.log
+# 离线安装用的 wheels 与手动下载的包（207MB，含 torch 124MB）
+wheelhouse/
+*.whl
+
+# ------------------------------------------------------------------ Node / 前端
+node_modules/
+.vite/
+dist-ssr/
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.eslintcache
+# 注意：dashboard/dist/ 是 serve_all.py 直接托管的前端产物，必须提交，不要忽略
+
+# ------------------------------------------------------------------ HarmonyOS / DevEco
+oh_modules/
+.hvigor/
+.appanalyzer/
+.cxx/
+.preview/
+.test/
+local.properties
+.clangd
+.clang-format
+.clang-tidy
+build/
+# 注意：harmony/oh-package-lock.json5 是锁文件，要提交
+
+# ------------------------------------------------------------------ IDE / 编辑器
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------ 操作系统
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------ 临时文件
+*.tmp
+*.bak
+*.orig
+*.rej

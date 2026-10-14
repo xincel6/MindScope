@@ -1,0 +1,53 @@
+"""
+一体化启动入口（不改动任何原代码，仅新增此文件）。
+
+用法（默认仅本机可访问，安全）：
+    python serve_all.py                        # 仅监听 127.0.0.1，只有本机能访问
+    HOST=0.0.0.0 python serve_all.py           # 临时开放，局域网其它电脑可访问
+
+本机浏览器打开 http://127.0.0.1:8000 即可；临时开放后，局域网内其它电脑用
+http://<本机IP>:8000 访问。停止该进程即可关闭外部访问。
+
+原理：复用 main.py 里现成的 FastAPI 应用（已包含 /api、/ws、/media 路由），
+在路由表末尾追加一条 SPA 兜底路由，把 dist/ 打包好的前端页面与后端接口
+放到同一个端口上，从而让前端用相对路径访问，规避跨源（CORS/跨域）问题。
+"""
+import os
+
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+
+from main import app  # 复用现有后端应用
+from pathlib import Path
+
+from fastapi.responses import FileResponse
+
+from main import app  # 复用现有后端应用
+
+# 前端打包产物目录：backend 的上级目录下的 dist/
+DIST = (Path(__file__).resolve().parent.parent / "dist").resolve()
+INDEX = DIST / "index.html"
+
+
+@app.get("/{full_path:path}", include_in_schema=False)
+async def serve_spa(full_path: str):
+    # 根路径或显式 index.html -> 首页
+    if full_path in ("", "index.html"):
+        return FileResponse(INDEX)
+
+    # 真实静态文件（如 /assets/xxx.js、/favicon.svg、/icons.svg）
+    candidate = (DIST / full_path).resolve()
+    if candidate.is_file() and candidate.is_relative_to(DIST):
+        return FileResponse(candidate)
+
+    # 前端 history 路由统一回退到首页
+    return FileResponse(INDEX)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    host = os.getenv("HOST", "127.0.0.1")   # 默认仅本机（安全）；临时开放用 HOST=0.0.0.0
+    port = int(os.getenv("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
