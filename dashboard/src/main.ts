@@ -11,8 +11,12 @@ import { GridComponent, TooltipComponent, LegendComponent, VisualMapComponent } 
 import router from './router'
 import App from './App.vue'
 import './style.css'
+import { warmUpApiBase } from './api/baseResolver'
 
 use([CanvasRenderer, LineChart, GraphChart, PieChart, GridComponent, TooltipComponent, LegendComponent, VisualMapComponent])
+
+// 启动就后台探测后端地址（同源 → 本地 → 远程），别让用户第一次点击时才等探测
+warmUpApiBase()
 
 const app = createApp(App)
 const pinia = createPinia()

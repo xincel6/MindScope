@@ -4,6 +4,7 @@ import { onMounted, computed, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useDashboardStore } from '@/stores/dashboard'
 import type { MediaItem } from '@/api/index'
+import { resolveMediaUrl } from '@/api/baseResolver'
 
 const store = useDashboardStore()
 const deletingId = ref<string | null>(null)
@@ -21,7 +22,8 @@ function onVideoThumbImgError(item: MediaItem) {
 /** 使用 Media Fragments 拉取首帧附近画面作为静态预览（相对路径也可） */
 function videoThumbSrc(url: string) {
   if (!url) return ''
-  return url.includes('#') ? url : `${url}#t=0.1`
+  const resolvedUrl = resolveMediaUrl(url)
+  return resolvedUrl.includes('#') ? resolvedUrl : `${resolvedUrl}#t=0.1`
 }
 
 // 图片加载失败处理
@@ -151,7 +153,7 @@ function onUploadChange(e: Event) {
             <div class="media-thumb">
               <img
                 v-if="item.thumbnail_url && !videoThumbImgFailed[item.id]"
-                :src="item.thumbnail_url"
+                :src="resolveMediaUrl(item.thumbnail_url)"
                 alt=""
                 @error="onVideoThumbImgError(item)"
               />
@@ -202,7 +204,7 @@ function onUploadChange(e: Event) {
               <!-- 优先级：thumbnail_url → url → 图标 -->
               <img 
                 v-if="item.thumbnail_url || item.url"
-                :src="item.thumbnail_url || item.url"
+                :src="resolveMediaUrl(item.thumbnail_url || item.url)"
                 alt=""
                 @error="handleImageError($event, item)"
               />

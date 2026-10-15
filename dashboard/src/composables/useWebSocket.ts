@@ -1,5 +1,6 @@
 import { ref, onUnmounted } from 'vue'
 import { getStoredToken } from '@/api/http'
+import { getApiBase } from '@/api/baseResolver'
 
 export interface WsCallbacks {
   onMessage: (data: any) => void
@@ -17,14 +18,25 @@ export function useWebSocket(callbacks: WsCallbacks) {
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
-  function connect() {
-    if (ws?.readyState === WebSocket.OPEN || ws?.readyState === WebSocket.CONNECTING) return
+  /** 已有连接正在建立或已建立（抽成函数，避免 await 之后的类型收窄误报） */
+  function isActive(socket: WebSocket | null): boolean {
+    return socket?.readyState === WebSocket.OPEN || socket?.readyState === WebSocket.CONNECTING
+  }
+
+  async function connect() {
+    if (isActive(ws)) return
 
     wsStatus.value = 'connecting'
-    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
+    // 与 http 走同一套后端地址解析：同源时基址为 ''，就用页面自身的主机
+    const base = await getApiBase()
+    if (isActive(ws)) return
+    const wsOrigin =
+      base === ''
+        ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
+        : base.replace(/^http/i, 'ws')
     const token = getStoredToken()
     const qs = token ? `?token=${encodeURIComponent(token)}` : ''
-    const url = `${protocol}//${location.host}/ws/analysis${qs}`
+    const url = `${wsOrigin}/ws/analysis${qs}`
 
     try {
       ws = new WebSocket(url)

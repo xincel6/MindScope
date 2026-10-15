@@ -3,6 +3,7 @@ import { ref, watch, computed, onUnmounted, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useDashboardStore } from '@/stores/dashboard'
 import { useWebSocket } from '@/composables/useWebSocket'
+import { resolveMediaUrl } from '@/api/baseResolver'
 
 const store = useDashboardStore()
 const videoRef = ref<HTMLVideoElement | null>(null)
@@ -22,7 +23,7 @@ const showMainImage = computed(() => {
 
 const mainImageSrc = computed(() => {
   if (store.singleFaceImageMode && store.singleFaceImageUrl) return store.singleFaceImageUrl
-  return store.selectedMedia?.url ?? ''
+  return resolveMediaUrl(store.selectedMedia?.url)
 })
 
 const showMainVideo = computed(
@@ -66,7 +67,7 @@ watch([() => store.analyzing, wsStatus], ([isAnalyzing, status]) => {
 watch(() => store.selectedMedia, (media) => {
   if (!videoRef.value) return
   if (media?.type === 'video' && media.url) {
-    videoRef.value.src = media.url
+    videoRef.value.src = resolveMediaUrl(media.url)
     videoRef.value.load()
   } else {
     videoRef.value.pause()

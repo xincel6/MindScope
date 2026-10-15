@@ -1,4 +1,5 @@
 import { useAuthStore } from '@/stores/auth'
+import { getApiBase } from '@/api/baseResolver'
 
 const TOKEN_KEY = 'depression_auth_token'
 
@@ -18,7 +19,11 @@ export async function apiFetch(input: RequestInfo | URL, init?: RequestInit): Pr
   if (token && !headers.has('Authorization')) {
     headers.set('Authorization', `Bearer ${token}`)
   }
-  const res = await fetch(input, { ...init, headers })
+  // 相对路径（/api/...）按解析出的后端地址补全：
+  // 同源时基址为 ''，等价于原来的相对路径写法；前后端分离部署时则指向真正的后端。
+  const target: RequestInfo | URL =
+    typeof input === 'string' && input.startsWith('/') ? (await getApiBase()) + input : input
+  const res = await fetch(target, { ...init, headers })
   if (res.status === 401 && !String(input).includes('/api/auth/')) {
     auth.logout()
     const path = window.location.pathname

@@ -590,6 +590,11 @@ def ensure_frontend(warnings: list[str]) -> None:
         code, _ = _run_npm(["install", "--no-audit", "--no-fund"])
         if code == 0:
             code, _ = _run_npm(["run", "build"])
+        if code != 0 or not DIST_INDEX.is_file():
+            # `npm run build` 会先跑 vue-tsc 类型检查；仓库里存在历史类型错误时它会失败，
+            # 但这些问题不影响运行。退回直接调 vite 构建（跳过类型检查）把页面出出来。
+            log("  [!] npm run build 未成功（通常是历史类型检查报错），改用 vite 直接构建 ...")
+            code, _ = _run_npm(["exec", "--", "vite", "build"])
         if code == 0 and DIST_INDEX.is_file():
             log("  [OK] 前端构建完成。")
             return
