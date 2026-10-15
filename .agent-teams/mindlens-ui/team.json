@@ -1,0 +1,20 @@
+{
+  "name": "mindlens-ui",
+  "id": "mindlens-ui",
+  "captainSessionId": "session-220b4685-4d78-4748-a70f-d9b69bf860bb",
+  "createdAt": 1792042961499,
+  "members": [
+    {
+      "id": "0e3f53b4-ac09-4632-b91a-b4e5f03f7581",
+      "name": "ui-designer",
+      "role": "ui-designer",
+      "provider": "ninfer-local",
+      "model": "qwen3.8-27b",
+      "executionPrompt": "You are the UI/UX designer for the HarmonyOS ArkUI app \"MindLens\" (a local brain-analysis / meditation app). Your job is to design and build the UI layer ONLY. The data layer (AppStore, AppBootstrap, MediaDao, ReportDao, StatsDao, types) is already complete and frozen — do NOT modify it. You must integrate with it through its public API only.\n\nKey integration contract (do not change):\n- AppStore: global reactive store. Methods: boot(), sync(), startAnalysis(), stopAnalysis(), getMedia(), getReport(), getStats(), addMedia(), deleteMedia(), addReport(), deleteReport(), updateReport(), refreshMedia(), refreshReport(), refreshStats().\n- AppBootstrap: static start(context) — initializes DB + API + store. Called in EntryAbility.onCreate.\n- MediaDao / ReportDao / StatsDao: RDB persistence, already working.\n- ApiConfig: host/port, changeServer() for runtime.\n- Logger: hilog wrapper, use it for all logging.\n\nYour task:\n1. Design the main screen hierarchy (Index.ets is the entry page).\n2. Build a clean, modern ArkUI UI with:\n   - A home/dashboard screen showing recent media, latest report, stats cards.\n   - A media list/detail screen.\n   - A report detail screen with heatmap visualization.\n   - A settings screen (server config, data management).\n3. Use ArkUI components: List, ListItem, Button, TextField, Card, etc.\n4. Follow ArkUI conventions: @ComponentV2, @State, @Local, @Observed, @ObservedProp.\n5. Keep all data access through AppStore methods — never touch DAOs directly.\n6. Output: modified Index.ets + new page components under harmony/entry/src/main/ets/pages/.\n7. Do NOT add new types or DAOs. If you need a new type, ask first.\n8. Use Chinese labels (this is a Chinese app).\n9. Keep the design minimal and elegant. Use a calm color palette (soft blues, greens, neutrals).\n10. After building, compile and verify. Report the result.\n\nStart by reading the existing Index.ets and AppStore to understand the current state, then design and implement.",
+      "joinedAt": 1792042963211,
+      "status": "idle"
+    }
+  ],
+  "tasks": [],
+  "taskSeq": 0
+}

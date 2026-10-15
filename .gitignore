@@ -91,3 +91,11 @@ desktop.ini
 *.bak
 *.orig
 *.rej
+
+# ------------------------------------------------------------------ NInfer 本地大模型部署
+# ★ 绝对不要上传：单个权重 6–14 GB，远超 GitHub 100 MB 单文件上限，push 必然失败
+#   模型是硬链接引用（不额外占磁盘），但 Git 看到的是 8.87 GB 的真实文件
+*.ninfer
+infer-engine-sm120a/models/
+# 引擎二进制（约 1.9 GB：ninfer-serve-120a.exe 1.27 GB + cublasLt 439 MB 等）
+infer-engine-sm120a/engine/

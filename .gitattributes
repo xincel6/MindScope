@@ -51,3 +51,7 @@
 *.zip   binary
 *.whl   binary
 *.hap   binary
+# NInfer 模型权重与引擎二进制（本机部署，已在 .gitignore 排除；此处兜底防 force-add 被当文本处理）
+*.ninfer binary
+*.exe    binary
+*.dll    binary

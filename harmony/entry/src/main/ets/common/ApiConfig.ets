@@ -1,11 +1,13 @@
 /**
  * 服务端地址与运行期配置 · 全工程**唯一**的地址拼装处
  *
- * ★ 本轮服务端尚未部署，地址**占位为本地接口**（127.0.0.1:8000）。
- *   联调时改法二选一：
- *     ① 代码：改下面的 `defaultHost` / `defaultPort`
- *     ② 运行期：`ApiConfig.saveHost(ctx, '192.168.1.100')`（已持久化，重装才会丢）
- *   真机联调时后端必须监听 0.0.0.0（`serve_all.py` 默认 127.0.0.1 手机连不上）。
+ * ★ 服务端**已部署完成**（鸿蒙组服务器，监听 0.0.0.0:8000），默认地址指向它：
+ *     Tailscale（推荐 · 任意网络可达）：100.122.178.113:8000
+ *     局域网（手机与服务器同一 Wi-Fi）：192.168.0.123:8000
+ *   默认烧 **Tailscale** 地址；换地址二选一：
+ *     ① 代码：改下面的 `host` / `port`
+ *     ② 运行期：设置页走 `AppStore.changeServer(host, port)` → 落到 `saveHost`（已持久化，重装才会丢）
+ *   ★ 后端已监听 0.0.0.0（systemd 用户服务 `mindscope.service`），客户端换地址不必动服务端。
  *
  * ★ 令牌在内存里留一份副本：WebSocket 的 token **只能走 query 参数**，
  *   而拼接 wsUrl 是同步调用，不能每次去 await preferences。
@@ -28,9 +30,9 @@ class PrefKey {
 export interface NetConfig {
   host: string;
   port: number;
-  /** 形如 http://127.0.0.1:8000 */
+  /** 形如 http://100.122.178.113:8000 */
   baseUrl: string;
-  /** 形如 ws://127.0.0.1:8000 */
+  /** 形如 ws://100.122.178.113:8000 */
   wsBase: string;
 }
 
@@ -38,10 +40,13 @@ export interface NetConfig {
 export class ApiConfig {
   // ────────────────── 对外只读状态 ──────────────────
 
-  /** 服务端主机（占位为本地接口，部署后统一替换） */
-  public static host: string = '127.0.0.1';
+  /**
+   * 服务端主机 · 默认指向已部署的鸿蒙组服务器
+   * ★ 已烧 Tailscale 地址；现场只有局域网时改设置页或这里换成 192.168.0.123
+   */
+  public static host: string = '100.122.178.113';
 
-  /** 服务端端口 */
+  /** 服务端端口（服务端监听 0.0.0.0:8000） */
   public static port: number = 8000;
 
   /** 令牌内存副本 · 供 WS 同步拼 query 使用 */

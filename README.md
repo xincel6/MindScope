@@ -209,9 +209,31 @@ venv/bin/python serve_all.py
 # 后端
 cd dashboard/backend && venv\Scripts\python.exe -m uvicorn main:app --reload --port 8000
 
-# 前端（Vite dev server，已配好 /api /ws /media 代理到 8000）
+# 前端（Vite dev server，已配好 /api /ws /media 代理）
 cd dashboard && npm run dev        # http://localhost:3000
 ```
+
+> dev 代理**默认指向已部署的服务器**（见 5.7）。想改回连本机后端：
+> `VITE_BACKEND=http://localhost:8000 npm run dev`。
+
+### 5.7 已部署服务器与联调地址（当前团队环境）
+
+系统已部署在**鸿蒙组服务器**上（Linux，`HOST=0.0.0.0`，systemd 用户服务 `mindscope.service`，开机自启）：
+
+| 入口 | 地址 | 说明 |
+|---|---|---|
+| Tailscale | http://100.122.178.113:8000 | **任意网络可达，推荐** |
+| 局域网 | http://192.168.0.123:8000 | 需与服务器同一 Wi-Fi / 网段 |
+| 服务器本机 | http://127.0.0.1:8000 | 仅在服务器上有效 |
+
+**客户端已指向该服务器，本地不必再跑后端**：
+
+| 位置 | 默认值 | 怎么改 |
+|---|---|---|
+| 鸿蒙端 `harmony/entry/src/main/ets/common/ApiConfig.ets` | `100.122.178.113:8000` | 改 `host` / `port`，或运行期调 `AppStore.changeServer(host, port)` |
+| 桌面端 `dashboard/vite.config.ts`（dev 代理） | `http://100.122.178.113:8000` | `VITE_BACKEND=http://192.168.0.123:8000 npm run dev` |
+
+> 服务端不必再改地址（已监听 `0.0.0.0`）。换网段或换服务器时，**只改客户端这一处**。
 
 ---
 
