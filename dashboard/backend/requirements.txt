@@ -15,7 +15,14 @@ python-multipart>=0.0.9
 aiofiles>=24.0.0
 
 # ------------------------------------------------------------------ 数据层
-sqlalchemy>=2.0.0
+# ⚠ 必须写 [asyncio] 这个 extra：database.py 用的是 SQLAlchemy 异步引擎
+#   （create_async_engine + aiosqlite），异步引擎硬依赖 greenlet，而 greenlet
+#   只在 sqlalchemy[asyncio] 里才会被拉取。写成 sqlalchemy>=2.0.0 的话，
+#   依赖装"成功"了，但 import main 会直接崩：
+#     ImportError: The SQLAlchemy asyncio module requires that the Python
+#     'greenlet' library is installed.
+#   离线 wheelhouse 里恰好带着 greenlet，所以这个坑只在联网安装时才暴露。
+sqlalchemy[asyncio]>=2.0.0
 aiosqlite>=0.20.0
 pydantic>=2.0.0
 
@@ -38,3 +45,11 @@ einops>=0.7.0
 # ------------------------------------------------------------------ 可选
 # 仅 LMTformer.py 的 profile_model() 用到（模型 FLOPs 统计），不参与服务启动
 # thop>=0.1.1
+
+# ------------------------------------------------------------------ 自检/测试
+# ⚠ 必须保留：项目自带的环境自检脚本 _verify_env.py 把 httpx 列为必须导入的依赖，
+#   离线 wheelhouse 里也一直带着它。若这里不声明，就会出现「离线装得上、在线装不上」
+#   的环境不一致，一键启动脚本的依赖自检会因此判定在线安装失败。
+#   应用自身调用云端模型用的是标准库 http.client，不直接依赖 httpx；
+#   它同时是 FastAPI TestClient 的依赖，属于 FastAPI 项目的常规成员。
+httpx>=0.27.0
