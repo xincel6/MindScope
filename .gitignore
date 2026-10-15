@@ -1,8 +1,10 @@
 # ==============================================================================
 #  MindScope  .gitignore
-#  目标：只上传「源码 + 文档 + 演示数据」，不上传环境、依赖、素材原件
+#  目标：只上传「源码 + 文档 + 演示数据 + 运行必需的模型文件」，不上传环境、依赖、素材原件
 #  重要：dashboard/backend/depression.db（121条诊断报告）
 #        dashboard/backend/media/（15MB 图片视频）是演示数据，必须保留、必须上传！
+#  例外：dashboard/backend/best.pt 与 dashboard/LMTformer_model/ 是服务端推理必需，
+#        体积很小（3.78 MB + 14 KB），必须上传，见文件末尾的「例外」小节。
 # ==============================================================================
 
 # ------------------------------------------------------------------ 密钥与本地配置
@@ -99,3 +101,69 @@ desktop.ini
 infer-engine-sm120a/models/
 # 引擎二进制（约 1.9 GB：ninfer-serve-120a.exe 1.27 GB + cublasLt 439 MB 等）
 infer-engine-sm120a/engine/
+
+# ------------------------------------------------------------------ 模型文件全量屏蔽
+# 所有模型目录（任意位置）
+models/
+model/
+# 引擎二进制目录
+engine/
+# 模型权重文件（所有扩展名）
+*.safetensors
+*.pt
+*.pth
+*.bin
+*.ckpt
+*.onnx
+*.tflite
+*.weights
+
+# 模型代码目录（含模型架构定义）
+# ★ 故意不忽略，而且两份都要在 —— 项目里有两份 LMTformer_model/，服务不同入口：
+#     dashboard/LMTformer_model/          应用运行时用：services/inference.py 把
+#                                        config.MODEL_SOURCE_DIR（= dashboard/）加进
+#                                        sys.path 后 import
+#     dashboard/backend/LMTformer_model/  环境自检用：_verify_env.py 在 backend 下运行，
+#                                        sys.path 指向 backend
+#   缺任何一份都可能「服务能启动、分析功能不可用」，所以必须随项目分发。
+#   两份内容一致，仅 backend 那份开头多一个空行，不影响功能。
+#   目录内的 __pycache__ 由上面的「__pycache__/」规则继续忽略。
+#   （注意：不要在这里写 LMTformer_model/ —— 那会把两个目录一起排除掉；
+#     而 Git 规定父目录一旦被排除，就无法用 ! 再放行里面的文件。）
+
+# 模型相关文件（数据模型定义、UI 卡片、类型定义）
+*models.py
+*ModelMetricsCard*
+*model.ts
+
+# 整个 infer-engine 目录（含模型部署文档、启动脚本等）
+infer-engine-sm120a/
+
+# ==============================================================================
+#  例外：必须随项目分发的文件
+#  下面的文件/目录被上面的通配规则误伤或需要放行，缺了它们项目会在某个环节坏掉。
+#  放在文件最后，确保覆盖上面所有规则（gitignore 同一文件内「后匹配者优先」）。
+# ==============================================================================
+
+# ---------------------------------------------------------------- A. 模型推理文件
+#  · dashboard/backend/best.pt           LMTformer 训练权重，3.78 MB，服务端唯一权重
+#  · dashboard/LMTformer_model/          模型结构定义（应用运行时 import）
+#  · dashboard/backend/LMTformer_model/  模型结构定义（_verify_env.py 自检时 import）
+#  config.py 里 MODEL_CHECKPOINT 指向 backend/best.pt，缺了它
+#  ==> 服务能启动、接口能调，但"人脸/视频分析"功能直接不可用。
+#  体积远低于 GitHub 100 MB 单文件上限，无需 Git LFS。
+!dashboard/backend/best.pt
+
+# ---------------------------------------------------------------- B. 被模型类
+# 通配规则误伤的源码。下面三条通配规则本意是屏蔽「模型相关的产物」，但会连
+# 项目自己的源码一起屏蔽；这三个文件都已确认被代码引用，必须放行：
+#   *models.py           误伤 dashboard/backend/models.py
+#                        （ORM 表定义：main.py / deps.py / 5 个 router 都 from models import，
+#                          不放行则 clone 下来 import main 直接 ModuleNotFoundError，服务起不来）
+#   *ModelMetricsCard*   误伤 dashboard/src/components/stats/ModelMetricsCard.vue
+#                        （StatsView.vue 第 5 行 import、第 89 行使用；不放行则前端 npm run build 失败）
+#   *model.ts            误伤 harmony/entry/src/main/ets/types/model.ts
+#                        （被 types/Index.ts、types/mapper.ts、types/storeState.ets 引用）
+!dashboard/backend/models.py
+!dashboard/src/components/stats/ModelMetricsCard.vue
+!harmony/entry/src/main/ets/types/model.ts
