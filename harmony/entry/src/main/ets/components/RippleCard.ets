@@ -1,10 +1,10 @@
 /**
- * RippleCard · **通用可点击卡片**（统一卡片视觉 + 从触点扩散的点击涟漪）
+ * RippleCard · **通用可点击卡片**（统一卡片视觉 + 原生按压反馈）
  *
  * 本轮工作台的所有卡片都走这一个组件，好处是：
- *   ① 卡片外观只有一处定义（`common/CardStyle.ets`），不会各处漂移；
- *   ② 点击动画只实现一次，新卡片自动获得同一手感；
- *   ③ 页面只需传"数据 + 回调"，不需要关心动画怎么做。
+ *   ① 卡片外观的**取值**只有一处（`common/CardStyle.ets`），不会各处漂移；
+ *   ② 按压反馈只实现一次，新卡片自动获得同一手感；
+ *   ③ 页面只需传"数据 + 回调"，不需要关心交互怎么做。
  *
  * 用法：
  * ```ts
@@ -13,23 +13,42 @@
  * }
  * ```
  *
- * ────────────────── 涟漪是怎么实现的 ──────────────────
- * 1. `Stack` 底层放一个圆（半径 = 卡片对角线，保证放大后铺满整卡）；
- * 2. `onTouch(Down)` 取触点**相对本组件**的坐标，把圆挪到该点；
- * 3. `animateTo` 让圆的 `scale 0 → 1`（扩散）、`opacity 1 → 0`（淡出）；
- * 4. 卡片自身 `.clip(true)` + 圆角 → 涟漪被裁成圆角矩形，不会溢出卡片。
+ * ══════════════════════════════════════════════════════════════════
+ *  ★★ 为什么这里是"整卡按压反馈"而不是"从触点扩散的自绘涟漪"
+ * ══════════════════════════════════════════════════════════════════
+ * 这个组件为了让涟漪"从手指按下的位置扩散"，连续踩了四个坑（详见根目录 `BUG清单.md`）：
  *
- * 起始态"半径 0 但可见"在视觉上等于什么都没有（零面积画不出东西），
- * 所以不需要额外的"先隐藏再出现"处理 —— 每帧动画都在 `animateTo` 的闭包里
- * 先给值再触发，减少闪烁。
+ *   1. 圆由**响应式状态**驱动尺寸 + 用 `onSizeChange` 回填卡片尺寸
+ *      → 形成「测量 → 状态 → 尺寸 → 布局 → 测量」的反馈环，越点越走形；
+ *   2. `Column` 里混用 `height('100%')` 包裹层与 `AUTO` 内容层
+ *      → 百分比高度解析成 0，卡片整片不可见；
+ *   3. 圆作为 `Stack` 的**直接子节点**（即使用 `position()`）
+ *      → 它仍参与父容器测量，卡片被撑到"圆所占布局框"那么大，初始就过长；
+ *   4. 试图用包裹层隔离这个尺寸时，**官方文档自相矛盾**：
+ *      `position()` 的注解写 "The attribute is not available for a layout container whose
+ *      width and height are zero"，即"零尺寸父容器里的绝对定位子节点不生效"；
+ *      而另一处文档又说 `position` 的子节点"参与父容器测算"。两者无法同时成立，
+ *      只能靠真机反复试错 —— 代价太高，且每次都直接把问题交给用户去发现。
+ *
+ * **结论：按本项目《BUG清单.md》规则一，装饰元素绝不能影响布局测量。
+ * 与其不断试探边缘行为，不如改用 ArkUI 原生提供的按压反馈：零新增节点、零布局风险。**
+ *
+ * 现在的实现（两条都是原生能力，不新增任何节点）：
+ *   · `.clickEffect({ level: ClickEffectLevel.LIGHT })` —— 系统级按压涟漪（点哪扩散到哪）；
+ *   · `@Local pressed` + `.backgroundColor()` + `animateTo` —— 整卡轻微着色（按下变深、抬起复原）。
+ *
+ * ★ 如果将来确实需要"自绘、从触点扩散"的涟漪，请先做**隔离验证**：
+ *   在 DevEco 预览器里单独搭一个"卡片 + 大圆"的最小页面，确认卡片高度不受影响后，
+ *   再往本组件里移植；不要直接在本文件上试。
  *
  * ────────────────── 已知边界 ──────────────────
- * ● 涟漪挂在 `TouchType.Down`，导航动作挂在 `onClick`：两者互不干扰，
+ * ● 按压反馈挂在 `TouchType.Down`，导航动作挂在 `onClick`：两者互不干扰，
  *   所以滚动列表里快速滑动不会误触发点击。
  * ● 卡片**内部**的独立控件（如 `Button`）会自己消费掉点击事件，
- *   此时父卡片拿不到 `onClick`（这是 ArkUI 的冒泡规则，符合直觉：
- *   点按钮只应触发按钮）。因此"按钮和整卡做同一件事"的卡片，
- *   建议只给按钮挂动作，或让按钮的 `onClick` 与 `onTap` 指向同一个处理函数。
+ *   此时父卡片拿不到 `onClick`（符合直觉：点按钮只应触发按钮）。
+ *   因此"按钮与整卡做同一件事"的卡片，让两处 `onClick` 指向同一个处理函数即可。
+ * ● 可点击的卡片会得到一个很淡的按压底色；不可点的展示卡片保持纯白
+ *   （用 `PressTint.none` 覆写 `_pressColor`）。
  */
 
 import { CardStyle } from '../common/CardStyle';
@@ -37,7 +56,7 @@ import { UiTheme } from '../common/UiTheme';
 
 @ComponentV2
 export struct RippleCard {
-  /** 点击整卡的回调 · 不传则卡片只播放动画、不产生动作 */
+  /** 点击整卡的回调 · 不传则卡片只播放反馈、不产生动作 */
   @Param onTap: () => void = () => {};
 
   /**
@@ -47,173 +66,98 @@ export struct RippleCard {
   @Param _padding: number = UiTheme.cardPadding;
 
   /**
-   * 是否响应点击（false 时既不播动画也不回调）
-   * 用于"不可点的展示卡片"（空态、区块外壳、只读信息卡）。
-   *
+   * 是否触发 `onTap` 动作
    * ★ 名字必须带 `_`：`enabled` 是 ArkUI 自定义组件的**系统属性方法名**
    *   （`CommonAttribute.enabled(value: boolean)`），同名成员会报
-   *   "Property 'enabled' in type 'RippleCard' is not assignable to the same property
-   *    in base type 'CustomComponent'"。本工程约定：与系统属性同名的入参一律加 `_`。
+   *   "Property 'enabled' ... is not assignable to the same property in base type
+   *    'CustomComponent'"。本工程约定：与系统属性同名的入参一律加 `_`。
    */
   @Param _enabled: boolean = true;
 
   /**
-   * 是否显示点击涟漪（true 时按下即播，不依赖 `_enabled`）
-   *
-   * ★ 与 `_enabled` 的分工：`_enabled` 管"要不要触发动作"，
-   *   `_clickable` 管"要不要播动画"。
-   * ★ 名字不能叫 `clickable`：那同样是 `CommonMethod` 上的系统属性方法名，会编译失败。
-   * ★ 区块外壳（如「最近使用的素材」整块）必须传 `_clickable: false`，
-   *   否则会抢走内部单条卡片的点击 —— 本轮修掉的一个 bug。
+   * 是否播放按压反馈（与 `_enabled` 解耦）
+   * ★ 名字不能叫 `clickable`：那同样是 `CommonMethod` 上的系统属性方法名。
    */
   @Param _clickable: boolean = true;
 
   /** 卡片圆角 · 默认沿用主题 */
   @Param _radius: number = UiTheme.cardRadius;
 
+  /**
+   * 按压时的底色 · 默认取主题里的淡色
+   * 需要"按下不换色"时传 `UiTheme.cardBackground`（不可点的展示卡片就是这么做的）。
+   */
+  @Param _pressColor: string = UiTheme.cardPressTint;
+
   /** 卡片内容（用尾随闭包传入） */
   @BuilderParam content: () => void = this.emptyContent;
 
-  // ────────────────── 涟漪本地状态（纯动画状态，不属于业务数据）──────────────────
+  // ────────────────── 本地交互状态（纯视觉，不参与任何测量）──────────────────
 
-  /** 本次涟漪的圆心 X（相对卡片左上角） */
-  @Local rippleX: number = 0;
-
-  /** 本次涟漪的圆心 Y */
-  @Local rippleY: number = 0;
-
-  /** 圆心到最远角的距离 · 即涟漪圆的半径上限 */
-  @Local rippleRadius: number = 0;
-
-  /** 0 → 1 的扩散进度 */
-  @Local rippleScale: number = 0;
-
-  /** 1 → 0 的淡出进度 */
-  @Local rippleOpacity: number = 0;
-
-  /** 卡片实际尺寸（由 onSizeChange 回填，用于算涟漪半径） */
-  @Local cardWidth: number = 0;
-  @Local cardHeight: number = 0;
+  /**
+   * 是否处于按下态
+   * ★ 它只影响 `backgroundColor`（一个**颜色**属性），不会改变任何尺寸 ——
+   *   这正是"装饰状态绝不能驱动尺寸"这条规则的落地方式。
+   */
+  @Local pressed: boolean = false;
 
   @Builder
   emptyContent() {
     Row().width('100%').height(0)
   }
 
-  /** 触点 → 启动一次涟漪 */
-  private startRipple(x: number, y: number): void {
-    this.rippleX = x;
-    this.rippleY = y;
-    this.rippleRadius = this.diagonalTo(x, y);
-
-    const duration: number = UiTheme.rippleDuration;
-    const curve: Curve = Curve.EaseOut;
-
-    // ★ 每次点击都先把圆"瞬间"收回触点、并恢复到满透明度（duration: 0 的 animateTo）。
-    //   少了这一步会有一个隐形的 bug：上一轮动画把 opacity 留在了 0，
-    //   于是第二次点击的圆是"全透明"的 —— 动画在跑，但用户什么也看不见。
-    this.getUIContext().animateTo({ duration: 0 }, () => {
-      this.rippleScale = 0;
-      this.rippleOpacity = 1;
-    });
-
-    // 扩散：0 → 1（圆心不动，用 scale 放大）；同时淡出：1 → 0
-    this.getUIContext().animateTo({ duration: duration, curve: curve }, () => {
-      this.rippleScale = 1;
-      this.rippleOpacity = UiTheme.rippleEndOpacity;
-    });
-  }
-
   /**
-   * 触点 → 卡片最远角的距离
-   * ★ 取"最远角"而不是"最近边"：这样圆扩散到 scale = 1 时必定盖满整卡，
-   *   不会出现"手指点在角落、涟漪还没铺满就结束"的情况。
-   * ★ 尺寸还没测量出来时（首帧）用兜底值，保证至少能画出一个可见的圆。
+   * 按下 / 抬起时的底色（按下着色，抬起恢复卡片白底）
+   * ★ 条件里带 `_enabled`：只有"真的有动作"的卡片才着色。
+   *   空态、区块外壳、只读信息卡（`_enabled: false`）保持纯白，不会出现
+   *   "按下去有反馈、松手却没反应"的误导。
    */
-  private diagonalTo(x: number, y: number): number {
-    const w: number = this.cardWidth > 0 ? this.cardWidth : 240;
-    const h: number = this.cardHeight > 0 ? this.cardHeight : 120;
-    const dx: number = Math.max(x, w - x);
-    const dy: number = Math.max(y, h - y);
-    const distance: number = Math.sqrt(dx * dx + dy * dy);
-    return distance > 0 ? distance : 1;
-  }
-
-  /**
-   * 涟漪层 · **固定尺寸 + 裁剪**的容器，里面才是圆
-   *
-   * ★★ 这层容器就是本轮 bug 的修复点（卡片点击后高度翻倍）：
-   *   涟漪圆的直径是"2 × 对角线"（约两倍卡宽），如果它直接作为 Stack 的子节点，
-   *   **它的尺寸会参与外层 Stack 的测量** —— Stack 的宽高取所有子节点的并集，
-   *   于是卡片被圆撑成了一个约 2 倍宽的盒子，高度也跟着翻倍。
-   *   把圆放进一个 `width('100%') height('100%')` 且 `clip(true)` 的容器后：
-   *     · 容器尺寸完全由卡片决定（100% 而非内容撑开）→ 不再参与"撑大"；
-   *     · 圆的溢出部分被容器裁掉（配合 style 的 clip）→ 视觉仍然正常。
-   *   这是 ArkUI 布局的一条通用纪律：**要给绝对定位的装饰元素加一层定尺裁剪壳**。
-   *
-   * ★ 容器 `hitTestBehavior(HitTestMode.None)`：涟漪只是画出来的东西，
-   *   绝不能拦住卡片内按钮（如「选择素材」）的点击。
-   */
-  @Builder
-  rippleLayer() {
-    Column() {
-      if (this.rippleRadius > 0) {
-        Circle()
-          .width(this.rippleRadius * 2)
-          .height(this.rippleRadius * 2)
-          // 让圆心正好落在触点上：圆左上角 = 触点 - 半径
-          .position({ x: this.rippleX - this.rippleRadius, y: this.rippleY - this.rippleRadius })
-          .fill(UiTheme.ripple)
-          .scale({ x: this.rippleScale, y: this.rippleScale })
-          .opacity(this.rippleOpacity)
-      }
+  private backgroundFor(): string {
+    if (this.pressed && this._clickable && this._enabled) {
+      return this._pressColor;
     }
-    .width('100%')
-    .height('100%')
-    .clip(true)
-    .hitTestBehavior(HitTestMode.None)
+    return CardStyle.background();
+  }
+
+  /**
+   * 切换按下态并做颜色过渡
+   * ★ `animateTo` 只包住一次颜色赋值：颜色变化不触发布局，只会走渲染层合成。
+   */
+  private setPressed(next: boolean): void {
+    if (this.pressed === next) {
+      return;
+    }
+    this.getUIContext().animateTo({ duration: UiTheme.pressDuration, curve: Curve.EaseOut }, () => {
+      this.pressed = next;
+    });
   }
 
   build() {
-    // ★ 外层用 Row 而不是 Stack：Row 的尺寸由"非绝对定位"的子节点（内容层）决定，
-    //   绝对定位的涟漪层不会影响它。Stack 会让所有子节点共同决定尺寸，风险更大。
-    Row() {
-      // ① 涟漪层（定尺 + 裁剪，不参与测量）
-      this.rippleLayer()
-
-      // ② 内容层（决定卡片真实高度）
-      Column() {
-        this.content()
-      }
-      .width('100%')
-      .alignItems(HorizontalAlign.Start)
-      .padding(this._padding)
+    // ★ 整个卡片就是**一层内容容器**：不再有装饰层，也就不存在任何尺寸被撑大的可能。
+    //   卡片尺寸完全由 `content()` 与 `_padding` 决定。
+    Column() {
+      this.content()
     }
     .width('100%')
-    .attributeModifier(CardStyle.modifier)
+    .alignItems(HorizontalAlign.Start)
+    .padding(this._padding)
+    // ★ 卡片视觉三项**内联**写在组件链上（不要抽成共享的 AttributeModifier，
+    //   原因见 common/CardStyle.ets 顶部说明：共享修饰器实例会导致卡片整片不渲染）
+    .backgroundColor(this.backgroundFor())
     .borderRadius(this._radius)
-    // 裁剪：涟漪被限制在圆角矩形内，不会糊到卡片外面
-    .clip(true)
-    .onSizeChange((oldValue: SizeOptions, newValue: SizeOptions) => {
-      // 宽高都可能是 string | number，这里只认数字形态，其余忽略（百分比宽度最终也会给出数字）
-      const w: number | undefined = newValue.width as number | undefined;
-      const h: number | undefined = newValue.height as number | undefined;
-      if (typeof w === 'number' && w > 0) {
-        this.cardWidth = w;
-      }
-      if (typeof h === 'number' && h > 0) {
-        this.cardHeight = h;
-      }
-    })
+    .border({ width: 1, color: UiTheme.divider })
+    .shadow(CardStyle.shadow())
+    // 系统级按压反馈：涟漪从触点扩散，且完全由系统实现，不影响布局
+    .clickEffect({ level: ClickEffectLevel.LIGHT })
     .onTouch((event: TouchEvent) => {
-      if (!this._clickable || event.type !== TouchType.Down) {
+      if (!this._clickable) {
         return;
       }
-      const touch: TouchObject = event.touches[0];
-      if (touch === undefined || touch === null) {
-        return;
+      if (event.type === TouchType.Down) {
+        this.setPressed(true);
+      } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+        this.setPressed(false);
       }
-      this.startRipple(touch.x, touch.y);
     })
     .onClick(() => {
       if (!this._enabled) {

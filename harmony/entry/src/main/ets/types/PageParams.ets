@@ -239,45 +239,18 @@ export class ProfilePageParam extends TabPageParam {
 /**
  * 工作台参数（`pages/WorkbenchPage.ets`）
  *
- * ★ 为什么在 `TabPageParam` 之外单开一个类，而不是往 `TabPageParam` 里塞字段：
- *   `TabPageParam` 是五个页签的公共契约，往里加"最近素材/当前任务"会让
- *   素材库、统计等页面白背一堆用不到的字段。工作台需要什么就继承后自己加。
+ * ★★ 这个类**只承载动作回调，不承载展示数据** —— 与其它页面都不一样，原因：
+ *   工作台的展示数据来自 `/health` 探活与 WebSocket，都是**异步到达**的。
+ *   而页面是经 `Navigation.navDestination` 挂载的：改参数对象的字段**不会**让
+ *   已挂载的页面重新收到新值（现象就是"点刷新圆点不变色，切页签回来才更新"）。
+ *   所以工作台改为直接订阅 `AppStore`（`@ObservedV2` + `@Trace`，变更必定触发重绘），
+ *   本类于是退化为"路由分发器用来识别页面 + 携带回调"的载体。
  *
- * ★ 与上一轮占位页的差异：原注释说"本轮没有数据源，因此不渲染加载态"，
- *   本轮已接入 `AppStore`，所以 `busy` / `errorMsg` 开始真正被使用
- *   （离线横幅与最近素材的空态就是它们驱动的）。
+ * ★ 为什么还要保留 `instanceof WorkbenchPageParam` 这条判断：
+ *   `MainPage.destination` 需要按路由名+参数类型分发到正确的页面组件，
+ *   回调也必须有个地方存（由窗口层注入一次、页面只读）。
  */
 export class WorkbenchPageParam extends TabPageParam {
-  // ── 服务状态 ──
-
-  /** 服务端是否在线（绿色圆点 / 红色圆点） */
-  public serverOnline: boolean = false;
-
-  /** 服务状态文案（"在线" / "未连接"） */
-  public serverStatusLabel: string = '未连接';
-
-  /** 是否正在探活（刷新按钮忙碌态） */
-  public healthChecking: boolean = false;
-
-  /** 服务端地址展示 · 形如 100.122.178.113:8000 */
-  public serverLabel: string = '';
-
-  // ── 当前任务 ──
-
-  /** 当前任务 · null 表示「暂无进行中的分析」 */
-  public currentTask: CurrentTaskModel | null = null;
-
-  // ── 最近使用的素材 ──
-
-  /** 最近 2 条素材（含分数与严重度进度条） */
-  public recentItems: RecentMediaModel[] = [];
-
-  /** 最近素材是否仍在加载（首次进入且无缓存时才有意义） */
-  public recentLoading: boolean = false;
-
-  /** 最近素材加载失败文案 · 非空即展示 */
-  public recentError: string = '';
-
   // ── 动作回调（全部由窗口层实现） ──
 
   /** 点右上角刷新 / 离线横幅的「重试」· 窗口层调 `AppStore.checkHealth()` */

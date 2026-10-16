@@ -1,43 +1,114 @@
 /**
  * WorkbenchPage · 工作台（一级页签）
  *
- * 页面契约：`@Param pageParam: WorkbenchPageParam`
- *   - `serverOnline` / `serverStatusLabel` / `healthChecking`  ← 服务状态圆点与刷新按钮
- *   - `currentTask`         ← 「当前任务」卡片（null = 暂无进行中的分析）
- *   - `recentItems` 等      ← 「最近使用的素材」两条（含分数与严重度进度条）
- *   - 各 `on*` 回调         ← 把动作交回窗口层（页面不碰 store、不碰路由栈）
+ * ────────────────── 本页为什么直接读 AppStore（唯一的纪律例外）──────────────────
+ * 工程通用纪律是「页面只吃参数、不 import store」。工作台**刻意偏离**了这一条，
+ * 原因是这条纪律在"异步到达的数据"上不可靠：
  *
- * ★ 页面纪律：本文件**不 import 任何 store**、不发请求、不操作导航栈。
- *   所有数据与动作都从参数进出，这样本页可以脱离整个 App 单独渲染。
+ *   · 服务状态来自 `/health` 探活、任务进度来自 WebSocket，都是 `await` 之后才写值；
+ *   · 页面是通过 `Navigation.navDestination` 挂载的，**改参数的字段不会让已挂载的
+ *     页面重新收到新值**（实测：点刷新圆点不变色，切页签再回来才更新）。
  *
- * ★ 「刷新」按钮放在页头**最右侧**（按需求），所以这里没用 `PageHeader`（它没有右侧插槽），
- *   而是自绘标题行 —— 标题字号/颜色仍严格取自 `UiTheme`，不会与其它页漂移。
+ * 而 `AppStore` 是 `@ObservedV2` + `@Trace`，它的字段变化**必定**触发依赖它的组件重绘，
+ * 是 ArkUI 里最可靠的一条响应式路径。所以本页：
+ *   · **读** 走 `AppStore`（响应式，异步刷新不会丢）；
+ *   · **写** 仍走注入的回调（不碰路由栈、不发请求，纪律的核心部分保留）。
+ *
+ * ★ 这道口子只开给工作台：其它页签的数据是"进入页面时一次性拉取"的，
+ *   没有这个痛点，继续走参数契约。
  */
 
 import { UiTheme } from '../common/UiTheme';
-import { CurrentTaskModel, RecentMediaModel, TaskStatus } from '../types/Index';
-import { WorkbenchPageParam } from '../types/PageParams';
+import { AppStore } from '../store/AppStore';
+import { CurrentTaskModel, RecentMediaModel } from '../types/Index';
 import { RippleCard } from '../components/RippleCard';
 import { ServiceStatusCard } from '../components/workbench/ServiceStatusCard';
 import { StartAssessmentCard } from '../components/workbench/StartAssessmentCard';
 import { CurrentTaskCard } from '../components/workbench/CurrentTaskCard';
 import { RecentMediaSection } from '../components/workbench/RecentMediaSection';
 
+/** 工作台「最近使用的素材」展示条数（用户指定两条） */
+const RECENT_MEDIA_LIMIT: number = 2;
+
 @ComponentV2
 export struct WorkbenchPage {
-  /** ★ 本页唯一入参 */
-  @Param pageParam: WorkbenchPageParam = new WorkbenchPageParam();
+  // ══════════════════ 入参 · 动作回调（全部由窗口层实现）══════════════════
+
+  /** 点右上角刷新 / 离线横幅的「重试」· 窗口层调 `AppStore.checkHealth()` */
+  @Param onRefresh: () => void = () => {};
+
+  /** 点「选择素材」或「开始新的辅助评估」卡片 · 窗口层跳素材选择页 */
+  @Param onSelectMedia: () => void = () => {};
+
+  /** 点「当前任务」卡片 · 窗口层重新打开分析详情页 */
+  @Param onOpenTask: () => void = () => {};
+
+  /** 点「查看全部」· 窗口层切到历史报告页签 */
+  @Param onViewAll: () => void = () => {};
+
+  /** 点某条最近素材 · 窗口层按该素材的报告快照打开分析详情页 */
+  @Param onSelectRecent: (mediaId: string) => void = (mediaId: string) => {};
+
+  // ══════════════════ 读数 · 直接订阅 store（响应式，见文件头说明）══════════════════
+
+  /** store 门面 · 只读，不在这里调用任何写方法 */
+  @Computed
+  get app(): AppStore {
+    return AppStore.get();
+  }
+
+  /** 服务端是否在线 */
+  @Computed
+  get serverOnline(): boolean {
+    return this.app.serverOnline;
+  }
+
+  /** 是否正在探活 */
+  @Computed
+  get healthChecking(): boolean {
+    return this.app.healthChecking;
+  }
+
+  /** 服务端地址展示 · 形如 100.122.178.113:8000 */
+  @Computed
+  get serverLabel(): string {
+    return `${this.app.serverHost}:${this.app.serverPort}`;
+  }
+
+  /** 当前任务 · null 表示「暂无进行中的分析」 */
+  @Computed
+  get currentTask(): CurrentTaskModel | null {
+    return this.app.currentTask();
+  }
+
+  /** 最近 2 条素材（报告 + 媒体库拼出来的） */
+  @Computed
+  get recentItems(): RecentMediaModel[] {
+    return this.app.recentMedia(RECENT_MEDIA_LIMIT);
+  }
+
+  /** 最近素材是否仍在加载（只有"列表为空且正在拉"才算，避免有缓存时误报） */
+  @Computed
+  get recentLoading(): boolean {
+    return this.app.reportLoading && this.recentItems.length === 0;
+  }
+
+  /** 最近素材的错误文案（有数据时不展示错误，避免同时出现内容与报错） */
+  @Computed
+  get recentError(): string {
+    return this.recentItems.length === 0 ? this.app.reportError : '';
+  }
 
   // ══════════════════ 派生文案 ══════════════════
 
-  /** 服务状态文案 · 参数没给就按在线状态兜底 */
+  /** 服务状态文案 */
   @Computed
-  get serverLabel(): string {
-    const label: string = this.pageParam.serverStatusLabel;
+  get resolvedServerLabel(): string {
+    const label: string = this.app.serverStatusLabel;
     if (label.length > 0) {
       return label;
     }
-    return this.pageParam.serverOnline ? '在线' : '未连接';
+    return this.serverOnline ? '在线' : '未连接';
   }
 
   // ══════════════════ 页头（标题 + 右侧刷新） ══════════════════
@@ -49,16 +120,16 @@ export struct WorkbenchPage {
    */
   @Builder
   refreshButton() {
-    Button(this.pageParam.healthChecking ? '…' : '⟳')
+    Button(this.healthChecking ? '…' : '⟳')
       .fontSize(20)
       .fontColor(UiTheme.textSecondary)
       .backgroundColor(Color.Transparent)
       .borderRadius(UiTheme.cardRadius)
       .width(40)
       .height(40)
-      .enabled(!this.pageParam.healthChecking)
+      .enabled(!this.healthChecking)
       .onClick(() => {
-        this.pageParam.onRefresh();
+        this.onRefresh();
       })
   }
 
@@ -115,7 +186,7 @@ export struct WorkbenchPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Button(this.pageParam.healthChecking ? '重连中…' : '重试')
+        Button(this.healthChecking ? '重连中…' : '重试')
           .fontSize(UiTheme.fontSizeBody)
           .fontColor(UiTheme.danger)
           .backgroundColor(Color.Transparent)
@@ -124,9 +195,9 @@ export struct WorkbenchPage {
           .borderRadius(UiTheme.buttonRadius)
           .height(36)
           .padding({ left: UiTheme.gapL, right: UiTheme.gapL })
-          .enabled(!this.pageParam.healthChecking)
+          .enabled(!this.healthChecking)
           .onClick(() => {
-            this.pageParam.onRefresh();
+            this.onRefresh();
           })
       }
       .width('100%')
@@ -143,46 +214,46 @@ export struct WorkbenchPage {
           // ── ① 服务状态（圆点 + 文案 + 地址） ──
           RippleCard({ _padding: UiTheme.gapM, _enabled: false, _clickable: false }) {
             ServiceStatusCard({
-              online: this.pageParam.serverOnline,
-              label: this.serverLabel,
-              checking: this.pageParam.healthChecking,
-              serverLabel: this.pageParam.serverLabel,
+              online: this.serverOnline,
+              label: this.resolvedServerLabel,
+              checking: this.healthChecking,
+              serverLabel: this.serverLabel,
               onRefresh: () => {
-                this.pageParam.onRefresh();
+                this.onRefresh();
               }
             })
           }
 
           // ── ② 离线横幅（只在不可达时出现） ──
-          if (!this.pageParam.serverOnline && !this.pageParam.healthChecking) {
+          if (!this.serverOnline && !this.healthChecking) {
             this.offlineBanner()
           }
 
           // ── ③ 开始新的辅助评估 ──
           StartAssessmentCard({
             onPick: () => {
-              this.pageParam.onSelectMedia();
+              this.onSelectMedia();
             }
           })
 
           // ── ④ 当前任务 ──
           CurrentTaskCard({
-            task: this.pageParam.currentTask,
+            task: this.currentTask,
             onOpen: () => {
-              this.pageParam.onOpenTask();
+              this.onOpenTask();
             }
           })
 
           // ── ⑤ 最近使用的素材 ──
           RecentMediaSection({
-            items: this.pageParam.recentItems,
-            loading: this.pageParam.recentLoading,
-            errorMsg: this.pageParam.recentError,
+            items: this.recentItems,
+            loading: this.recentLoading,
+            errorMsg: this.recentError,
             onViewAll: () => {
-              this.pageParam.onViewAll();
+              this.onViewAll();
             },
             onSelect: (mediaId: string) => {
-              this.pageParam.onSelectRecent(mediaId);
+              this.onSelectRecent(mediaId);
             }
           })
         }

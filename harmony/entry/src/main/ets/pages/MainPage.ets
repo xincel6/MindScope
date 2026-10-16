@@ -166,28 +166,18 @@ export struct MainPage {
     profile.serverLabel = this.pageParam.serverLabel;
   }
 
-  /** 工作台参数投影 · 服务状态 / 当前任务 / 最近素材 */
+  /**
+   * 工作台参数投影
+   *
+   * ★ 工作台的**展示数据不再经参数传递** —— 它直接订阅 `AppStore`（响应式）。
+   *   原因见 `WorkbenchPage` 文件头：探活与 WS 进度都是异步到达的，
+   *   而经 `navDestination` 传参时，改字段不会让已挂载页面收到新值。
+   *   这里只剩下"注入路由栈引用"这件事，以及顺手同步分析详情页参数。
+   */
   private syncWorkbenchParam(param: WorkbenchPageParam): void {
-    const app: AppStore = AppStore.get();
     const stack: NavPathStack | null = this.navStack;
-
-    param.serverOnline = app.serverOnline;
-    param.serverStatusLabel = app.serverStatusLabel;
-    param.healthChecking = app.healthChecking;
-    param.serverLabel = this.pageParam.serverLabel;
     param.pathStack = stack;
-
-    // 当前任务：null 即"暂无进行中的分析"
-    param.currentTask = app.currentTask();
-
-    // 最近使用的素材：报告 + 媒体库拼出来的两条
-    const recent: RecentMediaModel[] = app.recentMedia(RECENT_MEDIA_LIMIT);
-    param.recentItems = recent;
-    // 只有"报告列表本身为空且正在加载"才算加载中，否则会把有缓存的场景误报成加载
-    param.recentLoading = app.reportLoading && recent.length === 0;
-    param.recentError = recent.length === 0 ? app.reportError : '';
-
-    // 同时刷新二级页参数（详情页可能正在显示）
+    // 详情页可能正在显示，一起刷新（它仍是参数驱动的二级页）
     this.syncDetailParam();
   }
 
@@ -484,7 +474,15 @@ export struct MainPage {
       .backgroundColor(UiTheme.pageBackground)
     } else if (name === MainTab.workbench && param instanceof WorkbenchPageParam) {
       NavDestination() {
-        WorkbenchPage({ pageParam: param as WorkbenchPageParam })
+        // ★ 工作台只接收**动作回调**：它的展示数据直接订阅 `AppStore`
+        //   （原因见 WorkbenchPage 文件头：异步到达的数据经 navDestination 传参不可靠）
+        WorkbenchPage({
+          onRefresh: param.onRefresh,
+          onSelectMedia: param.onSelectMedia,
+          onOpenTask: param.onOpenTask,
+          onViewAll: param.onViewAll,
+          onSelectRecent: param.onSelectRecent
+        })
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)

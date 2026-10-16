@@ -68,7 +68,11 @@ export struct AppCard {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(this._padding)
-    // ★ 卡片视觉（白底 / 圆角 / 投影）统一走 CardStyle，与 RippleCard 共用同一份定义
-    .attributeModifier(CardStyle.modifier)
+    // ★ 卡片视觉三项内联写：不要抽成共享的 AttributeModifier
+    //   （原因见 common/CardStyle.ets 顶部说明：共享修饰器实例会让卡片整片不渲染）
+    .backgroundColor(CardStyle.background())
+    .borderRadius(UiTheme.cardRadius)
+    .border({ width: 1, color: UiTheme.divider })
+    .shadow(CardStyle.shadow())
   }
 }

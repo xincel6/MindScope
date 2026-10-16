@@ -175,7 +175,7 @@ export struct RecentMediaSection {
       this.sectionHeader()
 
       if (this.items.length > 0) {
-        // ★ 每一行都是**独立**的 RippleCard：点击涟漪只在该行内扩散，
+        // ★ 每一行都是**独立**的 RippleCard：按压反馈只作用在被点的那一行，
         //   且该行的点击只会触发自己的 `onTap`（不会再冒泡出一个"整块"的动作）。
         ForEach(this.items, (item: RecentMediaModel) => {
           this.mediaRow(item)

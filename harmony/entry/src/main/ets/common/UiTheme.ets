@@ -59,8 +59,17 @@ export class UiTheme {
   /**
    * 卡片点击涟漪色 · 主色 12% 透明度（ARGB：前两位是 alpha）
    * ★ 纯白背景下必须带透明度，否则涟漪会变成一块实心绿，看着像卡片被选中了。
+   * ★ 当前仅作为**保留令牌**：手绘涟漪的方案已撤回（见 `BUG清单.md` BUG-01），
+   *   按压反馈改用 ArkUI 原生 `clickEffect` + `cardPressTint`。
    */
   public static readonly ripple: string = '#1F0D9488';
+
+  /**
+   * 卡片**按下**时的底色 · 极淡的主色
+   * ★ 与 `ripple` 的区别：这是整卡换底色（颜色属性，不影响布局），
+   *   配合原生 `clickEffect` 一起表达"按下了"。
+   */
+  public static readonly cardPressTint: string = '#F2F8F7';
 
   /** 服务状态灯 · 已连接 */
   public static readonly statusOnline: string = '#16a34a';
@@ -131,10 +140,20 @@ export class UiTheme {
   /** 卡片默认内边距 */
   public static readonly cardPadding: number = 16;
 
-  /** 卡片投影（低强度，符合"少用大面积效果"） */
-  public static readonly cardShadowRadius: number = 8;
-  public static readonly cardShadowColor: string = '#0F1E3A5F';
+  /**
+   * 卡片投影（低强度，符合"少用大面积效果"）
+   *
+   * ★ 色值必须是**6 位 `#RRGGBB`**：ArkUI `shadow()` 的 `color` 官方类型是 `ResourceColor`，
+   *   文档示例都是 6 位；原先写 8 位（`#0F1E3A5F`，带 alpha）在预览器上会让卡片整片不渲染
+   *   —— 属于"编译通过、运行白屏"的隐形坑。要弱化投影请调低 `cardShadowOpacity`，
+   *   不要往色值里塞 alpha。
+   */
+  public static readonly cardShadowRadius: number = 10;
+  public static readonly cardShadowColor: string = '#1E3A5F';
   public static readonly cardShadowOffsetY: number = 2;
+
+  /** 卡片投影的不透明度（0–1）· 与 `cardShadowColor` 配合表达"很淡的一层影" */
+  public static readonly cardShadowOpacity: number = 0.12;
 
   // ────────────────── 工作台专用尺寸 ──────────────────
 
@@ -150,9 +169,12 @@ export class UiTheme {
   /** 最近素材缩略图边长 */
   public static readonly thumbSize: number = 56;
 
-  /** 点击涟漪动画时长（毫秒） */
+  /** 点击涟漪动画时长（毫秒）· 保留令牌（手绘涟漪已撤回，见 BUG清单 BUG-01） */
   public static readonly rippleDuration: number = 300;
 
   /** 涟漪终止透明度（涟漪色自带 alpha，这里只做"扩散即淡出"的收尾） */
   public static readonly rippleEndOpacity: number = 0;
+
+  /** 卡片按压反馈的过渡时长（毫秒）· 比涟漪更短，手感才"跟手" */
+  public static readonly pressDuration: number = 120;
 }
