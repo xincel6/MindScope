@@ -19,6 +19,9 @@ import { Logger } from '../common/Logger';
 /** 分析结束后需要做的事（统计/报告刷新）· 由 AppStore 注入 */
 export type AnalysisFinishedHook = () => Promise<void>;
 
+/** 实时评分曲线最多保留的点数（超出后丢弃最旧的，避免长时间视频把数组撑爆） */
+export const MAX_SCORE_POINTS: number = 120;
+
 /** WS → 状态 的桥接器 · 集中对外接口在顶部 */
 export class AnalysisStateHolder extends AnalysisListener {
   private readonly state: AnalysisState;
@@ -123,6 +126,11 @@ export class AnalysisStateHolder extends AnalysisListener {
     return this.state.frameCount;
   }
 
+  /** 逐帧分数序列（实时评分曲线用，最旧的点最多保留 MAX_SCORE_POINTS 个） */
+  public scoreHistoryOf(): number[] {
+    return this.state.scoreHistory;
+  }
+
   /** 最近一帧（无帧为 null） */
   public lastFrameOf(): AnalysisFrameModel | null {
     return this.state.lastFrame;
@@ -145,6 +153,13 @@ export class AnalysisStateHolder extends AnalysisListener {
     this.state.bdiScore = frame.bdiScore;
     this.state.progress = frame.progress;
     this.state.frameCount = this.state.frameCount + 1;
+
+    // 实时评分曲线：★ 用 concat 产出新数组再赋值，保证 V2 的 @Trace 一定感知到变化
+    let history: number[] = this.state.scoreHistory.concat([Math.round(frame.bdiScore)]);
+    if (history.length > MAX_SCORE_POINTS) {
+      history = history.slice(history.length - MAX_SCORE_POINTS);
+    }
+    this.state.scoreHistory = history;
   }
 
   public onStatus(taskId: string): void {
@@ -198,6 +213,7 @@ export class AnalysisStateHolder extends AnalysisListener {
     this.state.bdiScore = 0;
     this.state.frameCount = 0;
     this.state.lastFrame = null;
+    this.state.scoreHistory = [];
     this.state.vlmText = '';
     this.state.finalScore = 0;
     this.state.errorMsg = '';

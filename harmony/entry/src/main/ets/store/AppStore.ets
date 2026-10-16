@@ -91,6 +91,8 @@ export class AppStore {
   @Trace analysisScore: number = 0;
   @Trace analysisFrameCount: number = 0;
   @Trace analysisLastFrame: AnalysisFrameModel | null = null;
+  /** 本次分析逐帧分数序列（工作台实时评分曲线直接吃它） */
+  @Trace scoreHistory: number[] = [];
   @Trace analysisVlmText: string = '';
   @Trace analysisError: string = '';
   @Trace socketState: SocketState = SocketState.idle;
@@ -309,6 +311,7 @@ export class AppStore {
       this.analysisScore = holder.scoreOf();
       this.analysisFrameCount = holder.frameCountOf();
       this.analysisLastFrame = holder.lastFrameOf();
+      this.scoreHistory = holder.scoreHistoryOf();
       this.analysisVlmText = holder.vlmTextOf();
       this.socketState = holder.socketStateOf();
       this.syncCurrentTask(holder);

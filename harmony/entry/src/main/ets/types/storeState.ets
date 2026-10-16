@@ -92,6 +92,12 @@ export class AnalysisState {
   @Trace frameCount: number = 0;
   /** 最近一帧（热力图 / 人脸图渲染用） */
   @Trace lastFrame: AnalysisFrameModel | null = null;
+  /**
+   * 逐帧 BDI 分数序列（工作台「实时评分曲线」的数据源）
+   * · 每收到一帧就追加一个整数分，最多保留最近 `MAX_SCORE_POINTS` 个点
+   * · ★ 追加时【整体替换数组引用】，保证 V2 状态一定触发界面刷新
+   */
+  @Trace scoreHistory: number[] = [];
   /** VLM 文本解读 */
   @Trace vlmText: string = '';
   /** done 消息里的最终分数 */
