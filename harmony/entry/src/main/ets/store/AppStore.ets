@@ -592,6 +592,19 @@ export class AppStore {
     return holder === null ? [] : holder.heatmap();
   }
 
+  /**
+   * **逐帧序列**（横向逐帧列表 / 视频切分视图的数据源）
+   *
+   * ★ 每次调用返回的是桥接器里那个 `@Trace` 数组**本身**，不是副本：
+   *   页面在 `@Computed` 里读它，每来一帧（整体替换引用）就会失效重算，
+   *   不依赖窗口层 `sync()` 的调用时机 —— 这是"逐帧实时"最可靠的一条链路。
+   * ★ 桥接器还没建时返回空数组（页面走占位态）。
+   */
+  public analysisFrameHistory(): AnalysisFrameModel[] {
+    const holder: AnalysisStateHolder | null = this.analysisHolder;
+    return holder === null ? [] : holder.frameHistory();
+  }
+
   /** 进度百分比文案 */
   public analysisProgressText(): string {
     const holder: AnalysisStateHolder | null = this.analysisHolder;

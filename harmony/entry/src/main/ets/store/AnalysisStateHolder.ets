@@ -22,6 +22,23 @@ export type AnalysisFinishedHook = () => Promise<void>;
 /** 实时评分曲线最多保留的点数（超出后丢弃最旧的，避免长时间视频把数组撑爆） */
 export const MAX_SCORE_POINTS: number = 120;
 
+/**
+ * 横向逐帧列表最多保留的帧数（视频切分视图的窗口大小）
+ *
+ * 取值依据（服务端 `services/frame_processor.py`）：
+ *   · **图片**路径固定推 10 帧（`_process_image` 的 `steps = 10`）；
+ *   · **视频**路径按 `total // 60` 采样，目标约 **60 帧**，按 24 一组成批 flush，
+ *     最后一组会补重复帧凑满，所以实际略多于 60。
+ * 取 90 可完整覆盖一次视频分析，同时把内存钉在可控范围：
+ * 每帧含一张 128×128 JPEG 的 base64（约 5–15KB），90 帧 ≈ 0.5–1.3MB。
+ *
+ * ★ 超过上限时**从头部丢弃最旧的帧**（环形窗口语义）。这意味着极长视频的
+ *   "开头几帧"在分析结束后不再保留在内存里 —— 若将来要做"全片缩略总览"，
+ *   正确做法是把热度矩阵（16×16 数字，每帧仅 256 个数）单独持久化，
+ *   而不是把整帧 base64 全留内存。本轮为验证轮，不做持久化。
+ */
+export const MAX_FRAME_HISTORY: number = 90;
+
 /** WS → 状态 的桥接器 · 集中对外接口在顶部 */
 export class AnalysisStateHolder extends AnalysisListener {
   private readonly state: AnalysisState;
@@ -78,6 +95,15 @@ export class AnalysisStateHolder extends AnalysisListener {
   public heatmap(): number[][] {
     const frame: AnalysisFrameModel | null = this.state.lastFrame;
     return frame === null ? [] : frame.heatmapData;
+  }
+
+  /**
+   * 逐帧序列（横向逐帧列表 / 视频切分视图的数据源）
+   * ★ 返回的就是 `@Trace` 的那个数组本身：页面在 `@Computed` 里读它，
+   *   每帧整体替换引用时会自动失效重算，不依赖窗口层的 `sync()` 时机。
+   */
+  public frameHistory(): AnalysisFrameModel[] {
+    return this.state.frameHistory;
   }
 
   /**
@@ -154,6 +180,14 @@ export class AnalysisStateHolder extends AnalysisListener {
     this.state.progress = frame.progress;
     this.state.frameCount = this.state.frameCount + 1;
 
+    // ★ 逐帧序列（横向列表用）：同样用 concat 产出**新数组**再赋值，
+    //   保证 V2 的 @Trace 一定感知到变化；超出上限时丢最旧的帧。
+    let frames: AnalysisFrameModel[] = this.state.frameHistory.concat([frame]);
+    if (frames.length > MAX_FRAME_HISTORY) {
+      frames = frames.slice(frames.length - MAX_FRAME_HISTORY);
+    }
+    this.state.frameHistory = frames;
+
     // 实时评分曲线：★ 用 concat 产出新数组再赋值，保证 V2 的 @Trace 一定感知到变化
     let history: number[] = this.state.scoreHistory.concat([Math.round(frame.bdiScore)]);
     if (history.length > MAX_SCORE_POINTS) {
@@ -213,6 +247,7 @@ export class AnalysisStateHolder extends AnalysisListener {
     this.state.bdiScore = 0;
     this.state.frameCount = 0;
     this.state.lastFrame = null;
+    this.state.frameHistory = [];
     this.state.scoreHistory = [];
     this.state.vlmText = '';
     this.state.finalScore = 0;
