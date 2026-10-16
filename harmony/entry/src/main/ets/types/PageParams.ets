@@ -21,6 +21,9 @@
  *   不需要也无法 import（`@kit.ArkUI` 并未导出它）。直接写类型名即可。
  */
 
+import { TaskStatus } from './enums';
+import { CurrentTaskModel, RecentMediaModel } from './model';
+
 /** 全部页面参数的基类 · 让"页面参数"在类型上有一个共同祖先，便于统一签名与调试 */
 export class PageParam {
 }
@@ -228,3 +231,178 @@ export class ProfilePageParam extends TabPageParam {
   /** 登出回调 · 本轮不赋值（留空即不显示登出入口，用户已确认本轮不做登出） */
   public onLogout: () => void = () => {};
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  五、工作台（一级页签，但参数比其它页签多得多，故单独一个类）
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * 工作台参数（`pages/WorkbenchPage.ets`）
+ *
+ * ★ 为什么在 `TabPageParam` 之外单开一个类，而不是往 `TabPageParam` 里塞字段：
+ *   `TabPageParam` 是五个页签的公共契约，往里加"最近素材/当前任务"会让
+ *   素材库、统计等页面白背一堆用不到的字段。工作台需要什么就继承后自己加。
+ *
+ * ★ 与上一轮占位页的差异：原注释说"本轮没有数据源，因此不渲染加载态"，
+ *   本轮已接入 `AppStore`，所以 `busy` / `errorMsg` 开始真正被使用
+ *   （离线横幅与最近素材的空态就是它们驱动的）。
+ */
+export class WorkbenchPageParam extends TabPageParam {
+  // ── 服务状态 ──
+
+  /** 服务端是否在线（绿色圆点 / 红色圆点） */
+  public serverOnline: boolean = false;
+
+  /** 服务状态文案（"在线" / "未连接"） */
+  public serverStatusLabel: string = '未连接';
+
+  /** 是否正在探活（刷新按钮忙碌态） */
+  public healthChecking: boolean = false;
+
+  /** 服务端地址展示 · 形如 100.122.178.113:8000 */
+  public serverLabel: string = '';
+
+  // ── 当前任务 ──
+
+  /** 当前任务 · null 表示「暂无进行中的分析」 */
+  public currentTask: CurrentTaskModel | null = null;
+
+  // ── 最近使用的素材 ──
+
+  /** 最近 2 条素材（含分数与严重度进度条） */
+  public recentItems: RecentMediaModel[] = [];
+
+  /** 最近素材是否仍在加载（首次进入且无缓存时才有意义） */
+  public recentLoading: boolean = false;
+
+  /** 最近素材加载失败文案 · 非空即展示 */
+  public recentError: string = '';
+
+  // ── 动作回调（全部由窗口层实现） ──
+
+  /** 点右上角刷新 / 离线横幅的「重试」· 窗口层调 `AppStore.checkHealth()` */
+  public onRefresh: () => void = () => {};
+
+  /** 点「选择素材」或「开始新的辅助评估」卡片 · 窗口层跳素材选择页 */
+  public onSelectMedia: () => void = () => {};
+
+  /** 点「当前任务」卡片 · 窗口层重新打开分析详情页 */
+  public onOpenTask: () => void = () => {};
+
+  /** 点「查看全部」· 窗口层切到历史报告页签 */
+  public onViewAll: () => void = () => {};
+
+  /** 点某条最近素材 · 窗口层按该素材的报告快照打开分析详情页（**不是**切到历史报告页签） */
+  public onSelectRecent: (mediaId: string) => void = (mediaId: string) => {};
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  六、工作台二级页面
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * 素材选择页参数（`pages/MediaPickerPage.ets`）
+ *
+ * 这一页负责"系统选择器 → 上传服务端"的完整动作，页面自己不碰网络与系统能力：
+ *   - 点按钮   → 调 `onPickRequest`（窗口层决定用系统选择器还是别的方式）
+ *   - 上传     → 调 `onUpload`（窗口层调 `MediaStore.uploadMedia`）
+ *   - 上传成功 → 窗口层负责本页内刷新状态 + 跳转分析详情页（页面不碰路由栈）
+ */
+export class MediaPickerPageParam extends PageParam {
+  /** 页面标题（固定文案也走参数，方便将来改口径） */
+  public title: string = '选择素材';
+
+  /** 点「选择素材」· 窗口层打开系统选择器，返回是否选到了东西 */
+  public onPickRequest: () => Promise<boolean> = (): Promise<boolean> => {
+    return Promise.resolve(false);
+  };
+
+  /** 点「开始上传」· 窗口层调 MediaStore.uploadMedia；返回 true 表示上传成功（已跳转） */
+  public onUpload: () => Promise<boolean> = (): Promise<boolean> => {
+    return Promise.resolve(false);
+  };
+
+  /** 返回工作台 · 窗口层出栈 */
+  public onBack: () => void = () => {};
+
+  /** 是否已有选中的素材（决定是否显示预览与上传按钮） */
+  public hasPicked: boolean = false;
+
+  /** 已选素材的展示名 */
+  public pickedName: string = '';
+
+  /** 已选素材是否为视频（预览区据此显示播放图标而非缩略图） */
+  public pickedIsVideo: boolean = false;
+
+  /** 已选素材的本地 URI · 图片可直接喂 `Image` 预览 */
+  public pickedUri: string = '';
+
+  /** 是否正在上传 */
+  public uploading: boolean = false;
+
+  /** 错误文案 · 非空即展示（含"格式不支持""上传失败"） */
+  public errorMsg: string = '';
+}
+
+/**
+ * 分析详情页参数（`pages/AnalysisDetailPage.ets`）· **本轮为占位页**
+ *
+ * 折线图 / 饼图 / 热力图组件尚未实现，所以本页只放：
+ *   - 素材名与类型（证明跳转链路通了）
+ *   - 真实的分析进度与实时分数（数据来自 WS，不是假数据）
+ *   - 明确的"图表区待实现"占位块
+ *
+ * ★ 状态语义：`status` 直接取 `TaskStatus`，页面按它决定显示
+ *   「分析中 / 已完成 / 失败」三种文案，不去读 `AppStore.analyzing`。
+ */
+export class AnalysisDetailPageParam extends PageParam {
+  /**
+   * 本页数据是否**跟随当前正在跑的分析任务**（窗口层每次同步都会覆盖本页字段）
+   *
+   * ★ true  → 从工作台「当前任务」进入：进度/分数随 WS 实时刷新；
+   * ★ false → 从「最近使用的素材」进入历史快照：本页字段是**冻结**的一次性投影，
+   *           窗口层的 `syncDetailParam()` 会直接跳过本页，不再覆盖。
+   *   没有这个开关的话，查看历史素材时页面会被"当前任务"的数据反复改写 —— 本轮修掉的 bug 之一。
+   */
+  public followLiveTask: boolean = true;
+
+  /** 素材 id（当前任务 id） */
+  public mediaId: string = '';
+
+  /** 素材名 */
+  public mediaName: string = '';
+
+  /** 素材类型中文（"图片" / "视频"） */
+  public mediaTypeLabel: string = '';
+
+  /** 任务状态 */
+  public status: TaskStatus = TaskStatus.none;
+
+  /** 分析进度 0–1 */
+  public progress: number = 0;
+
+  /** 已收到帧数（占位区用来证明数据在流动） */
+  public frameCount: number = 0;
+
+  /** 最新 BDI 分数（0 表示还没出分） */
+  public bdiScore: number = 0;
+
+  /** 分数档位中文标签（"正常"/"轻度"/"中度"/"重度"）· 分数为 0 时为空串 */
+  public severityLabel: string = '';
+
+  /** 分数档位颜色 */
+  public severityColor: string = '';
+
+  /** 服务端 VLM 文本解读 · 可能一直为空（不是所有素材都会触发） */
+  public vlmText: string = '';
+
+  /** 错误文案 · 非空即展示 */
+  public errorMsg: string = '';
+
+  /** 点返回 · 窗口层出栈（**不停分析**，分析在 AppStore 上继续跑） */
+  public onBack: () => void = () => {};
+
+  /** 点「取消分析」· 窗口层调 AppStore.cancelAnalysis（★ 视频场景基本无效，按钮要弱化） */
+  public onCancelAnalysis: () => void = () => {};
+}
+

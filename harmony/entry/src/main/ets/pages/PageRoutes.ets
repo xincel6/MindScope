@@ -26,6 +26,20 @@ export const LOGIN_ROUTE: string = 'login';
 /** 注册页路由名 */
 export const REGISTER_ROUTE: string = 'register';
 
+/**
+ * 素材选择页路由名（工作台二级页）
+ * ★ 二级页面用 `pushPathByName` 入栈，系统返回键即可回到工作台，
+ *   所以页面**不需要**自己实现"返回上一页"的栈操作。
+ */
+export const MEDIA_PICKER_ROUTE: string = 'mediaPicker';
+
+/**
+ * 分析详情页路由名（工作台二级页）
+ * ★ 本轮它是**占位页**（图表组件未实现），但进度的数据是真的（走 WS）。
+ */
+export const ANALYSIS_DETAIL_ROUTE: string = 'analysisDetail';
+
+
 // ══════════════════ ② 页签元数据 ══════════════════
 
 /** 一个底部页签的展示元数据 */

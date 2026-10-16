@@ -11,7 +11,7 @@
  *  - 不支持交叉类型 `A & B`，需要组合时用 `extends`
  */
 
-import { MediaType, SeverityLevel } from './enums';
+import { MediaType, SeverityLevel, TaskStatus } from './enums';
 
 // ───────────────────────────── 鉴权 ─────────────────────────────
 
@@ -176,5 +176,75 @@ export interface ActionResultModel {
 export interface MediaOptionModel {
   id: string;
   name: string;
+  type: MediaType;
+}
+
+// ───────────────────────────── 工作台 ─────────────────────────────
+
+/**
+ * 工作台「当前任务」· 一次分析的会话摘要
+ *
+ * ★ 它**不是**新数据源，而是 `AppStore` 上几个 `@Trace` 字段的只读投影：
+ *   由窗口层在"开始分析 / 收到 done / 收到 error"三个时机刷新。
+ *   这样工作台的「当前任务」卡片不需要自己拼 store 里的零散字段。
+ */
+export interface CurrentTaskModel {
+  mediaId: string;
+  /** 素材名（原始文件名） */
+  mediaName: string;
+  mediaType: MediaType;
+  status: TaskStatus;
+  /** 0–1 */
+  progress: number;
+  /** 最新 BDI 分数（未出分时为 0） */
+  bdiScore: number;
+  /** 失败文案（status = failed 时非空） */
+  errorMsg: string;
+}
+
+/**
+ * 工作台「最近使用的素材」一行
+ *
+ * ★ 数据是**两个 store 拼出来的**，后端没有这个接口：
+ *   分数/档位来自 `reportItems`（按 detected_at 倒序），
+ *   缩略图/文件名来自 `mediaItems`（按 mediaId 关联）。
+ *   所以 mediaItems 缺失时（离线且无缓存）缩略图为空串，UI 必须能降级。
+ */
+export interface RecentMediaModel {
+  mediaId: string;
+  name: string;
+  type: MediaType;
+  /** 已拼好的绝对地址；空串表示无缩略图（视频场景后端不生成） */
+  thumbnailUrl: string;
+  /** BDI 分数，0–63 */
+  bdiScore: number;
+  severity: SeverityLevel;
+  /** 档位中文标签（正常/轻度/中度/重度） */
+  severityLabel: string;
+  /** 档位颜色（来自 UiConstant.severityMeta） */
+  severityColor: string;
+  /** 进度条填充比例 = bdiScore / BDI_MAX_SCORE，0–1 */
+  scoreRatio: number;
+  /** "YYYY-MM-DD HH:mm:ss" */
+  detectedAt: string;
+}
+
+// ───────────────────────────── 素材选择 ─────────────────────────────
+
+/**
+ * 用户从系统选择器选中的素材
+ *
+ * ★ 必须带 `type`：系统选择器只返回 URI，不告诉我们这是图片还是视频，
+ *   而工作台要按类型显示「图片 / 视频」。类型判定在 `common/MediaPicker.ets`
+ *   里按扩展名 + MIME 双条件做，判定结果存这里。
+ */
+export interface PickedMediaModel {
+  /** 系统相册 URI（形如 file://media/Photo/12/IMG_xxx/IMG_20260101_120000.jpg） */
+  uri: string;
+  /** 用于上传的文件名（后端把它写进 media_assets.name，会显示在列表上） */
+  fileName: string;
+  /** MIME，如 image/jpeg；不确定时为 application/octet-stream */
+  mimeType: string;
+  /** 图片还是视频（按扩展名判定） */
   type: MediaType;
 }

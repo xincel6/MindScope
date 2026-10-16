@@ -50,3 +50,22 @@ export enum ApiStatus {
   unprocessable = 422,
   serverError = 500
 }
+
+/**
+ * 工作台「当前任务」的状态
+ *
+ * ★ 为什么单独一个枚举，而不是复用 `AnalysisState.running`：
+ *   `running` 只区分"在跑 / 没在跑"，而工作台要区分"没在跑"到底是
+ *   **跑完了**（要显示分数）还是**出错了**（要显示重试）—— 三态语义不同。
+ * ★ 只放内存、随会话消失（用户本轮确认），不做持久化。
+ */
+export enum TaskStatus {
+  /** 没有任务 */
+  none = 0,
+  /** 分析进行中 */
+  running = 1,
+  /** 分析已完成（服务端已落库 diagnosis_report） */
+  done = 2,
+  /** 分析失败 / 连接中断且重连耗尽 */
+  failed = 3
+}

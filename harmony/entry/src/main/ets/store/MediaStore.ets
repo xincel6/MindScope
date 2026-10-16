@@ -38,6 +38,9 @@ export class MediaStore extends BaseStore {
   /** 媒体库筛选（null = 全部） */
   @Trace typeFilter: MediaType | null = null;
 
+  /** 最近一次成功上传的素材 · 供窗口层拿到 id 去开分析会话 */
+  @Trace lastUploaded: MediaItemModel | null = null;
+
   // ────────────────── 单例 ──────────────────
 
   private static instance: MediaStore | null = null;
@@ -192,25 +195,39 @@ export class MediaStore extends BaseStore {
   }
 
   /**
-   * 上传图片 · multipart 字段名固定为 `file`
-   * ★ 后端响应只有 4 个字段，这里用 `Mapper.toUploadedMedia` 补齐后入 store + 镜像表
+   * 上传素材（图片或视频）· multipart 字段名固定为 `file`
+   *
+   * ★ 后端响应只有 4 个字段，这里用 `Mapper.toUploadedMedia` 补齐后入 store + 镜像表。
+   * ★ 视频与图片是**同一个端点**（后端 `/api/upload/image` 的白名单含视频扩展名），
+   *   所以这里不按类型分流；类型由响应里的 `type` 字段决定（服务端按扩展名判定）。
    */
-  public async uploadImage(file: UploadFileSpec): Promise<ActionResultModel> {
+  public async uploadMedia(file: UploadFileSpec): Promise<MediaItemModel | null> {
     this.beginLoad();
     try {
-      const dto: UploadImageOutDto = await MediaApi.uploadImage(file);
+      const dto: UploadImageOutDto = await MediaApi.uploadMedia(file);
       const item: MediaItemModel = Mapper.toUploadedMedia(dto, new Date());
       this.prependLocal(item);
       await StorageManager.mediaDao().save(item);
       this.endLoadOk();
-      this.log().i(`图片已上传 · id=${item.id}`);
-      return MediaStore.ok('上传成功');
+      this.log().i(`素材已上传 · id=${item.id} type=${item.type as string}`);
+      // ★ 返回整条模型而不是 ActionResultModel：窗口层要拿 id 去开分析会话
+      this.lastUploaded = item;
+      return item;
     } catch (err) {
       const apiErr = toApiError(err as Object);
       this.endLoadErr(apiErr.message);
-      this.log().e('图片上传失败', err as Object);
-      return MediaStore.fail(apiErr.message);
+      this.log().e('素材上传失败', err as Object);
+      return null;
     }
+  }
+
+  /** 保留旧名字（上一轮的调用方/文档都用它），语义等价于 `uploadMedia` 的图片场景 */
+  public async uploadImage(file: UploadFileSpec): Promise<ActionResultModel> {
+    const item: MediaItemModel | null = await this.uploadMedia(file);
+    if (item === null) {
+      return MediaStore.fail(this.errorMsg.length > 0 ? this.errorMsg : '上传失败');
+    }
+    return MediaStore.ok('上传成功');
   }
 
   /** 实现 BaseStore：清空内存（磁盘缓存由 StorageManager.clearBusinessCache 负责） */
@@ -221,6 +238,7 @@ export class MediaStore extends BaseStore {
     this.loading = false;
     this.errorMsg = '';
     this.lastSyncAt = 0;
+    this.lastUploaded = null;
   }
 
   /** 实现 BaseStore */

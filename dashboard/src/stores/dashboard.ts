@@ -57,6 +57,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   // --- Analysis ---
   const analyzing = ref(false)
+  /** 每次发起分析自增：作为「按需建立 WebSocket」的触发信号（同一素材再分析一次也能触发） */
+  const analysisRunId = ref(0)
   const currentFrame = ref<AnalysisFrame | null>(null)
   const bdiHistory = ref<BdiPoint[]>([])
   const faceImageData = ref<string>('')
@@ -151,6 +153,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   async function startAnalysis(id: string) {
     selectedMediaId.value = id
     analyzing.value = true
+    analysisRunId.value += 1
     bdiHistory.value = []
     analysisProgress.value = 0
     currentFrame.value = null
@@ -467,7 +470,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
   return {
     mediaList, mediaLoading, mediaError, selectedMediaId,
     analyzing, currentFrame, bdiHistory, faceImageData, heatmapData,
-    inferenceTimeMs, analysisProgress, wsConnected, isDemo, demoPlaying,
+    inferenceTimeMs, analysisProgress, wsConnected, isDemo, demoPlaying, analysisRunId,
     currentScore, severity, severityLabel, severityColor, suggestion, selectedMedia,
     patientInfo, setPatientInfo,
     faceFrameHistory,

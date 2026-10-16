@@ -10,6 +10,12 @@
 
 import { MediaType, SeverityLevel } from './enums';
 
+/**
+ * BDI-II 满分 · 与后端口径一致（`dashboard/backend/services/vllm.py`：29~63 分属重度）
+ * ★ 严重度进度条的分母就是它，改这里等于改所有"分数占比"的显示。
+ */
+export const BDI_MAX_SCORE: number = 63;
+
 /** BDI 分级阈值常量 */
 export class BdiThreshold {
   /** ≤ 13 视为正常 */
@@ -139,6 +145,20 @@ export class UiConstant {
   public static severityColor(raw: string): string {
     const hit: SeverityMeta | undefined = SEVERITY_META_MAP[raw];
     return hit !== undefined ? hit.color : UiConstant.textSecondaryColor;
+  }
+
+  /**
+   * 严重度中文标签（按枚举取）
+   * ★ 与 `severityLabel(raw)` 的区别：这个入参已经是归一化后的枚举，
+   *   分数换算场景（`BdiThreshold.levelOf(score)`）直接拿它，不必再转字符串。
+   */
+  public static severityLabelOf(level: SeverityLevel): string {
+    return UiConstant.severityMeta(level).label;
+  }
+
+  /** 严重度颜色（按枚举取） */
+  public static severityColorOf(level: SeverityLevel): string {
+    return UiConstant.severityMeta(level).color;
   }
 
   /** 严重度干预建议 */

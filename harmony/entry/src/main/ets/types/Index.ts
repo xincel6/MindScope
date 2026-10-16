@@ -16,12 +16,12 @@
  */
 
 // ── 枚举 ──
-export { SeverityLevel, MediaType, SocketState, BootPhase, ApiStatus } from './enums';
+export { SeverityLevel, MediaType, SocketState, BootPhase, ApiStatus, TaskStatus } from './enums';
 
 // ── 常量与配置 ──
 export {
   BdiThreshold, UiConstant, SeverityMeta, PREFERENCES_NAME, RDB_STORE_NAME,
-  RDB_VERSION, TOKEN_TTL_MS, LOG_DOMAIN, LOG_TAG
+  RDB_VERSION, TOKEN_TTL_MS, LOG_DOMAIN, LOG_TAG, BDI_MAX_SCORE
 } from './constant';
 
 // ── Wire DTO（唯一允许 snake_case 的一层）──
@@ -37,7 +37,7 @@ export {
   UserModel, SessionModel, MediaItemModel, DiagnosisReportModel, ReportListItemModel,
   ReportPageModel, ReportFilterModel, BdiTrendPointModel, StatsModel, SeverityBucketModel,
   AnalysisFrameModel, FaceAnalyzeModel, HealthModel, ActionResultModel, MediaOptionModel,
-  DiagnosisReportNotes
+  DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel
 } from './model';
 
 // ── 映射器 ──

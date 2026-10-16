@@ -10,3 +10,5 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+# 命令行构建脚本（scripts/build.sh）的输出日志
+/_build.log

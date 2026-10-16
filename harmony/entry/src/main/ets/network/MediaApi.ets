@@ -38,4 +38,23 @@ export class MediaApi {
   public static uploadImage(file: UploadFileSpec): Promise<UploadImageOutDto> {
     return HttpClient.upload<UploadImageOutDto>('/api/upload/image', 'file', file);
   }
+
+  /**
+   * 上传素材（图片**或视频**）
+   *
+   * ★ 名字与路径不一致是**后端现状**，不是笔误：
+   *   后端只有一个 `/api/upload/image` 端点（`routers/upload.py:19`），
+   *   但它的白名单 `ALLOWED_EXTENSIONS` 同时包含 `.mp4/.avi/.mov/.webm`，
+   *   并会按扩展名把 `MediaAsset.type` 落成 `video`。
+   *   所以视频走的就是这个端点 —— 这里保留路径原样，只把客户端侧名字说清楚，
+   *   将来后端拆出 `/api/upload/media` 时，只需改本方法内部一行。
+   *
+   * ★ 视频文件（几十 MB）比图片慢得多，因此上传使用放宽后的超时
+   *   （见 `HttpClient.uploadWithTimeout`），不要复用 30s 的读超时。
+   */
+  public static uploadMedia(file: UploadFileSpec): Promise<UploadImageOutDto> {
+    return HttpClient.uploadWithTimeout<UploadImageOutDto>(
+      '/api/upload/image', 'file', file, HttpClient.uploadTimeoutMs
+    );
+  }
 }

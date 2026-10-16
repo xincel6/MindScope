@@ -18,6 +18,9 @@ from config import MEDIA_DIR
 
 router = APIRouter()
 
+# 等待首条（带 media id 的）消息的最长时间；期间的心跳不会重置这个期限
+FIRST_MESSAGE_TIMEOUT = 60.0
+
 
 def _severity(score: float) -> SeverityLevel:
     if score <= 13:
@@ -27,6 +30,26 @@ def _severity(score: float) -> SeverityLevel:
     if score <= 28:
         return SeverityLevel.moderate
     return SeverityLevel.severe
+
+
+async def _safe_send_json(ws: WebSocket, payload: dict) -> bool:
+    """发送失败（客户端已经走了）时返回 False 而不是抛异常。
+
+    uvicorn 在连接断开后调用 send 会抛 ClientDisconnected（OSError 子类），
+    这类异常冒泡出去就是一条 ERROR 堆栈——那是正常的连接生命周期，不该报错。
+    """
+    try:
+        await ws.send_json(payload)
+        return True
+    except (WebSocketDisconnect, RuntimeError, OSError):
+        return False
+
+
+async def _safe_close(ws: WebSocket) -> None:
+    try:
+        await ws.close()
+    except (RuntimeError, OSError):
+        pass
 
 
 async def _verify_ws_token(ws: WebSocket) -> Optional[User]:
@@ -55,43 +78,74 @@ async def ws_analysis(ws: WebSocket):
 
     await ws.accept()
 
-    # Wait for client to send the media id
-    try:
-        init_msg = await asyncio.wait_for(ws.receive_text(), timeout=15.0)
-        payload = json.loads(init_msg)
-        media_id = payload.get("id") or payload.get("media_id")
-    except asyncio.TimeoutError:
-        await ws.send_json({"type": "error", "message": "No media id received"})
-        await ws.close()
-        return
+    # 等客户端发来首条带 media id 的消息。
+    #   - 心跳 {"type": "ping"} 之类的无关消息直接跳过，不打断等待
+    #   - 客户端在开始分析前就断开（刷新/切页/关标签页 → close code 1005）属于正常
+    #     连接生命周期，安静返回即可，不该变成一条 ASGI ERROR 堆栈
+    deadline = time.monotonic() + FIRST_MESSAGE_TIMEOUT
+    media_id: Optional[int] = None
+    while media_id is None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            await _safe_send_json(ws, {"type": "error", "message": "No media id received"})
+            await _safe_close(ws)
+            return
 
-    if not media_id:
-        await ws.send_json({"type": "error", "message": "media_id required"})
-        await ws.close()
-        return
+        try:
+            init_msg = await asyncio.wait_for(ws.receive_text(), timeout=remaining)
+        except asyncio.TimeoutError:
+            await _safe_send_json(ws, {"type": "error", "message": "No media id received"})
+            await _safe_close(ws)
+            return
+        except WebSocketDisconnect:
+            return
+        except Exception:  # 协议层异常，同样安静退出
+            return
+
+        try:
+            payload = json.loads(init_msg)
+        except (TypeError, ValueError):
+            continue  # 收到非法 JSON 不足以判定失败，继续等
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("type") == "ping":
+            continue  # 前端心跳，静默忽略（回 pong 会被前端当成一帧数据）
+
+        candidate = payload.get("id") or payload.get("media_id")
+        if not candidate:
+            continue
+        try:
+            media_id = int(candidate)
+        except (TypeError, ValueError):
+            await _safe_send_json(ws, {"type": "error", "message": "invalid media_id"})
+            await _safe_close(ws)
+            return
 
     # Look up media asset
     async with async_session() as db:
         result = await db.execute(
-            select(MediaAsset).where(MediaAsset.id == int(media_id))
+            select(MediaAsset).where(MediaAsset.id == media_id)
         )
         asset = result.scalar_one_or_none()
 
     if not asset:
-        await ws.send_json({"type": "error", "message": "Media not found"})
-        await ws.close()
+        await _safe_send_json(ws, {"type": "error", "message": "Media not found"})
+        await _safe_close(ws)
         return
 
     # Build full path（DB 可能存绝对路径或 Windows 反斜杠路径）
     fp = Path(asset.file_path)
     media_path = fp if fp.is_file() else MEDIA_DIR / fp.name
     if not media_path.exists():
-        await ws.send_json({"type": "error", "message": f"File not found: {media_path}"})
-        await ws.close()
+        await _safe_send_json(ws, {"type": "error", "message": f"File not found: {media_path}"})
+        await _safe_close(ws)
         return
 
     # Send ack
-    await ws.send_json({"type": "status", "message": "analysis_started", "task_id": str(asset.id)})
+    if not await _safe_send_json(
+        ws, {"type": "status", "message": "analysis_started", "task_id": str(asset.id)}
+    ):
+        return  # 客户端已经断开，不必再跑模型
 
     # Start processing
     queue = await process_media(media_path, asset.type.value, str(asset.id))
@@ -109,8 +163,9 @@ async def ws_analysis(ws: WebSocket):
             if frame is None:
                 break
 
-            # Push frame to client
-            await ws.send_json(frame.model_dump())
+            # Push frame to client（客户端已走就直接收工，别再空跑）
+            if not await _safe_send_json(ws, frame.model_dump()):
+                break
 
             # Track final values
             final_score = frame.bdi_score
@@ -127,16 +182,21 @@ async def ws_analysis(ws: WebSocket):
             try:
                 data = await asyncio.wait_for(ws.receive_text(), timeout=0.01)
                 if data:
-                    msg = json.loads(data)
-                    if msg.get("type") == "cancel":
+                    try:
+                        msg = json.loads(data)
+                    except (TypeError, ValueError):
+                        msg = {}
+                    if isinstance(msg, dict) and msg.get("type") == "cancel":
                         break
             except asyncio.TimeoutError:
                 pass
+            except WebSocketDisconnect:
+                break  # 客户端中途断开，正常收尾（finally 里落库）
 
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        await ws.send_json({"type": "error", "message": str(e)})
+        await _safe_send_json(ws, {"type": "error", "message": str(e)})
     finally:
         # Persist diagnosis report
         if final_score > 0:
@@ -168,8 +228,8 @@ async def ws_analysis(ws: WebSocket):
 
         try:
             if vlm_text:
-                await ws.send_json({"type": "vlm_analysis", "content": vlm_text})
-            await ws.send_json({"type": "done", "final_score": final_score})
-            await ws.close()
+                await _safe_send_json(ws, {"type": "vlm_analysis", "content": vlm_text})
+            await _safe_send_json(ws, {"type": "done", "final_score": final_score})
+            await _safe_close(ws)
         except Exception:
             pass

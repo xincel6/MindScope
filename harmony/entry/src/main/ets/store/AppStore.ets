@@ -18,9 +18,9 @@ import { Logger } from '../common/Logger';
 import { HttpClient } from '../network/HttpClient';
 import { StorageManager } from '../persistence/StorageManager';
 import {
-  ActionResultModel, AnalysisFrameModel, BootPhase, MediaItemModel, MediaType,
-  normalizeMediaId, ReportListItemModel, SeverityBucketModel, SocketState, StatsModel,
-  UserModel
+  ActionResultModel, AnalysisFrameModel, BootPhase, BdiThreshold, CurrentTaskModel, BDI_MAX_SCORE,
+  MediaItemModel, MediaType, normalizeMediaId, RecentMediaModel, ReportListItemModel,
+  SeverityBucketModel, SocketState, StatsModel, TaskStatus, UiConstant, UserModel
 } from '../types/Index';
 import { AnalysisState, AppState, AuthState, MediaState, ReportState, StatsState } from '../types/storeState';
 import { AnalysisStateHolder } from './AnalysisStateHolder';
@@ -39,6 +39,22 @@ export class AppStore {
 
   /** 是否处于离线兜底（本地有数据、网络不可达） */
   @Trace offline: boolean = false;
+
+  /**
+   * 服务端连通性快照 · 工作台的"服务状态"圆点用它
+   *
+   * ★ 为什么不直接用 `offline`：`offline` 的判据是"媒体/报告/统计**三个**领域都失败"
+   *   （见 `detectOffline`），属于"数据能否离线兜底"的语义；
+   *   而工作台要回答的是"后端此刻是否在线"，应当以 `/health` 探活为准。
+   *   两个概念分开，避免把"某个接口失败"误报成"服务端掉线"。
+   */
+  @Trace serverOnline: boolean = false;
+
+  /** 服务状态文案（"在线" / "未连接"）· 由探活结果写入 */
+  @Trace serverStatusLabel: string = '未连接';
+
+  /** 是否正在探活（刷新按钮的忙碌态） */
+  @Trace healthChecking: boolean = false;
 
   /** 全局提示（如「登录已过期，请重新登录」）· 消费后请调用 clearGlobalMessage() */
   @Trace globalMessage: string = '';
@@ -78,6 +94,20 @@ export class AppStore {
   @Trace analysisVlmText: string = '';
   @Trace analysisError: string = '';
   @Trace socketState: SocketState = SocketState.idle;
+
+  // ── 工作台「当前任务」镜像（★ 仅内存，重启 App 即消失，用户本轮确认不做持久化）──
+  /** 当前任务的素材 id · 空串表示没有任务 */
+  @Trace currentTaskMediaId: string = '';
+  /** 当前任务的素材名（展示用） */
+  @Trace currentTaskMediaName: string = '';
+  /** 当前任务的素材类型（图片 / 视频） */
+  @Trace currentTaskMediaType: MediaType = MediaType.image;
+  /** 当前任务状态（none / running / done / failed） */
+  @Trace currentTaskStatus: TaskStatus = TaskStatus.none;
+  /** 当前任务最终分数（done 后才有值） */
+  @Trace currentTaskScore: number = 0;
+  /** 当前任务失败文案（status = failed 时非空） */
+  @Trace currentTaskError: string = '';
 
   // ══════════════════ 单例 ══════════════════
 
@@ -236,6 +266,8 @@ export class AppStore {
     this.domainReport.clear();
     this.domainStats.clear();
     this.analysisHolder?.stop();
+    // 换账号后不该看到上一个用户的任务
+    this.clearCurrentTask();
     this.sync();
   }
 
@@ -279,7 +311,132 @@ export class AppStore {
       this.analysisLastFrame = holder.lastFrameOf();
       this.analysisVlmText = holder.vlmTextOf();
       this.socketState = holder.socketStateOf();
+      this.syncCurrentTask(holder);
     }
+  }
+
+  // ══════════════════ 工作台：当前任务 ══════════════════
+
+  /**
+   * 记录"开始一次新分析"· 由窗口层在**上传成功后、启动 WS 之前**调用
+   * 此后工作台的「当前任务」卡片就能显示它，即使页面并不在分析详情页上。
+   */
+  public setCurrentTask(mediaId: string, mediaName: string, mediaType: MediaType): void {
+    this.currentTaskMediaId = normalizeMediaId(mediaId);
+    this.currentTaskMediaName = mediaName;
+    this.currentTaskMediaType = mediaType;
+    this.currentTaskStatus = TaskStatus.running;
+    this.currentTaskScore = 0;
+    this.currentTaskError = '';
+    this.sync();
+  }
+
+  /**
+   * 当前任务快照 · 没有任务时返回 null
+   * ★ 页面只读这个投影对象，不必自己访问 `analysis()`
+   */
+  public currentTask(): CurrentTaskModel | null {
+    if (this.currentTaskStatus === TaskStatus.none || this.currentTaskMediaId.length === 0) {
+      return null;
+    }
+    const task: CurrentTaskModel = {
+      mediaId: this.currentTaskMediaId,
+      mediaName: this.currentTaskMediaName,
+      mediaType: this.currentTaskMediaType,
+      status: this.currentTaskStatus,
+      progress: this.analysisProgress,
+      bdiScore: this.currentTaskStatus === TaskStatus.done ? this.currentTaskScore : this.analysisScore,
+      errorMsg: this.currentTaskError
+    };
+    return task;
+  }
+
+  /** 清掉当前任务（工作台「清除」按钮 / 登出时调用） */
+  public clearCurrentTask(): void {
+    this.currentTaskMediaId = '';
+    this.currentTaskMediaName = '';
+    this.currentTaskStatus = TaskStatus.none;
+    this.currentTaskScore = 0;
+    this.currentTaskError = '';
+  }
+
+  /**
+   * 把 WS 桥接器的实时状态折进"当前任务"
+   *
+   * 为什么要单独一个函数：`done` / `error` 这两个终态**不会**再被 `sync()` 改写，
+   * 所以这里只在"任务还在跑"时做状态推进，避免收尾后被后续的 `sync()` 打回 running。
+   */
+  private syncCurrentTask(holder: AnalysisStateHolder): void {
+    if (this.currentTaskStatus === TaskStatus.none || this.currentTaskMediaId.length === 0) {
+      return;
+    }
+    const error: string = holder.errorOf();
+    if (error.length > 0) {
+      this.currentTaskStatus = TaskStatus.failed;
+      this.currentTaskError = error;
+      return;
+    }
+    if (holder.isRunning()) {
+      this.currentTaskStatus = TaskStatus.running;
+      return;
+    }
+    // 不在跑且没有错误：如果拿到过分（帧或 done 的 finalScore），视为已完成
+    const score: number = holder.scoreOf();
+    if (score > 0) {
+      this.currentTaskStatus = TaskStatus.done;
+      this.currentTaskScore = score;
+    }
+  }
+
+  // ══════════════════ 工作台：最近使用的素材 ══════════════════
+
+  /**
+   * 最近使用的素材（按报告时间倒序、按素材去重）
+   *
+   * ★ 为什么是从**报告**推导而不是从媒体库：
+   *   "使用过"= 跑过分析 = 服务端写了 `diagnosis_report`；
+   *   而分数只存在于报告侧（`/api/media/list` 不返回任何评分）。
+   * ★ 为什么要去重：同一素材重复分析会产生多条报告（`routers/ws.py` 每次落一条），
+   *   不去重的话"最近 2 条"可能全是同一个文件的两次分析。
+   * ★ `reportItems` 已由服务端按 `detected_at desc` 排序，这里保持顺序即最新在前。
+   */
+  public recentMedia(limit: number): RecentMediaModel[] {
+    const out: RecentMediaModel[] = [];
+    const seen: string[] = [];
+    for (let i = 0; i < this.reportItems.length; i++) {
+      const report: ReportListItemModel = this.reportItems[i];
+      const mediaId: string = normalizeMediaId(report.mediaId);
+      if (seen.indexOf(mediaId) >= 0) {
+        continue;
+      }
+      seen.push(mediaId);
+      out.push(this.buildRecentMedia(report, mediaId));
+      if (out.length >= limit) {
+        break;
+      }
+    }
+    return out;
+  }
+
+  /** 单条最近素材 · 报告 + 媒体库关联出缩略图 */
+  private buildRecentMedia(report: ReportListItemModel, mediaId: string): RecentMediaModel {
+    const media: MediaItemModel | null = this.domainMedia.findById(mediaId);
+    const score: number = report.bdiScore;
+    const level = BdiThreshold.levelOf(score);
+    const ratio: number = score <= 0 ? 0 : (score >= BDI_MAX_SCORE ? 1 : score / BDI_MAX_SCORE);
+    const item: RecentMediaModel = {
+      mediaId: mediaId,
+      name: media === null || media.name.length === 0 ? report.mediaName : media.name,
+      type: report.mediaType,
+      thumbnailUrl: media === null ? '' : this.domainMedia.thumbnailUrl(media),
+      bdiScore: score,
+      severity: level,
+      severityLabel: UiConstant.severityLabelOf(level),
+      severityColor: UiConstant.severityColorOf(level),
+      scoreRatio: ratio,
+      detectedAt: report.detectedAt
+    };
+    return item;
   }
 
   // ══════════════════ 便捷查询（UI 少写判断）══════════════════
@@ -358,10 +515,12 @@ export class AppStore {
 
   /** 探活 · GET /health（无需令牌，用于「后端是否启动」的一键检测） */
   public async checkHealth(): Promise<ActionResultModel> {
+    this.healthChecking = true;
     try {
       const out = await HttpClient.health();
       const ok: boolean = out.status === 'ok';
       this.offline = !ok;
+      this.applyHealth(ok);
       const result: ActionResultModel = {
         ok: ok,
         message: ok ? `服务端正常 · ${ApiConfig.baseUrl()}` : `服务端响应异常 · ${out.status}`
@@ -369,12 +528,21 @@ export class AppStore {
       return result;
     } catch (err) {
       this.offline = true;
+      this.applyHealth(false);
       const result: ActionResultModel = {
         ok: false,
         message: `无法连接 ${ApiConfig.baseUrl()}，请确认后端已启动且监听 0.0.0.0`
       };
       return result;
+    } finally {
+      this.healthChecking = false;
     }
+  }
+
+  /** 把探活结果写进服务状态镜像 */
+  private applyHealth(ok: boolean): void {
+    this.serverOnline = ok;
+    this.serverStatusLabel = ok ? '在线' : '未连接';
   }
 
   // ══════════════════ 分析会话（转发到桥接器，并对齐门面状态）══════════════════

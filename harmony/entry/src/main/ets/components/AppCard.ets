@@ -12,6 +12,7 @@
  *   这里默认渲染一个空行，保证任何调用方式都合法。
  */
 
+import { CardStyle } from '../common/CardStyle';
 import { UiTheme } from '../common/UiTheme';
 
 @ComponentV2
@@ -67,13 +68,7 @@ export struct AppCard {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(this._padding)
-    .backgroundColor(UiTheme.cardBackground)
-    .borderRadius(UiTheme.cardRadius)
-    .shadow({
-      radius: UiTheme.cardShadowRadius,
-      color: UiTheme.cardShadowColor,
-      offsetX: 0,
-      offsetY: UiTheme.cardShadowOffsetY
-    })
+    // ★ 卡片视觉（白底 / 圆角 / 投影）统一走 CardStyle，与 RippleCard 共用同一份定义
+    .attributeModifier(CardStyle.modifier)
   }
 }

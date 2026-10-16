@@ -36,6 +36,12 @@ export class HttpClient {
   public static readonly connectTimeoutMs: number = 10000;
   public static readonly readTimeoutMs: number = 30000;
 
+  /**
+   * 上传超时（毫秒）· 视频素材动辄几十 MB，30s 的读超时会在上传中途被判失败
+   * ★ 只放宽**上传**这条路，普通 REST 请求仍用 30s（避免拖慢错误反馈）。
+   */
+  public static readonly uploadTimeoutMs: number = 180000;
+
   /** 401 全局回调 · 由 AppStore 在启动时注册（决定「踢回登录页」怎么跳） */
   private static unauthorizedHandler: UnauthorizedHandler | null = null;
   /** 只在内网明文 http 下为 true；上线 https 时应调整 */
@@ -70,6 +76,18 @@ export class HttpClient {
    * ★ 字段名固定为 `file`（后端 `UploadFile = File(...)` 的形参名）
    */
   public static upload<T>(path: string, fieldName: string, file: UploadFileSpec): Promise<T> {
+    return HttpClient.uploadWithTimeout<T>(path, fieldName, file, HttpClient.readTimeoutMs);
+  }
+
+  /**
+   * POST multipart 上传单文件 · 可指定读超时
+   *
+   * ★ 为什么需要它：视频素材几十 MB，用 30s 的默认读超时会在上传中途被判失败，
+   *   而上层看到的只是"网络错误"，很难排查。上传路径单独给一个宽松的超时。
+   */
+  public static uploadWithTimeout<T>(
+    path: string, fieldName: string, file: UploadFileSpec, readTimeoutMs: number
+  ): Promise<T> {
     const form: http.MultiFormData = {
       name: fieldName,
       contentType: file.mimeType,
@@ -78,7 +96,7 @@ export class HttpClient {
     };
     const headers: Record<string, string> = {};
     headers['Content-Type'] = 'multipart/form-data';
-    return HttpClient.send<T>(path, http.RequestMethod.POST, null, headers, [form]);
+    return HttpClient.send<T>(path, http.RequestMethod.POST, null, headers, [form], readTimeoutMs);
   }
 
   /** GET /health · 探活（不需要令牌）· 用于「服务端是否启动」的一键检测 */
@@ -95,7 +113,8 @@ export class HttpClient {
 
   private static async send<T>(
     path: string, method: http.RequestMethod, bodyJson: string | null,
-    extraHeaders: Record<string, string> | null, form: http.MultiFormData[] | null
+    extraHeaders: Record<string, string> | null, form: http.MultiFormData[] | null,
+    readTimeoutMs: number = HttpClient.readTimeoutMs
   ): Promise<T> {
     const url: string = ApiConfig.baseUrl() + path;
     const req: http.HttpRequest = http.createHttp();
@@ -124,7 +143,7 @@ export class HttpClient {
         header: header,
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: HttpClient.connectTimeoutMs,
-        readTimeout: HttpClient.readTimeoutMs
+        readTimeout: readTimeoutMs
       };
       if (bodyJson !== null) {
         options.extraData = bodyJson;

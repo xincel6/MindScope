@@ -2,13 +2,25 @@
  * UiTheme · 表现层设计令牌（颜色 / 字号 / 间距 / 圆角）· **全工程唯一的视觉常量来源**
  *
  * 设计规范（本轮 UI 统一风格，逐条对应）：
- *   页面背景 #F4F8FB ｜ 卡片背景 #FFFFFF ｜ 主色 #0D9488 ｜ 辅助蓝 #0284C7
+ *   页面背景 #FFFFFF ｜ 卡片背景 #FFFFFF ｜ 主色 #0D9488 ｜ 辅助蓝 #0284C7
  *   正文 #1E3A5F ｜ 次要文字 #64748B
  *   - 卡片圆角 8vp
  *   - 页面标题 22vp，正文不小于 14vp，重要分数用大字号（32vp）
  *   - 少用大面积渐变（全工程不用渐变）
- *   - 不要同时使用太多颜色：本文件只给 3 个功能色（主色 / 辅助蓝 / 危险色），
- *     其余全部是中性灰阶；危险色**只用于错误提示**，不做装饰。
+ *   - 不要同时使用太多颜色：本文件只给 3 个功能色（主色 / 辅助蓝 / 错误危险色），
+ *     其余全部是中性灰阶。
+ *
+ * ★★ 两套"红"必须分清（本轮工作台新增，此前注释把两者混为一谈）：
+ *   ① `danger`（#DC2626）—— **错误危险色**。只用于失败提示（网络失败、鉴权失败）。
+ *   ② 严重度色阶 `#16a34a / #0284c7 / #d97706 / #dc2626` —— **数据表达色**。
+ *      定义在 `types/constant.ts` 的 `UiConstant.severityMeta()`，按 BDI 四档取色，
+ *      属于"把数据画出来"的一部分，可以大面积出现在进度条、图例、图表上。
+ *   两者**语义不同**：一个是"出错了"，一个是"病情到这个档位了"，数值相同也不得互换引用。
+ *   （工作台的严重度进度条用 ②，不要图省事去 import ①。）
+ *
+ * ★ 背景改纯白（用户本轮指定）：纯白背景下卡片与页面同色，层次**只能靠阴影和浅灰填充**区分，
+ *   因此凡是要在卡片里"再嵌一层"的元素（输入框、缩略图底、进度条轨道），
+ *   一律用 `fillSoft` / `divider` 描边或填底，不能只靠背景色差。
  *
  * ★ 为什么单独一份而不是改 `types/constant.ts` 的 `UiConstant`：
  *   `UiConstant.primaryColor` 同时被 BDI 严重度分级色系（正常绿 / 轻度蓝 / 中度橙 / 重度红）引用，
@@ -23,8 +35,8 @@
 export class UiTheme {
   // ────────────────── 颜色 ──────────────────
 
-  /** 页面背景 */
-  public static readonly pageBackground: string = '#F4F8FB';
+  /** 页面背景 · 用户本轮指定改为纯白 */
+  public static readonly pageBackground: string = '#FFFFFF';
 
   /** 卡片背景 */
   public static readonly cardBackground: string = '#FFFFFF';
@@ -41,8 +53,21 @@ export class UiTheme {
   /** 次要文字色（说明、占位符、未选中态） */
   public static readonly textSecondary: string = '#64748B';
 
-  /** 危险色 · **仅用于错误提示** */
+  /** 错误危险色 · **仅用于失败提示**（严重度色阶在 `UiConstant.severityMeta()`，两者勿混用） */
   public static readonly danger: string = '#DC2626';
+
+  /**
+   * 卡片点击涟漪色 · 主色 12% 透明度（ARGB：前两位是 alpha）
+   * ★ 纯白背景下必须带透明度，否则涟漪会变成一块实心绿，看着像卡片被选中了。
+   */
+  public static readonly ripple: string = '#1F0D9488';
+
+  /** 服务状态灯 · 已连接 */
+  public static readonly statusOnline: string = '#16a34a';
+
+  /** 服务状态灯 · 未连接（与严重度"重度"同色值，但语义是连接状态，不要互相引用） */
+  public static readonly statusOffline: string = '#DC2626';
+
 
   /** 中性分隔线 */
   public static readonly divider: string = '#E2E8F0';
@@ -110,4 +135,24 @@ export class UiTheme {
   public static readonly cardShadowRadius: number = 8;
   public static readonly cardShadowColor: string = '#0F1E3A5F';
   public static readonly cardShadowOffsetY: number = 2;
+
+  // ────────────────── 工作台专用尺寸 ──────────────────
+
+  /** 进度条高度（严重度条 / 分析进度条共用） */
+  public static readonly progressHeight: number = 8;
+
+  /** 进度条圆角 · 取高度的一半，呈胶囊形 */
+  public static readonly progressRadius: number = 4;
+
+  /** 进度条轨道底色 */
+  public static readonly progressTrack: string = '#EDF2F7';
+
+  /** 最近素材缩略图边长 */
+  public static readonly thumbSize: number = 56;
+
+  /** 点击涟漪动画时长（毫秒） */
+  public static readonly rippleDuration: number = 300;
+
+  /** 涟漪终止透明度（涟漪色自带 alpha，这里只做"扩散即淡出"的收尾） */
+  public static readonly rippleEndOpacity: number = 0;
 }

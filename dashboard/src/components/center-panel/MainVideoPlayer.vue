@@ -37,9 +37,14 @@ const mainMediaTitle = computed(
   () => store.singleFaceLabel || store.selectedMedia?.name || '',
 )
 
-const { wsStatus, connect, send } = useWebSocket({
+const { wsStatus, ensureConnected, disconnect, send } = useWebSocket({
   onMessage(data) {
     store.handleWsMessage(data)
+    // 后端发完最后一帧后还会补一条 vlm_analysis + done，收到 done 才算真正结束：
+    // 这时才断开，既不会把 vlm 结果挡在门外，也不会空占一条连接。
+    if (data?.type === 'done' || data?.type === 'error') {
+      disconnect()
+    }
   },
   onOpen() {
     store.setWsConnected(true)
@@ -50,19 +55,58 @@ const { wsStatus, connect, send } = useWebSocket({
   onError() {
     store.setWsConnected(false)
   },
+  // 只有分析进行中才值得自动重连（分析结束/用户返回后不再重连）
+  shouldReconnect: () => store.analyzing && !store.isDemo,
 })
+
+/** 本次连接是否已经把 media id 发给后端（重连后需要重发） */
+let initSent = false
+
+function sendInitIfNeeded(): boolean {
+  if (initSent || !store.selectedMediaId) return false
+  if (!send({ id: store.selectedMediaId })) return false
+  initSent = true
+  return true
+}
 
 watch(wsStatus, (v) => {
+  if (store.isDemo) return
   store.setWsConnected(v === 'connected')
-})
-
-connect()
-
-watch([() => store.analyzing, wsStatus], ([isAnalyzing, status]) => {
-  if (isAnalyzing && status === 'connected' && store.selectedMediaId) {
-    send({ id: store.selectedMediaId })
+  if (v === 'connected') {
+    // 断线重连后后端是一条新连接，必须重新告知要分析哪个素材
+    if (store.analyzing) sendInitIfNeeded()
+  } else {
+    initSent = false
   }
 })
+
+// 按需连接：每次「开始分析」才建连，分析结束/退出主界面就断开。
+// 触发信号用 analysisRunId 而不是 analyzing —— 后者在同一素材再点一次时不会变化，
+// 会导致 watch 不触发、点了没反应。
+watch(
+  [() => store.analysisRunId, () => store.isDemo],
+  async ([runId, demo]) => {
+    if (demo || !runId) return // 演示模式全部由前端模拟，不走后端连接
+    const mediaId = store.selectedMediaId
+    if (!mediaId) return
+    // 后端一条连接只服务一个分析任务：上一次的 id 已经发过了就换新连接
+    if (initSent) disconnect()
+    const ok = await ensureConnected()
+    // 握手期间用户可能已经返回或切了素材，别把过期请求发出去
+    if (!ok || store.analysisRunId !== runId || store.selectedMediaId !== mediaId) return
+    sendInitIfNeeded()
+  },
+  { immediate: true },
+)
+
+// 退出主界面/清空素材：分析已中止，连接不必再挂着
+watch(
+  [() => store.analyzing, () => store.selectedMediaId],
+  ([isAnalyzing, mediaId]) => {
+    if (store.isDemo) return
+    if (!isAnalyzing && !mediaId) disconnect()
+  },
+)
 
 watch(() => store.selectedMedia, (media) => {
   if (!videoRef.value) return

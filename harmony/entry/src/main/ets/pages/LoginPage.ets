@@ -161,11 +161,15 @@ export struct LoginPage {
           AppCard({ title: '账号登录', subtitle: '请使用已注册的账号登录系统' }) {
             Column({ space: UiTheme.gapL }) {
               // 用户名
+              // ★ 背景改纯白后，输入框的 pageBackground 与卡片同色 → 必须补一条浅灰描边，
+              //   否则用户看不到输入框的边界（这是"全局改纯白"的连带修正）。
               TextInput({ placeholder: '请输入用户名', text: this.userName })
                 .type(InputType.Normal)
                 .maxLength(AuthRule.usernameMaxLength)
                 .height(UiTheme.controlHeight)
-                .backgroundColor(UiTheme.pageBackground)
+                .backgroundColor(UiTheme.cardBackground)
+                .borderWidth(1)
+                .borderColor(UiTheme.divider)
                 .borderRadius(UiTheme.cardRadius)
                 .fontSize(UiTheme.fontSizeBody)
                 .fontColor(UiTheme.textPrimary)
@@ -182,7 +186,9 @@ export struct LoginPage {
                   .type(this.passwordVisible ? InputType.Normal : InputType.Password)
                   .height(UiTheme.controlHeight)
                   .layoutWeight(1)
-                  .backgroundColor(UiTheme.pageBackground)
+                  .backgroundColor(UiTheme.cardBackground)
+                  .borderWidth(1)
+                  .borderColor(UiTheme.divider)
                   .borderRadius(UiTheme.cardRadius)
                   .fontSize(UiTheme.fontSizeBody)
                   .fontColor(UiTheme.textPrimary)
