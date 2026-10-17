@@ -36,7 +36,8 @@ export struct PlaceholderView {
 
   build() {
     Column({ space: UiTheme.gapL }) {
-      // 图标底 · 浅灰圆
+      // 图标底 · 用 skeletonFill 而非 fillSoft：这一档不论落在灰页底还是白卡里都辨得出，
+      // 而 fillSoft 与灰页底只有约 1.06:1 对比度，直接贴页底时等于没有底色
       Column() {
         Text(this.glyph)
           .fontSize(28)
@@ -45,7 +46,7 @@ export struct PlaceholderView {
       .width(UiTheme.emptyIconSize)
       .height(UiTheme.emptyIconSize)
       .borderRadius(UiTheme.emptyIconSize / 2)
-      .backgroundColor(UiTheme.fillSoft)
+      .backgroundColor(UiTheme.skeletonFill)
       .justifyContent(FlexAlign.Center)
       .alignItems(HorizontalAlign.Center)
 

@@ -12,7 +12,8 @@
  * ② **退出登录**：与全应用一致的两段式交互 —— 先弹 `ConfirmSheet` 二次确认
  *    （说明"会清除本机登录状态与业务缓存"），确认后按钮进入"正在退出…"，
  *    完成后由窗口层切回登录流。
- * ③ 视觉全部取 `common/UiTheme.ets`：卡片 8vp 圆角 + 浅灰描边，主/次按钮与登录页同款。
+ * ③ 视觉全部取 `common/UiTheme.ets`：卡片 16vp 圆角 + 1px 描边 + 极淡投影（白卡浮在灰页底上），
+ *    主/次按钮与登录页同款。
  *
  * ★ 页面纪律：不 import 任何 store、不发请求、不碰路由栈 —— 登出只调 `pageParam.onLogout()`。
  * ★ 数据是"进页面时一次性拿到"的静态投影，所以走参数契约（不存在 BUG-10/11 那类
@@ -183,7 +184,7 @@ export struct ProfilePage {
               Column({ space: UiTheme.gapL }) {
                 this.accountHeader()
 
-                // 分隔线：纯白背景下靠描边表达层次（见 UiTheme 顶部纪律）
+                // 分隔线：卡片内部不再叠一层底，只用一条 divider 划开（见 UiTheme 顶部纪律）
                 Divider().color(UiTheme.divider)
 
                 Column({ space: UiTheme.gapM }) {
@@ -220,7 +221,8 @@ export struct ProfilePage {
                 .width('100%')
                 .height(UiTheme.controlHeight)
                 .fontSize(UiTheme.fontSizeSection)
-                .fontColor(UiTheme.textPrimary)
+                // 危险动作归 danger：这是"会清掉本机登录态"的操作，不能用正文色被读成普通次按钮
+                .fontColor(UiTheme.danger)
                 .backgroundColor(UiTheme.cardBackground)
                 .borderWidth(1)
                 .borderColor(UiTheme.divider)

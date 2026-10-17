@@ -12,7 +12,8 @@
  *                  → 冷启动第一帧，由系统画，ArkUI 还没起来
  * ② 本组件（开屏页）：UI 起来后覆盖在最上层，等引导完成再淡出
  * ```
- * 两级底色都取 `#FFFFFF`（`UiTheme.pageBackground`），所以用户看到的是
+ * 两级底色都取浅灰 `#F2F3F7`（= `UiTheme.pageBackground`；启动窗口那侧写在
+ * `resources/base/element/color.json` 的 `start_window_background`），所以用户看到的是
  * "图标 → 图标 + 名字 → 登录页"的连续过程，中间不会闪别的颜色。
  *
  * ★ 时长由宿主决定：`pages/Index.ets` 保证它至少显示

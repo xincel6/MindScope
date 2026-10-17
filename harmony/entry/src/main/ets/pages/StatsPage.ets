@@ -10,20 +10,28 @@
  *   `AppStore.statsLoading` / `refreshStats()`
  * 网页端对应：src/views/StatsView.vue（KPI 四联卡 + 严重度饼图 + BDI 趋势折线）
  *
- * ★ 视觉边界（2026-10-17 重要约定）：
- *   统计页由本人负责，页内自成一套视觉体系 —— 浅灰底 #F2F3F7 / 卡片圆角 16 /
- *   极淡投影 / 核心卡渐变。这些值全部走 `UiTheme.stats*` 专用令牌，
- *   **不复用全局 `pageBackground` / `cardRadius` / `cardShadowEnabled`**，
- *   因此不会影响工作台、素材库、历史报告等队友负责的页面。
+ * ★ 视觉边界：
+ *   本页曾是"浅灰底 #F2F3F7 / 卡片圆角 16 / 极淡投影"这套风格的**来源**，
+ *   现已提升为全局规范（`pageBackground` / `cardRadius` / `CardStyle.shadow()`），
+ *   所以本页不再自带一套底色、圆角与阴影，只保留图表与版式专用的令牌
+ *   （`statsTitleSize` / `statsPagePadding` / `kpi*` / `pie*` / `legend*` / `chart*`）。
+ *   核心卡的渐变是用户明确保留的本页个性，不属于可收敛的重复项。
  *
  * ★ 版式：
  *   页面左右内边距 16 / 模块垂直间距 16；
  *   KPI 区 = 「总分析次数」满行渐变核心卡 + 下方 3 张等宽小卡；
  *   环形图、折线图各占一张独立卡片（标题 16/600 + 副标题 12，左上对齐）。
  *
- * ★ 转场：每块内容包一层 `RevealCard({ order })` 做错峰滑入（队友实现的通用转场）。
- *   KPI 三小卡那一排不包 —— 它们在 Row 里靠 `layoutWeight(1)` 均分宽度，
- *   外面再套容器会破坏均分。
+ * ★ 交互：4 张卡都套一层 `RippleCard`（与工作台同一套按压语言：系统涟漪 + 轻微缩放），
+ *   但传 `_enabled: false` —— 统计页的卡片只表达"被按到了"，不承担任何跳转。
+ *   卡片的白底 / 16 圆角 / 极淡投影由 `RippleCard` 内联画（同值，所以不在本页再写一份）；
+ *   核心渐变卡自带背景，用 `_transparent: true` 让壳子一点不画。
+ *   全部传 `_padding: 0`：这几张卡自己已经有内边距，否则会叠成双层。
+ *   ★ `RippleCard` 必须套在 `RevealCard` **里层**，转场的位移/缩放才作用在整卡上。
+ *
+ * ★ 转场：每块内容（含 KPI 三小卡）各包一层 `RevealCard({ order })` 做错峰滑入，
+ *   全页 order 0..6 连续。三小卡的等宽由 `RevealCard._weight: 1` 承担 ——
+ *   均分看的是 Row 的**直接子节点**，裸 `layoutWeight` 会被动画卡那层 Column 吞掉。
  *
  * ★ 语法纪律（2026-10-16 踩坑）：build()/@Builder 体内【不能声明局部变量】。
  */
@@ -31,11 +39,13 @@
 import { AppStore } from '../store/AppStore';
 import { AppBootstrap } from '../common/AppBootstrap';
 import { UiTheme } from '../common/UiTheme';
+import { CardStyle } from '../common/CardStyle';
 import { TabPageParam } from '../types/PageParams';
 import { StatsModel } from '../types/Index';
 import { ErrorRetryView } from '../components/ErrorRetryView';
 import { SkeletonBlock } from '../components/SkeletonView';
 import { RevealCard } from '../components/RevealCard';
+import { RippleCard } from '../components/RippleCard';
 import { SeverityPieChart } from '../components/charts/SeverityPieChart';
 import { BdiTrendChart } from '../components/charts/BdiTrendChart';
 
@@ -72,7 +82,7 @@ export struct StatsPage {
             Text('统计')
               .fontSize(UiTheme.statsTitleSize)
               .fontWeight(FontWeight.Bold)
-              .fontColor(UiTheme.statsTextPrimary)
+              .fontColor(UiTheme.textPrimary)
               .width('100%')
               .textAlign(TextAlign.Start)
               .maxLines(1)
@@ -116,24 +126,24 @@ export struct StatsPage {
     .height('100%')
     .align(Alignment.Top)
     .scrollBar(BarState.Off)
-    .backgroundColor(UiTheme.statsPageBg)
+    .backgroundColor(UiTheme.pageBackground)
   }
 
   /** 加载中骨架：与真实内容同构（核心卡 + 3 小卡 + 两张图），避免加载完成时布局跳动 */
   @Builder
   buildSkeleton() {
     Column({ space: UiTheme.gapL }) {
-      SkeletonBlock({ blockHeight: UiTheme.kpiHeroHeight, radius: UiTheme.statsCardRadius })
+      SkeletonBlock({ blockHeight: UiTheme.kpiHeroHeight, radius: UiTheme.cardRadius })
 
       Row({ space: UiTheme.gapM }) {
-        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.statsCardRadius })
-        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.statsCardRadius })
-        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.statsCardRadius })
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
       }
       .width('100%')
 
-      SkeletonBlock({ blockHeight: 320, radius: UiTheme.statsCardRadius })
-      SkeletonBlock({ blockHeight: 340, radius: UiTheme.statsCardRadius })
+      SkeletonBlock({ blockHeight: 320, radius: UiTheme.cardRadius })
+      SkeletonBlock({ blockHeight: 340, radius: UiTheme.cardRadius })
     }
     .width('100%')
   }
@@ -142,196 +152,215 @@ export struct StatsPage {
   buildContent(stats: StatsModel) {
     // ── 核心 KPI 卡 · 1 号位（满行 · 浅薄荷 → 白 渐变）──
     RevealCard({ order: 1 }) {
-      Column({ space: UiTheme.gapS }) {
-        Text('总分析次数')
-          .fontSize(UiTheme.fontSizeCaption)
-          .fontColor(UiTheme.statsTextRegular)
+      // ★ 透明壳：这张卡自带渐变底，壳子不画任何底色/描边/投影，只借统一的按压语言。
+      //   _padding: 0 让内边距仍由里层给（否则 16+16 会把 106 高的卡撑变形）。
+      RippleCard({
+        _transparent: true,
+        _enabled: false,
+        _clickable: true,
+        _pressScale: 0.985,
+        _padding: 0
+      }) {
+        Column({ space: UiTheme.gapS }) {
+          Text('总分析次数')
+            .fontSize(UiTheme.fontSizeCaption)
+            .fontColor(UiTheme.textSecondary)
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .maxLines(1)
+
+          Text() {
+            Span(`${stats.totalAnalyses}`)
+              .fontSize(UiTheme.fontSizeMetric)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UiTheme.statAccent)
+            Span(' 次')
+              .fontSize(UiTheme.fontSizeUnit)
+              .fontColor(UiTheme.textSecondary)
+          }
           .width('100%')
           .textAlign(TextAlign.Start)
           .maxLines(1)
-
-        Text() {
-          Span(`${stats.totalAnalyses}`)
-            .fontSize(UiTheme.fontSizeMetric)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(UiTheme.statAccent)
-          Span(' 次')
-            .fontSize(UiTheme.fontSizeUnit)
-            .fontColor(UiTheme.textSecondary)
         }
         .width('100%')
-        .textAlign(TextAlign.Start)
-        .maxLines(1)
+        .height(UiTheme.kpiHeroHeight)
+        .alignItems(HorizontalAlign.Start)
+        .justifyContent(FlexAlign.Center)
+        .padding(UiTheme.cardPadding)
+        // 渐变与圆角仍留在里层：透明壳不画背景，也就不会替它裁圆角、兜投影
+        .borderRadius(UiTheme.cardRadius)
+        .linearGradient({
+          // 160° 近乎垂直：绿色压在卡片上半部，白色往下收。
+          // 135° 时 32fp 的绿色数字正好落在白色区，真机上几乎看不出渐变。
+          angle: 160,
+          colors: [
+            [UiTheme.kpiGradientStart, 0],
+            [UiTheme.kpiGradientEnd, 1]
+          ]
+        })
+        .shadow(CardStyle.shadow())
       }
-      .width('100%')
-      .height(UiTheme.kpiHeroHeight)
-      .alignItems(HorizontalAlign.Start)
-      .justifyContent(FlexAlign.Center)
-      .padding(UiTheme.cardPadding)
-      .borderRadius(UiTheme.statsCardRadius)
-      .linearGradient({
-        // 160° 近乎垂直：绿色压在卡片上半部，白色往下收。
-        // 135° 时 32fp 的绿色数字正好落在白色区，真机上几乎看不出渐变。
-        angle: 160,
-        colors: [
-          [UiTheme.kpiGradientStart, 0],
-          [UiTheme.kpiGradientEnd, 1]
-        ]
-      })
-      .shadow({
-        radius: UiTheme.statsShadowRadius,
-        color: UiTheme.statsShadowColor,
-        offsetX: 0,
-        offsetY: UiTheme.statsShadowOffsetY
-      })
     }
 
-    // ── 3 张等宽小卡 ──
-    // ★ 这一排不包 RevealCard：小卡在 Row 里靠 layoutWeight(1) 均分宽度，
-    //   外层再套容器会破坏均分（同队友在工作台页踩到的坑）。
+    // ── 3 张等宽小卡 · 2/3/4 号位 ──
+    // ★ 等宽的权重挂在 RevealCard 的 `_weight` 上：均分只认 Row 的直接子节点，
+    //   而这里唯一的直接子节点就是动画卡那层 Column；小卡自己再写 layoutWeight
+    //   会变成第二套权重、与 `_weight` 抢同一条主轴。
     Row({ space: UiTheme.gapM }) {
-      this.smallKpi('平均推理耗时', `${stats.avgInferenceTimeMs.toFixed(1)}`, 'ms')
-      this.smallKpi('素材总数', `${stats.totalMedia}`, '项')
-      this.smallKpi('重度占比', this.severePct(stats), this.severePct(stats) === '--' ? '' : '%')
+      RevealCard({ order: 2, _weight: 1 }) {
+        this.smallKpi('平均推理耗时', `${stats.avgInferenceTimeMs.toFixed(1)}`, 'ms')
+      }
+
+      RevealCard({ order: 3, _weight: 1 }) {
+        this.smallKpi('素材总数', `${stats.totalMedia}`, '项')
+      }
+
+      RevealCard({ order: 4, _weight: 1 }) {
+        this.smallKpi('重度占比', this.severePct(stats), this.severePct(stats) === '--' ? '' : '%')
+      }
     }
     .width('100%')
 
-    // ── 严重度分布（环形饼图 + 环心总数）· 2 号位 ──
-    RevealCard({ order: 2 }) {
-      Column({ space: UiTheme.gapM }) {
-        Column({ space: UiTheme.gapXs }) {
-          Text('严重等级分布')
-            .fontSize(UiTheme.fontSizeSection)
-            .fontWeight(600)
-            .fontColor(UiTheme.statsTextPrimary)
-            .width('100%')
-            .textAlign(TextAlign.Start)
-            .maxLines(1)
+    // ── 严重度分布（环形饼图 + 环心总数）· 5 号位 ──
+    RevealCard({ order: 5 }) {
+      // 白底 / 16 圆角 / 极淡投影交给 RippleCard 内联画（与原来同值，不保留两份）；
+      // _padding: 0 是因为下面这层自己已经有 cardPadding，否则会叠成双层内边距。
+      RippleCard({
+        _enabled: false,
+        _clickable: true,
+        _pressScale: 0.98,
+        _padding: 0
+      }) {
+        Column({ space: UiTheme.gapM }) {
+          Column({ space: UiTheme.gapXs }) {
+            Text('严重等级分布')
+              .fontSize(UiTheme.fontSizeSection)
+              .fontWeight(600)
+              .fontColor(UiTheme.textPrimary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .maxLines(1)
 
-          Text('按 BDI-II 四档统计')
-            .fontSize(UiTheme.fontSizeCaption)
-            .fontColor(UiTheme.textSecondary)
-            .width('100%')
-            .textAlign(TextAlign.Start)
-            .maxLines(1)
+            Text('按 BDI-II 四档统计')
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .maxLines(1)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          if (stats.totalAnalyses > 0) {
+            SeverityPieChart({
+              buckets: this.app.statsBuckets,
+              total: stats.totalAnalyses
+            })
+          } else {
+            Text('暂无分析数据')
+              .fontSize(UiTheme.fontSizeBody)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          }
         }
         .width('100%')
+        .padding(UiTheme.cardPadding)
         .alignItems(HorizontalAlign.Start)
-
-        if (stats.totalAnalyses > 0) {
-          SeverityPieChart({
-            buckets: this.app.statsBuckets,
-            total: stats.totalAnalyses
-          })
-        } else {
-          Text('暂无分析数据')
-            .fontSize(UiTheme.fontSizeBody)
-            .fontColor(UiTheme.textSecondary)
-            .width('100%')
-            .textAlign(TextAlign.Center)
-        }
       }
-      .width('100%')
-      .padding(UiTheme.cardPadding)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(UiTheme.cardBackground)
-      .borderRadius(UiTheme.statsCardRadius)
-      .shadow({
-        radius: UiTheme.statsShadowRadius,
-        color: UiTheme.statsShadowColor,
-        offsetX: 0,
-        offsetY: UiTheme.statsShadowOffsetY
-      })
     }
 
-    // ── BDI 日均趋势（折线 + 两条阈值线）· 3 号位 ──
-    RevealCard({ order: 3 }) {
-      Column({ space: UiTheme.gapM }) {
-        Column({ space: UiTheme.gapXs }) {
-          Text('BDI 日均趋势')
-            .fontSize(UiTheme.fontSizeSection)
-            .fontWeight(600)
-            .fontColor(UiTheme.statsTextPrimary)
-            .width('100%')
-            .textAlign(TextAlign.Start)
-            .maxLines(1)
+    // ── BDI 日均趋势（折线 + 两条阈值线）· 6 号位 ──
+    RevealCard({ order: 6 }) {
+      RippleCard({
+        _enabled: false,
+        _clickable: true,
+        _pressScale: 0.98,
+        _padding: 0
+      }) {
+        Column({ space: UiTheme.gapM }) {
+          Column({ space: UiTheme.gapXs }) {
+            Text('BDI 日均趋势')
+              .fontSize(UiTheme.fontSizeSection)
+              .fontWeight(600)
+              .fontColor(UiTheme.textPrimary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .maxLines(1)
 
-          Text('按检测日期聚合的日均分')
-            .fontSize(UiTheme.fontSizeCaption)
-            .fontColor(UiTheme.textSecondary)
-            .width('100%')
-            .textAlign(TextAlign.Start)
-            .maxLines(1)
+            Text('按检测日期聚合的日均分')
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+              .maxLines(1)
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+
+          if (stats.bdiTrend.length === 0) {
+            Text('暂无趋势数据')
+              .fontSize(UiTheme.fontSizeBody)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Center)
+          } else {
+            BdiTrendChart({ trend: stats.bdiTrend })
+          }
         }
         .width('100%')
+        .padding(UiTheme.cardPadding)
         .alignItems(HorizontalAlign.Start)
-
-        if (stats.bdiTrend.length === 0) {
-          Text('暂无趋势数据')
-            .fontSize(UiTheme.fontSizeBody)
-            .fontColor(UiTheme.textSecondary)
-            .width('100%')
-            .textAlign(TextAlign.Center)
-        } else {
-          BdiTrendChart({ trend: stats.bdiTrend })
-        }
       }
-      .width('100%')
-      .padding(UiTheme.cardPadding)
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(UiTheme.cardBackground)
-      .borderRadius(UiTheme.statsCardRadius)
-      .shadow({
-        radius: UiTheme.statsShadowRadius,
-        color: UiTheme.statsShadowColor,
-        offsetX: 0,
-        offsetY: UiTheme.statsShadowOffsetY
-      })
     }
   }
 
   /**
    * 次级 KPI 小卡（三张等宽并排 · 白底 + 16 圆角 + 极淡投影）
    * 标签 12/辅助色 在上，数字 20/600/一级色 + 单位 10 在下
+   *
+   * ★ 宽度靠 `.width('100%')` 撑满外层 `RevealCard` 的槽位，自己**不写** `layoutWeight`：
+   *   主轴均分由 `RevealCard({ _weight: 1 })` 决定，本组件只需把那一格填满。
    */
   @Builder
   smallKpi(title: string, value: string, unit: string) {
-    Column({ space: UiTheme.gapS }) {
-      Text(title)
-        .fontSize(UiTheme.fontSizeCaption)
-        .fontColor(UiTheme.textSecondary)
+    // 三张小卡与两张图卡共用同一套按压语言：按下轻微内缩 + 系统涟漪，松手不跳转。
+    // 卡片视觉（白底 / 16 圆角 / 极淡投影）由 RippleCard 内联画，这里只留版式。
+    RippleCard({
+      _enabled: false,
+      _clickable: true,
+      _pressScale: 0.98,
+      _padding: 0
+    }) {
+      Column({ space: UiTheme.gapS }) {
+        Text(title)
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Text() {
+          Span(value)
+            .fontSize(KPI_SUB_METRIC_SIZE)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UiTheme.textPrimary)
+          Span(` ${unit}`)
+            .fontSize(UiTheme.fontSizeUnitSmall)
+            .fontColor(UiTheme.textSecondary)
+        }
         .width('100%')
         .textAlign(TextAlign.Start)
         .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-
-      Text() {
-        Span(value)
-          .fontSize(KPI_SUB_METRIC_SIZE)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(UiTheme.statsTextPrimary)
-        Span(` ${unit}`)
-          .fontSize(UiTheme.fontSizeUnitSmall)
-          .fontColor(UiTheme.textSecondary)
+        .height(28)
       }
       .width('100%')
-      .textAlign(TextAlign.Start)
-      .maxLines(1)
-      .height(28)
+      .height(UiTheme.kpiSmallHeight)
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Center)
+      .padding(UiTheme.kpiSmallPadding)
     }
-    .layoutWeight(1)
-    .height(UiTheme.kpiSmallHeight)
-    .alignItems(HorizontalAlign.Start)
-    .justifyContent(FlexAlign.Center)
-    .padding(UiTheme.kpiSmallPadding)
-    .backgroundColor(UiTheme.cardBackground)
-    .borderRadius(UiTheme.statsCardRadius)
-    .shadow({
-      radius: UiTheme.statsShadowRadius,
-      color: UiTheme.statsShadowColor,
-      offsetX: 0,
-      offsetY: UiTheme.statsShadowOffsetY
-    })
   }
 
   /** 重度占比（对应网页端 severePct · 返回不带 % 的数值串） */

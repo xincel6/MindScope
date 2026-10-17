@@ -6,11 +6,16 @@
  *   ② 按压反馈只实现一次，新卡片自动获得同一手感；
  *   ③ 页面只需传"数据 + 回调"，不需要关心交互怎么做。
  *
- * 用法：
+ * 用法（同一套按压语言，区别只在"画不画底色"和"松手跳不跳转"）：
  * ```ts
- * RippleCard({ onTap: () => { ... } }) {
- *   Text('卡片内容')
- * }
+ * // ① 可点击卡片：按下去有反馈，松手执行 onTap
+ * RippleCard({ onTap: () => { ... } }) { Text('卡片内容') }
+ *
+ * // ② 有反馈但不跳转（统计页的卡片）：自己画底色，只借反馈
+ * RippleCard({ _enabled: false, _clickable: true, _pressScale: 0.98, _padding: 0 }) { ... }
+ *
+ * // ③ 自带背景（渐变卡）：壳子一点不画，只借反馈
+ * RippleCard({ _transparent: true, _enabled: false, _clickable: true, _pressScale: 0.985, _padding: 0 }) { ... }
  * ```
  *
  * ══════════════════════════════════════════════════════════════════
@@ -47,12 +52,21 @@
  * ● 卡片**内部**的独立控件（如 `Button`）会自己消费掉点击事件，
  *   此时父卡片拿不到 `onClick`（符合直觉：点按钮只应触发按钮）。
  *   因此"按钮与整卡做同一件事"的卡片，让两处 `onClick` 指向同一个处理函数即可。
- * ● 可点击的卡片会得到一个很淡的按压底色；不可点的展示卡片保持纯白
- *   （用 `PressTint.none` 覆写 `_pressColor`）。
+ * ● **按压反馈的判据只有 `_clickable`**，`_enabled` 只决定"松手是否触发 onTap"。
+ *   两者拆开之后才能表达"按下去有反馈、但不跳转"这种组合（统计页的卡片需要）。
+ *   纯展示卡片传 `_clickable: false`：保持纯白、不缩放，行为与本轮扩展前完全一致。
  */
 
-import { CardStyle } from '../common/CardStyle';
+import { CardStyle, CardShadowOptions } from '../common/CardStyle';
 import { UiTheme } from '../common/UiTheme';
+
+/**
+ * 全透明色（8 位 ARGB · alpha = 0）
+ * ★ 为什么需要它：ArkUI 的属性链无法"按条件不写某个属性"，`_transparent` 的
+ *   "不画底色/描边"只能表达成"画一个看不见的"。放模块级常量是因为 ArkTS 的
+ *   `struct` 不允许声明静态成员。
+ */
+const TRANSPARENT_COLOR: string = '#00000000';
 
 @ComponentV2
 export struct RippleCard {
@@ -85,9 +99,24 @@ export struct RippleCard {
 
   /**
    * 按压时的底色 · 默认取主题里的淡色
-   * 需要"按下不换色"时传 `UiTheme.cardBackground`（不可点的展示卡片就是这么做的）。
+   * 需要"按下不换色"时传 `UiTheme.cardBackground`，或者干脆传 `_clickable: false`
+   * （后者连缩放一起关掉，纯展示卡片用这条路）。
    */
   @Param _pressColor: string = UiTheme.cardPressTint;
+
+  /**
+   * 只当"纯交互壳"：不画底色 / 描边 / 投影，供**自带背景**的卡片（如统计页渐变卡）包一层。
+   * ★ 默认 false = 现在所有调用方的观感零变化。
+   * ★ ArkUI 没有"不设置属性"的写法，所以"跳过"是靠下面把取值换成
+   *   **全透明色 + 零投影**实现的 —— 属性链不能按条件拼接（build 里没有语句块）。
+   */
+  @Param _transparent: boolean = false;
+
+  /**
+   * 按下时缩到的比例（抬起回到 1）· 默认 1 = 不缩放，现有调用方不受影响
+   * ★ 缩放是**渲染变换**，不参与任何布局测量，不会让卡片在自己那一格里挤出空隙。
+   */
+  @Param _pressScale: number = 1;
 
   /** 卡片内容（用尾随闭包传入） */
   @BuilderParam content: () => void = this.emptyContent;
@@ -96,7 +125,7 @@ export struct RippleCard {
 
   /**
    * 是否处于按下态
-   * ★ 它只影响 `backgroundColor`（一个**颜色**属性），不会改变任何尺寸 ——
+   * ★ 它只驱动 `backgroundColor` 与 `scale` 两个**渲染属性**，绝不改变任何尺寸 ——
    *   这正是"装饰状态绝不能驱动尺寸"这条规则的落地方式。
    */
   @Local pressed: boolean = false;
@@ -108,20 +137,68 @@ export struct RippleCard {
 
   /**
    * 按下 / 抬起时的底色（按下着色，抬起恢复卡片白底）
-   * ★ 条件里带 `_enabled`：只有"真的有动作"的卡片才着色。
-   *   空态、区块外壳、只读信息卡（`_enabled: false`）保持纯白，不会出现
-   *   "按下去有反馈、松手却没反应"的误导。
+   *
+   * ★ 判据只有 `_clickable`，**不再看 `_enabled`**：
+   *   `_enabled` 表达的是"松手要不要执行 onTap"，`_clickable` 表达的是"有没有按压反馈"。
+   *   统计页的卡片要的正是"按下去有反馈、松手不跳转"，旧判据拼不出这个组合。
+   * ★ 这对现有调用方是安全的：工程里传 `_clickable: false` 的卡片
+   *   （各页空态卡、详情页只读卡）同时也传了 `_enabled: false`，着色结果与改造前逐字相同。
+   * ★ 透明壳态下**任何状态都不画底色**：卡片自带背景（渐变），壳子再涂一层淡色
+   *   会在圆角边缘露出与渐变不搭的补丁。它的反馈交给缩放与系统涟漪。
+   * ★ 这里不再重复判断 `_clickable`：`pressed` 只可能被 `onTouch` 置为 true，
+   *   而那里已经把不可点的卡片直接 return 掉了 —— 判据只保留一处，不会两处漂移。
    */
   private backgroundFor(): string {
-    if (this.pressed && this._clickable && this._enabled) {
+    if (this._transparent) {
+      return TRANSPARENT_COLOR;
+    }
+    if (this.pressed) {
       return this._pressColor;
     }
     return CardStyle.background();
   }
 
+  /** 描边宽度 · 透明壳态没有底色，再画 1px 收边就成了"有框没面"的怪卡片 */
+  private borderWidthFor(): number {
+    return this._transparent ? 0 : 1;
+  }
+
+  /** 描边颜色 · 宽度为 0 时一并给透明色，避免任何实现细节上残留一条线 */
+  private borderColorFor(): string {
+    return this._transparent ? TRANSPARENT_COLOR : CardStyle.borderColor();
+  }
+
   /**
-   * 切换按下态并做颜色过渡
-   * ★ `animateTo` 只包住一次颜色赋值：颜色变化不触发布局，只会走渲染层合成。
+   * 投影 · 透明壳态返回**零投影**（与 `CardStyle.shadow()` 关闭开关时同一种写法）
+   * ★ 不在属性链里写 if：`build()` 只能内联表达式，"跳过属性"统一表达成"零值取值"。
+   */
+  private shadowFor(): CardShadowOptions {
+    if (!this._transparent) {
+      return CardStyle.shadow();
+    }
+    const none: CardShadowOptions = {
+      radius: 0,
+      color: UiTheme.cardShadowColor,
+      offsetX: 0,
+      offsetY: 0
+    };
+    return none;
+  }
+
+  /**
+   * 当前的缩放比例（按下缩到 `_pressScale`，其余时刻 1）
+   * ★ 判据与底色一致：只认 `_clickable`，所以"有反馈不跳转"的卡片同样会缩。
+   */
+  private scaleFor(): number {
+    if (this.pressed) {
+      return this._pressScale;
+    }
+    return 1;
+  }
+
+  /**
+   * 切换按下态并做过渡（颜色 + 缩放，同一个 `animateTo` 里一起走，反馈不会脱节）
+   * ★ 被改的两个属性都不触发布局，只会走渲染层合成。
    */
   private setPressed(next: boolean): void {
     if (this.pressed === next) {
@@ -143,11 +220,15 @@ export struct RippleCard {
     .padding(this._padding)
     // ★ 卡片视觉**内联**写在组件链上（不要抽成共享的 AttributeModifier，
     //   原因见 common/CardStyle.ets 顶部说明：共享修饰器实例会导致卡片整片不渲染）
+    // ★ 透明壳态不是"跳过属性"，而是把取值换成"什么都不画"：
+    //   build() 的属性链不能按条件拼接，只能靠取值表达（同 CardStyle.shadow() 的关开关做法）。
     .backgroundColor(this.backgroundFor())
     .borderRadius(this._radius)
-    // 扁平风格：描边是唯一的层次表达（投影已通过 cardShadowEnabled 关闭）
-    .border({ width: 1, color: CardStyle.borderColor() })
-    .shadow(CardStyle.shadow())
+    // 灰底白卡：极淡投影负责"浮起"，1px 描边负责"收边"（见 common/CardStyle.ets）
+    .border({ width: this.borderWidthFor(), color: this.borderColorFor() })
+    .shadow(this.shadowFor())
+    // 按下轻微缩到 `_pressScale`：只改渲染变换，不参与布局测量（同 RevealCard 的入场缩放）
+    .scale({ x: this.scaleFor(), y: this.scaleFor() })
     // 系统级按压反馈：涟漪从触点扩散，且完全由系统实现，不影响布局
     .clickEffect({ level: ClickEffectLevel.LIGHT })
     .onTouch((event: TouchEvent) => {

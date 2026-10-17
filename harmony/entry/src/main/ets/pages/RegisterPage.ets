@@ -196,11 +196,13 @@ export struct RegisterPage {
         // ── ② 注册表单 ──
         AppCard({ title: '注册信息', subtitle: '用户名与密码为必填，邮箱可选' }) {
           Column({ space: UiTheme.gapL }) {
+            // ★ 输入框底取 `fillSoft`（与登录页同一口径）：页底是浅灰，
+            //   卡内填充块不能沿用页底色，否则会在白卡上显成灰补丁。
             TextInput({ placeholder: '用户名（3–32 位，支持中文/字母/数字/下划线）', text: this.userName })
               .type(InputType.Normal)
               .maxLength(AuthRule.usernameMaxLength)
               .height(UiTheme.controlHeight)
-              .backgroundColor(UiTheme.pageBackground)
+              .backgroundColor(UiTheme.fillSoft)
               .borderRadius(UiTheme.cardRadius)
               .fontSize(UiTheme.fontSizeBody)
               .fontColor(UiTheme.textPrimary)
@@ -214,7 +216,7 @@ export struct RegisterPage {
             TextInput({ placeholder: '密码（至少 6 位）', text: this.userPassword })
               .type(InputType.Password)
               .height(UiTheme.controlHeight)
-              .backgroundColor(UiTheme.pageBackground)
+              .backgroundColor(UiTheme.fillSoft)
               .borderRadius(UiTheme.cardRadius)
               .fontSize(UiTheme.fontSizeBody)
               .fontColor(UiTheme.textPrimary)
@@ -228,7 +230,7 @@ export struct RegisterPage {
             TextInput({ placeholder: '邮箱（选填）', text: this.userEmail })
               .type(InputType.Email)
               .height(UiTheme.controlHeight)
-              .backgroundColor(UiTheme.pageBackground)
+              .backgroundColor(UiTheme.fillSoft)
               .borderRadius(UiTheme.cardRadius)
               .fontSize(UiTheme.fontSizeBody)
               .fontColor(UiTheme.textPrimary)

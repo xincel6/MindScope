@@ -9,7 +9,7 @@
  * param.pickedName = 'interview.mp4';
  * ```
  *
- * 三段式布局：① 选择卡片 ② 已选素材预览 ③ 统一的上传动作区。
+ * 布局：① 选择卡片 ② 已选素材预览 ③ 上传状态（进度 / 错误） ④ 主按钮 ⑤ 格式说明。
  * 页面自己**只有**一个本地状态：`submitting`（回调返回前的兜底防连点）。
  * 其余全部来自参数 —— 因为"选中的素材"属于业务数据，应由窗口层持有。
  *
@@ -230,7 +230,9 @@ export struct MediaPickerPage {
                 .textAlign(TextAlign.Start)
               // ★ 上传接口拿不到进度回调（HttpClient 未暴露 flush 回调），
               //   这里用一条"进行中"的满色条表达状态，不做假动画 —— 假装有进度更糟。
-              ProgressBar({ ratio: 1, barColor: UiTheme.primary, barHeight: 6 })
+              // ★ 轨道色显式指定 fillSoft：组件默认的 progressTrack 是给旧纯白页底配的，
+              //   在白卡上会淡到看不出是条进度条（见共享验收清单第 4 条）。
+              ProgressBar({ ratio: 1, barColor: UiTheme.primary, barHeight: 6, trackColor: UiTheme.fillSoft })
             }
             .width('100%')
             .alignItems(HorizontalAlign.Start)

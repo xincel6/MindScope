@@ -14,6 +14,7 @@ import { TabPageParam } from '../types/PageParams';
 import { PageHeader } from '../components/PageHeader';
 import { PlaceholderView } from '../components/PlaceholderView';
 import { RevealCard } from '../components/RevealCard';
+import { RippleCard } from '../components/RippleCard';
 
 @ComponentV2
 export struct ReportsPage {
@@ -33,16 +34,20 @@ export struct ReportsPage {
 
       // 1 号位
       RevealCard({ order: 1 }) {
-        PlaceholderView({
-          glyph: '报',
-          title: '历史报告待实现',
-          description: '这里将放报告列表（BDI 分数 / 严重度 / 检测时间）与筛选分页。',
-          hint: '下一轮：接入 AppStore.reportItems、reportTotal 与 ReportApi 的筛选分页',
-          actionLabel: '下一步操作',
-          onAction: () => {
-            this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现报告列表与筛选' });
-          }
-        })
+        // 空态同样画成卡片（不可点）：白卡是空态里 fillSoft 图标底的承托面 ——
+        // 少了这层白，浅灰图标会落在同样浅的灰页底上，几乎看不见。
+        RippleCard({ _enabled: false, _clickable: false }) {
+          PlaceholderView({
+            glyph: '报',
+            title: '历史报告待实现',
+            description: '这里将放报告列表（BDI 分数 / 严重度 / 检测时间）与筛选分页。',
+            hint: '下一轮：接入 AppStore.reportItems、reportTotal 与 ReportApi 的筛选分页',
+            actionLabel: '下一步操作',
+            onAction: () => {
+              this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现报告列表与筛选' });
+            }
+          })
+        }
       }
     }
     .width('100%')

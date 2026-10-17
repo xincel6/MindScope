@@ -7,6 +7,9 @@
  *
  * ★ 骨架块用一个浅色圆角矩形实现，不做流光动画：
  *   规范要求"少用大面积效果"，静止的色块足够表达"正在加载"。
+ *
+ * ★ 底色用 `skeletonFill` 而**不是** `fillSoft`：骨架块直接坐在灰页底上，
+ *   两者对比度只有 1.06:1 时会"看起来像空白页"（基座实测），必须比 fillSoft 深一档。
  */
 
 import { UiTheme } from '../common/UiTheme';
@@ -23,7 +26,7 @@ export struct SkeletonBlock {
       .width(this.blockWidth)
       .height(this.blockHeight)
       .borderRadius(this.radius)
-      .backgroundColor(UiTheme.fillSoft)
+      .backgroundColor(UiTheme.skeletonFill)
   }
 }
 

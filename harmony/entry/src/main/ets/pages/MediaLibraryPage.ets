@@ -14,6 +14,7 @@ import { TabPageParam } from '../types/PageParams';
 import { PageHeader } from '../components/PageHeader';
 import { PlaceholderView } from '../components/PlaceholderView';
 import { RevealCard } from '../components/RevealCard';
+import { RippleCard } from '../components/RippleCard';
 
 @ComponentV2
 export struct MediaLibraryPage {
@@ -33,16 +34,20 @@ export struct MediaLibraryPage {
 
       // 1 号位
       RevealCard({ order: 1 }) {
-        PlaceholderView({
-          glyph: '库',
-          title: '素材库待实现',
-          description: '这里将放素材列表（缩略图 / 类型 / 时间）与上传入口。',
-          hint: '下一轮：接入 AppStore.mediaItems、MediaApi.uploadImage 与离线镜像数据',
-          actionLabel: '下一步操作',
-          onAction: () => {
-            this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现素材列表与上传' });
-          }
-        })
+        // 空态同样画成卡片（不可点）：白卡是空态里 fillSoft 图标底的承托面 ——
+        // 少了这层白，浅灰图标会落在同样浅的灰页底上，几乎看不见。
+        RippleCard({ _enabled: false, _clickable: false }) {
+          PlaceholderView({
+            glyph: '库',
+            title: '素材库待实现',
+            description: '这里将放素材列表（缩略图 / 类型 / 时间）与上传入口。',
+            hint: '下一轮：接入 AppStore.mediaItems、MediaApi.uploadImage 与离线镜像数据',
+            actionLabel: '下一步操作',
+            onAction: () => {
+              this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现素材列表与上传' });
+            }
+          })
+        }
       }
     }
     .width('100%')

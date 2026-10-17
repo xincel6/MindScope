@@ -1,16 +1,13 @@
 /**
  * CardStyle · 卡片视觉的**单一取值来源**（`AppCard` / `RippleCard` 共用）
  *
- * ────────────────── 当前视觉：扁平（无投影）──────────────────
- * 用户明确要求"去掉卡片的 3D 效果"，所以卡片现在**没有投影**，只有
- * 白底 + 8vp 圆角 + 1px `divider` 描边。
+ * ────────────────── 当前视觉：灰底 + 白卡 + 极淡投影 ──────────────────
+ * 页面背景 `#F2F3F7`，卡片白底 + 16vp 圆角 + 1px `divider` 描边 + 极淡投影。
+ * 投影负责让白卡从灰底上浮起来（淡影的 alpha 写在颜色里，见 `shadow()`），
+ * 描边负责兜住卡片与灰底的边界 —— 两层都很淡，少一层卡片就会显得"没收边"。
  *
- * ★ **描边必须保留**：页面背景已被改为纯白，卡片也是白色。
- *   一旦去掉投影又没有描边，卡片就与页面完全融为一体、看不出边界。
- *   扁平化之后，描边是唯一的层次表达手段。
- *
- * ★ 投影不是删掉而是**开关关掉**（`UiTheme.cardShadowEnabled = false`），
- *   想恢复立体感只需把那个开关置 true，不用改任何组件代码。
+ * ★ 投影不是删掉而是**开关可控**（`UiTheme.cardShadowEnabled`）：
+ *   开关关掉时 `shadow()` 返回全零投影，等价于回到扁平风格，组件代码一行不用改。
  *
  * ────────────────── 为什么这里只放"值"，不提供 AttributeModifier ──────────────────
  * 本文件曾把卡片视觉封装成一个 `AttributeModifier`（`CommonModifier` 子类）的
@@ -25,27 +22,26 @@
  *
  * 于是这里只导出"取值"，各卡片自己把属性内联写到组件链上。
  *
- * ★ 另一个被一起修掉的隐形坑：投影色原先写成 8 位 `#0F1E3A5F`（自带 alpha）。
- *   ArkUI `shadow().color` 官方只声明/示例 6 位 `#RRGGBB`，8 位在预览器上
- *   会让整个卡片不渲染。现在改为 6 位色值 + 独立的 `opacity` 字段。
+ * ★ 投影色值是**故意**用 8 位 ARGB 的：`ShadowOptions` 没有 `opacity` 字段，
+ *   淡影只能写进颜色自带的 alpha（`#141D2129`，alpha 0x14 ≈ 8%）。
+ *   旧注释曾据此判过"8 位色值会让卡片整片不渲染"，但统计页的 `#0E000000` 一直正常出影，
+ *   那次白屏的根因是同期被回滚的共享 `AttributeModifier`，不是色值位宽。
  */
 
 import { UiTheme } from './UiTheme';
 
-/** 卡片投影参数 · ArkUI `shadow()` 的入参形状 */
+/** 卡片投影参数 · ArkUI `shadow()` 的入参形状（★ 没有 `opacity`，淡影由 `color` 的 alpha 表达） */
 export interface CardShadowOptions {
   radius: number;
   color: string;
   offsetX: number;
   offsetY: number;
-  /** 不透明度 0–1 · 用它表达"淡影"，不要往 color 里塞 alpha（见 UiTheme 注释） */
-  opacity: number;
 }
 
 /** 卡片样式取值 · 全为静态，UI 直接引用 */
 export class CardStyle {
   /**
-   * 卡片投影参数 · 扁平模式下返回**全零投影**（等价于"没有投影"）
+   * 卡片投影参数 · 开关关掉时返回**全零投影**（等价于"没有投影"）
    *
    * ★ 用"方法返回新对象"而不是"静态常量对象"：属性方法可能按引用比对，
    *   共享同一个对象实例存在被内部改写或跳过更新的风险，返回新对象最稳。
@@ -59,8 +55,7 @@ export class CardStyle {
         radius: 0,
         color: UiTheme.cardShadowColor,
         offsetX: 0,
-        offsetY: 0,
-        opacity: 0
+        offsetY: 0
       };
       return flat;
     }
@@ -68,8 +63,7 @@ export class CardStyle {
       radius: UiTheme.cardShadowRadius,
       color: UiTheme.cardShadowColor,
       offsetX: 0,
-      offsetY: UiTheme.cardShadowOffsetY,
-      opacity: UiTheme.cardShadowOpacity
+      offsetY: UiTheme.cardShadowOffsetY
     };
     return options;
   }
@@ -85,8 +79,9 @@ export class CardStyle {
   }
 
   /**
-   * 卡片描边色 · 扁平化后这是唯一的层次表达手段（原因见文件头）
-   * ★ 用 `divider` 而不是更深的灰：扁平风格要克制，描边只负责"划出边界"。
+   * 卡片描边色 · 与极淡投影配合：投影给"浮起"，描边给"收边"
+   * ★ 用 `divider` 而不是更深的灰：灰底上已经有投影在表达层次，
+   *   描边只负责在视觉边缘划一条线，再深就会把卡片框死。
    */
   public static borderColor(): string {
     return UiTheme.divider;

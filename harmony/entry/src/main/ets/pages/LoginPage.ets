@@ -246,15 +246,14 @@ export struct LoginPage {
         AppCard({ title: '账号登录', subtitle: '请使用已注册的账号登录系统' }) {
           Column({ space: UiTheme.gapL }) {
             // 用户名
-            // ★ 背景改纯白后，输入框的 pageBackground 与卡片同色 → 必须补一条浅灰描边，
-            //   否则用户看不到输入框的边界（这是"全局改纯白"的连带修正）。
+            // ★ 输入框底取 `fillSoft`，不再用 `pageBackground`：页底本轮已从纯白改成浅灰，
+            //   卡内填充块若跟着页底走，就会在白卡里变成一块灰补丁（与卡片同色也一样看不清）。
+            //   浅灰填充自身已经划出边界，再叠一条描边就是双重收边，故一并去掉。
             TextInput({ placeholder: '请输入用户名', text: this.userName })
               .type(InputType.Normal)
               .maxLength(AuthRule.usernameMaxLength)
               .height(UiTheme.controlHeight)
-              .backgroundColor(UiTheme.cardBackground)
-              .borderWidth(1)
-              .borderColor(UiTheme.divider)
+              .backgroundColor(UiTheme.fillSoft)
               .borderRadius(UiTheme.cardRadius)
               .fontSize(UiTheme.fontSizeBody)
               .fontColor(UiTheme.textPrimary)
@@ -271,9 +270,7 @@ export struct LoginPage {
                 .type(this.passwordVisible ? InputType.Normal : InputType.Password)
                 .height(UiTheme.controlHeight)
                 .layoutWeight(1)
-                .backgroundColor(UiTheme.cardBackground)
-                .borderWidth(1)
-                .borderColor(UiTheme.divider)
+                .backgroundColor(UiTheme.fillSoft)
                 .borderRadius(UiTheme.cardRadius)
                 .fontSize(UiTheme.fontSizeBody)
                 .fontColor(UiTheme.textPrimary)

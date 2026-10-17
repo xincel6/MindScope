@@ -39,7 +39,7 @@ import {
   TabPageParam, WorkbenchPageParam
 } from '../types/PageParams';
 import {
-  ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabGlyph, mainTabIndexOf, mainTabLabel,
+  ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabIndexOf, mainTabLabel,
   MainTabMeta
 } from './PageRoutes';
 import { MediaPicker, PickResult } from '../common/MediaPicker';
@@ -53,6 +53,16 @@ import { AnalysisDetailPage } from './AnalysisDetailPage';
 
 /** 工作台「最近使用的素材」展示条数（用户指定两条） */
 const RECENT_MEDIA_LIMIT: number = 2;
+
+/**
+ * 页签胶囊的高度与圆角
+ *
+ * ★ 高度写死、不让文字自己撑：五个胶囊必须一样高。字重差异（选中 Medium / 未选 Normal）
+ *   会让行高差一点点，选中时底色块的上下边就会轻微跳动，一眼看得出来。
+ * ★ 32 = 正文行高约 20 + 上下各 6 的内边距；圆角取高度一半即胶囊形（与进度条同一套取法）。
+ */
+const TAB_CAPSULE_HEIGHT: number = 32;
+const TAB_CAPSULE_RADIUS: number = TAB_CAPSULE_HEIGHT / 2;
 
 @ComponentV2
 export struct MainPage {
@@ -141,6 +151,9 @@ export struct MainPage {
     transit.exitClock = transit.exitClock + 1;
 
     // ② 等最后一个组件演完再换页（切早了会把旧页的离场动画砍断）
+    //    核对过：最后一个 order（= count-1）的位移跑 cardMs，透明度延后 0.62×cardMs 再跑
+    //    0.38×cardMs，两者都收在 cardMs + stepMs×(count-1)；sequenceMs 就是它 +40ms 余量。
+    //    所以这里**继续用 sequenceMs**，不在页面里另算一套时间表（两套算式迟早会漂移）。
     const leavingWait: number = CardTransit.sequenceMs(this.cardCountOf(this.selectedTab));
     setTimeout(() => {
       this.selectedTab = tab;
@@ -614,23 +627,42 @@ export struct MainPage {
 
   // ══════════════════ 底部导航栏 ══════════════════
 
+  /**
+   * 底部页签栏 · **纯文字 + 选中胶囊底**
+   *
+   * ★ 这里刻意**不再渲染** `mainTabGlyph(item.tab)`：`MainTabMeta.glyph` 只是一个汉字
+   *   （析/库/报/统/我），摆在图标位就成了"单字图标"——真机上读起来像乱码或被截断的标签，
+   *   用户已按截图判定为视觉缺陷。`PageRoutes` 的 `glyph` 字段与 `mainTabGlyph()` 保留不动
+   *   （路由元数据仍可能被别处按名字取用），本栏只是不再消费它。
+   *
+   * ★ 选中态改用胶囊底表达：未选中只有 textSecondary 文字、无底色；选中是薄荷绿胶囊
+   *   （`cardPressTint`）+ 主色文字 + Medium 字重。胶囊随文字宽度，在各自的等分槽里居中。
+   */
   @Builder
   tabBar() {
     Row() {
       ForEach(MAIN_TABS, (item: MainTabMeta) => {
-        Column({ space: UiTheme.gapXs }) {
-          Text(mainTabGlyph(item.tab))
-            .fontSize(20)
-            .fontColor(this.selectedTab === item.tab ? UiTheme.primary : UiTheme.textSecondary)
-
+        // 槽本身负责"等分 + 居中 + 点击"：胶囊只有文字那么宽，点击区却仍是整槽，好按
+        Row() {
           Text(item.label)
             .fontSize(UiTheme.fontSizeBody)
+            .fontWeight(this.selectedTab === item.tab ? FontWeight.Medium : FontWeight.Normal)
             .fontColor(this.selectedTab === item.tab ? UiTheme.primary : UiTheme.textSecondary)
+            .maxLines(1)
+            .height(TAB_CAPSULE_HEIGHT)
+            // ★ 左右内边距取 gapS(8) 而不是更宽的档位：五个页签是等分槽，
+            //   "历史报告"四个字在 14fp 下已占约 56vp，槽宽只有屏宽/5，
+            //   再宽的内边距会把字挤出槽外（ArkUI 会按槽宽回夹，字就被截断）。
+            .padding({ left: UiTheme.gapS, right: UiTheme.gapS })
+            .borderRadius(TAB_CAPSULE_RADIUS)
+            // 未选中给全透明而不是"不设底色"：两态共用一条属性链，builder 里不必写 if/else
+            .backgroundColor(this.selectedTab === item.tab ? UiTheme.cardPressTint : Color.Transparent)
+            .textAlign(TextAlign.Center)
         }
         .layoutWeight(1)
         .height(UiTheme.tabBarHeight)
         .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
+        .alignItems(VerticalAlign.Center)
         .onClick(() => {
           this.pushTab(item.tab);
         })

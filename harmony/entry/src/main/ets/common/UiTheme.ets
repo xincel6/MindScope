@@ -2,11 +2,11 @@
  * UiTheme · 表现层设计令牌（颜色 / 字号 / 间距 / 圆角）· **全工程唯一的视觉常量来源**
  *
  * 设计规范（本轮 UI 统一风格，逐条对应）：
- *   页面背景 #FFFFFF ｜ 卡片背景 #FFFFFF ｜ 主色 #0D9488 ｜ 辅助蓝 #0284C7
- *   正文 #1E3A5F ｜ 次要文字 #64748B
- *   - 卡片圆角 8vp
+ *   页面背景 #F2F3F7 ｜ 卡片背景 #FFFFFF ｜ 主色 #0D9488 ｜ 辅助蓝 #0284C7
+ *   正文 #1D2129 ｜ 次要文字 #4E5969
+ *   - 卡片圆角 16vp
  *   - 页面标题 22vp，正文不小于 14vp，重要分数用大字号（32vp）
- *   - 少用大面积渐变（全工程不用渐变）
+ *   - 少用大面积渐变（全局令牌里不放渐变；统计页核心卡那条浅薄荷渐变是唯一例外）
  *   - 不要同时使用太多颜色：本文件只给 3 个功能色（主色 / 辅助蓝 / 错误危险色），
  *     其余全部是中性灰阶。
  *
@@ -18,9 +18,11 @@
  *   两者**语义不同**：一个是"出错了"，一个是"病情到这个档位了"，数值相同也不得互换引用。
  *   （工作台的严重度进度条用 ②，不要图省事去 import ①。）
  *
- * ★ 背景改纯白（用户本轮指定）：纯白背景下卡片与页面同色，层次**只能靠阴影和浅灰填充**区分，
- *   因此凡是要在卡片里"再嵌一层"的元素（输入框、缩略图底、进度条轨道），
- *   一律用 `fillSoft` / `divider` 描边或填底，不能只靠背景色差。
+ * ★ 层次靠三件套（用户本轮指定，已从统计页提升为全局）：**浅灰页底 + 纯白卡片 + 极淡投影**。
+ *   投影负责让白卡从灰底上浮起来，但卡片内部"再嵌一层"的元素（输入框、缩略图底、进度条轨道）
+ *   没有投影可用，一律用 `fillSoft` / `divider` 描边或填底 —— 白底白块仍然看不出来。
+ *   ★ 所以 `fillSoft` 必须与 `pageBackground` **明显可区分**：页底已经比纯白深一档，
+ *     两者靠得太近，灰底上的浅填充就会"消失"。
  *
  * ★ 为什么单独一份而不是改 `types/constant.ts` 的 `UiConstant`：
  *   `UiConstant.primaryColor` 同时被 BDI 严重度分级色系（正常绿 / 轻度蓝 / 中度橙 / 重度红）引用，
@@ -35,8 +37,8 @@
 export class UiTheme {
   // ────────────────── 颜色 ──────────────────
 
-  /** 页面背景 · 用户本轮指定改为纯白 */
-  public static readonly pageBackground: string = '#FFFFFF';
+  /** 页面背景 · 浅灰（白卡片要浮得起来，页底就不能也是白的） */
+  public static readonly pageBackground: string = '#F2F3F7';
 
   /** 卡片背景 */
   public static readonly cardBackground: string = '#FFFFFF';
@@ -47,11 +49,11 @@ export class UiTheme {
   /** 辅助蓝（次要按钮 / 文字链接 / 信息强调） */
   public static readonly accent: string = '#0284C7';
 
-  /** 正文色 */
-  public static readonly textPrimary: string = '#1E3A5F';
+  /** 正文色 · 中性深灰（原深蓝灰在灰底上偏冷，中性黑对比度更高也更干净） */
+  public static readonly textPrimary: string = '#1D2129';
 
   /** 次要文字色（说明、占位符、未选中态） */
-  public static readonly textSecondary: string = '#64748B';
+  public static readonly textSecondary: string = '#4E5969';
 
   /** 错误危险色 · **仅用于失败提示**（严重度色阶在 `UiConstant.severityMeta()`，两者勿混用） */
   public static readonly danger: string = '#DC2626';
@@ -86,18 +88,28 @@ export class UiTheme {
 
 
   /** 中性分隔线 */
-  public static readonly divider: string = '#E2E8F0';
+  public static readonly divider: string = '#E5E6EB';
 
-  /** 浅色填充块（骨架屏、图标底） */
-  public static readonly fillSoft: string = '#EDF2F7';
+  /** 浅色填充块（输入框底 / 缩略图底 / 进度条轨道）· 必须与 `pageBackground` 明显可区分 */
+  public static readonly fillSoft: string = '#E9EDF3';
+
+  /**
+   * 骨架块与空态图标底的填充 · 比 `fillSoft` 再深一档
+   *
+   * ★ 为什么不复用 `fillSoft`：`fillSoft`(#E9EDF3) 与页底 `pageBackground`(#F2F3F7)
+   *   的对比度只有约 1.06:1 —— 而骨架块/空态图标底是**直接坐在页底上**的（不像缩略图
+   *   那样嵌在白卡里），复用 `fillSoft` 会让加载态看起来就是一页空白（基座实测已复现）。
+   *   这一档在灰页底上辨得出来，又仍浅于白卡，被放进卡片里也不会变成深色补丁。
+   */
+  public static readonly skeletonFill: string = '#DCE3EC';
 
   // ────────────────── 圆角与间距 ──────────────────
 
-  /** 卡片圆角（规范：8vp 左右） */
-  public static readonly cardRadius: number = 8;
+  /** 卡片圆角（16vp · 与统计页一致，大圆角让白卡更"软"） */
+  public static readonly cardRadius: number = 16;
 
-  /** 主按钮圆角 */
-  public static readonly buttonRadius: number = 8;
+  /** 主按钮圆角（12vp · 只比卡片小一号，按钮不应看着像卡片） */
+  public static readonly buttonRadius: number = 12;
 
   /** 品牌图标占位圆角 */
   public static readonly logoRadius: number = 20;
@@ -154,25 +166,25 @@ export class UiTheme {
   public static readonly cardPadding: number = 16;
 
   /**
-   * 卡片投影（低强度，符合"少用大面积效果"）
+   * 卡片投影（极淡 · 只负责让白卡从灰底上"浮"起来）
    *
-   * ★ 色值必须是**6 位 `#RRGGBB`**：ArkUI `shadow()` 的 `color` 官方类型是 `ResourceColor`，
-   *   文档示例都是 6 位；原先写 8 位（`#0F1E3A5F`，带 alpha）在预览器上会让卡片整片不渲染
-   *   —— 属于"编译通过、运行白屏"的隐形坑。要弱化投影请调低 `cardShadowOpacity`，
-   *   不要往色值里塞 alpha。
+   * ★ 淡影做进**颜色**里，不靠 opacity：ArkUI 的 `ShadowOptions` 根本没有 `opacity` 字段，
+   *   过去那个 `cardShadowOpacity` 一直被运行时忽略 —— 开关一开就是满强度黑影。
+   *   现在用 8 位 ARGB `#141D2129`（alpha 0x14 ≈ 8%）。
    *
-   * ★★ `cardShadowEnabled` 是**投影总开关**，当前为 false（扁平风格）。
-   *   用户明确要求"去掉卡片的 3D 效果"。下面的半径/色值/位移/透明度全部保留，
-   *   需要恢复立体感时把开关置 true 即可 —— 不要删这些令牌。
+   * ★ 旧注释记过"8 位色值会让卡片整片不渲染"，但统计页的 `statsShadowColor`（`#0E000000`）
+   *   就是 8 位 ARGB 且投影正常，可见那次白屏的根因不在此（同期被回滚的共享
+   *   `AttributeModifier` 才是，见 `CardStyle.ets` 顶部）。本轮据此改用 8 位 ARGB。
+   *
+   * ★★ `cardShadowEnabled` 是**投影总开关**，当前为 true。
+   *   想一键回到扁平风格就置 false（`CardStyle.shadow()` 返回全零投影），
+   *   不要删下面的半径/色值/位移令牌。
    */
-  public static readonly cardShadowEnabled: boolean = false;
+  public static readonly cardShadowEnabled: boolean = true;
 
-  public static readonly cardShadowRadius: number = 10;
-  public static readonly cardShadowColor: string = '#1E3A5F';
-  public static readonly cardShadowOffsetY: number = 2;
-
-  /** 卡片投影的不透明度（0–1）· 与 `cardShadowColor` 配合表达"很淡的一层影" */
-  public static readonly cardShadowOpacity: number = 0.12;
+  public static readonly cardShadowRadius: number = 14;
+  public static readonly cardShadowColor: string = '#141D2129';
+  public static readonly cardShadowOffsetY: number = 3;
 
   // ────────────────── 工作台专用尺寸 ──────────────────
 
@@ -182,8 +194,8 @@ export class UiTheme {
   /** 进度条圆角 · 取高度的一半，呈胶囊形 */
   public static readonly progressRadius: number = 4;
 
-  /** 进度条轨道底色 */
-  public static readonly progressTrack: string = '#EDF2F7';
+  /** 进度条轨道底色 · 与 `fillSoft` 同值（同一张卡里不能出现两种浅填充） */
+  public static readonly progressTrack: string = '#E9EDF3';
 
   /** 最近素材缩略图边长 */
   public static readonly thumbSize: number = 56;
@@ -311,11 +323,13 @@ export class UiTheme {
   public static readonly kpiSmallHeight: number = 78;
   public static readonly kpiSmallPadding: number = 12;
 
-  // ── 统计页独立视觉体系（★ 刻意不复用全局 pageBackground / cardRadius / 投影开关）──
+  // ── 统计页专用（图表 / 版式取值 · 已不是一套"独立视觉体系"）──
   //
-  // 统计页由本人负责，页内自成一套：浅灰底 + 16 圆角 + 极淡投影 + 渐变核心卡。
-  // 这些值只在 StatsPage 及其图表里消费，**不改动任何全局令牌**，
-  // 因此不会影响工作台 / 素材库 / 历史报告等队友负责的页面。
+  // 统计页原来的"浅灰底 + 16 圆角 + 极淡投影 + 白卡"现已**提升为全局风格**
+  // （见文件上方的 pageBackground / cardRadius / cardShadow*），所以本区块里的背景、
+  // 圆角、投影半径与外层同值，属过渡期重复，待各页接入完成后收敛。
+  // 仍然只属于本页的是：图表色板、字号、饼图 / 折线 / 图例 / 卡高这些版式尺寸，
+  // 以及核心卡那条浅薄荷渐变（全局不放渐变，本页是唯一例外）。
 
   /** 统计页页面背景（比全局纯白深一档，让白卡片浮起来） */
   public static readonly statsPageBg: string = '#F2F3F7';

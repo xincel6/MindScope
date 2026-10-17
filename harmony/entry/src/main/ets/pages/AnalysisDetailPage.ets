@@ -528,10 +528,13 @@ export struct AnalysisDetailPage {
           .textAlign(TextAlign.Start)
 
         // 进度条（真实数据）
+        // ★ 轨道显式取 `fillSoft`：组件默认的 `progressTrack` 几乎与白卡同色，
+        //   在白底卡片里看不出"轨道还剩多少"，只能看到填充段。
         ProgressBar({
           ratio: this.progress,
           barColor: this.statusColor,
-          barHeight: 8
+          barHeight: 8,
+          trackColor: UiTheme.fillSoft
         })
 
         Row() {
@@ -643,7 +646,9 @@ export struct AnalysisDetailPage {
     .borderRadius(UiTheme.cardRadius)
     .borderWidth(index === this.heatView.focusedIndex ? 2 : 1)
     .borderColor(index === this.heatView.focusedIndex ? UiTheme.primary : UiTheme.divider)
-    .backgroundColor(UiTheme.cardBackground)
+    // ★ 缩略格底取 `fillSoft`：这一格嵌在白卡内部，用卡片白只会在白卡上"消失"，
+    //   浅灰填充才让它自带边界，选中态的主色描边也才跳得出来。
+    .backgroundColor(UiTheme.fillSoft)
     .onClick(() => {
       this.onPickFrame(index);
     })

@@ -67,13 +67,29 @@ export class CardTransit {
    */
   static readonly stepMs: number = 110;
 
-  /** 单个组件横向滑动的基准距离（vp）· 实际距离还会按序号做拖尾放大，见 `travelOf` */
+  /** 单个组件横向滑动的基准距离（vp）· **入场用**，实际距离还会按序号做拖尾放大，见 `travelOf` */
   static readonly travel: number = 96;
 
-  /** 拖尾系数：序号每 +1，位移距离多这么多比例（0 = 所有组件走同样远，会显得机械） */
+  /** 拖尾系数：序号每 +1，位移距离多这么多比例（0 = 所有组件走同样远，会显得机械）· **入场用** */
   static readonly trail: number = 0.12;
 
-  /** 离场时的缩放终值（配合位移做出"退回纵深"的体积感） */
+  /**
+   * 离场横向位移（vp）· **所有 order 都用这同一个绝对值**，方向由调用方乘上 `dir`
+   *
+   * ★ 为什么不用 `travelOf(order)`：`travelOf` 是给**入场**用的拖尾递增
+   *   （后序组件滑得更远，形成"被带走"的流动感，见其注释）。
+   *   离场若也按序号递增，各卡滑走的速度与终点都不同，整页会被横向撕成碎片；
+   *   离场要的是"整页像一块板一起滑出视口"，所以距离必须与序号无关。
+   * ★ 为什么是 420：真机屏宽约 373vp，小于屏宽的距离都会让卡片"还没走出视口就已经淡没"，
+   *   用户看到的只有"内容消失 → 整页空白 → 新页淡入"，根本看不到位移。
+   *   取大于屏宽的绝对值，才能保证透明度收在"已经滑出屏幕"之后。
+   */
+  static readonly exitTravel: number = 420;
+
+  /**
+   * 离场缩放终值 · **当前离场已不使用**（`playOut` 里保持 scale = 1，理由见该函数注释）；
+   * 这是对外暴露的转场令牌，删除属于契约变更，不在本轮范围内。
+   */
   static readonly scaleOut: number = 0.94;
 
   /** 入场时的缩放起始值 */
@@ -85,7 +101,12 @@ export class CardTransit {
   /** 各页面参与转场的组件个数 · 必须与该页里 `order` 的数量一致 */
   static readonly CARDS_WORKBENCH: number = 4;
 
-  static readonly CARDS_STATS: number = 3;
+  /**
+   * 统计页：页头 0 / 核心卡 1 / 三张 KPI 小卡 2·3·4 / 环形图 5 / 折线 6
+   * ★ 必须与该页里 `RevealCard({ order })` 的**个数**一致（序号唯一且从 0 连续）：
+   *   少算一个，最后一个组件的动画会被换页切在尾巴上。
+   */
+  static readonly CARDS_STATS: number = 7;
 
   static readonly CARDS_PLACEHOLDER: number = 2;
 
@@ -126,6 +147,7 @@ export class CardTransit {
    *
    * ★ 为什么要有它：所有组件走同样距离时，整组动作像"流水线"；
    *   让后序组件距离递增，视觉上会形成"被带走"的流动感，是去掉机械感的关键一步。
+   * ★ **只给入场用**：离场是整页滑出视口，必须等距，走 `exitTravel`。
    *
    * @param order 组件序号
    * @returns vp 距离（恒为正数，方向由调用方乘上 `dir`）
@@ -136,6 +158,12 @@ export class CardTransit {
 
   /**
    * 一波转场需要等多久（从发信号到最后一个组件演完）
+   *
+   * ★ 数值上刚好等于"最后一个组件（`order = count - 1`）真正演完"的时刻 + 40ms 余量：
+   *   它的位移从 `(count-1) × stepMs` 起跑、跑满 `cardMs` ⇒ 结束于 `cardMs + stepMs × (count-1)`；
+   *   透明度延后 `cardMs × 0.62` 起、跑 `cardMs × 0.38` ⇒ 同样结束于那一刻。
+   *   所以末尾的 +40 是**纯余量**而不是补偿，页面按它等，换页正好落在最后一张卡滑出屏幕之后。
+   *
    * @param count 该页组件个数
    * @returns 毫秒；含 40ms 余量，避免换页切在动画尾巴上
    */

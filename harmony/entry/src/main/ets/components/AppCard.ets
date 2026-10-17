@@ -1,5 +1,5 @@
 /**
- * AppCard · 统一卡片容器（规范：卡片背景 #FFFFFF、圆角 8vp）
+ * AppCard · 统一卡片容器（规范：卡片背景 #FFFFFF、圆角 16vp、极淡投影）
  *
  * 用法：
  * ```ts
@@ -72,7 +72,7 @@ export struct AppCard {
     //   （原因见 common/CardStyle.ets 顶部说明：共享修饰器实例会让卡片整片不渲染）
     .backgroundColor(CardStyle.background())
     .borderRadius(UiTheme.cardRadius)
-    // 扁平风格：描边是唯一的层次表达（投影已通过 cardShadowEnabled 关闭）
+    // 灰底白卡：极淡投影负责"浮起"，1px 描边负责"收边"（见 common/CardStyle.ets）
     .border({ width: 1, color: CardStyle.borderColor() })
     .shadow(CardStyle.shadow())
   }
