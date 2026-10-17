@@ -50,6 +50,8 @@ export interface MediaItemModel {
   duration: number | null;
   /** "YYYY-MM-DD" */
   createdAt: string;
+  /** 所属患者名 · 空串表示未命名 */
+  patient: string;
 }
 
 // ───────────────────────────── 报告 ─────────────────────────────

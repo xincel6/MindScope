@@ -715,6 +715,34 @@ export class AppStore {
     return this.domainMedia.visibleItems();
   }
 
+  /** 去重后的患者名列表（含「未命名」占位）· 顶部筛选器用 */
+  public patientOptions(): string[] {
+    return this.domainMedia.patientOptions();
+  }
+
+  /** 当前患者筛选（空串 = 全部） */
+  public patientFilter(): string {
+    return this.domainMedia.patientFilterValue();
+  }
+
+  /** 设置患者筛选（空串 = 全部患者） */
+  public setPatientFilter(patient: string): void {
+    this.domainMedia.setPatientFilter(patient);
+    this.sync();
+  }
+
+  /** 应用了「患者 + 类型」双重筛选后的列表 */
+  public filteredMediaItems(type: MediaType): MediaItemModel[] {
+    return this.domainMedia.filteredItems(type);
+  }
+
+  /** 给素材命名/改所属患者 */
+  public async renamePatient(mediaId: string, patient: string): Promise<ActionResultModel> {
+    const result: ActionResultModel = await this.domainMedia.renamePatient(mediaId, patient);
+    this.sync();
+    return result;
+  }
+
   // ══════════════════ 服务端地址与连通性 ══════════════════
 
   /** 当前地址快照 */
