@@ -307,7 +307,35 @@ export class UiTheme {
   public static readonly chartGridDashSpace: number = 4;
 
   /** KPI 大卡 / 小卡高度与内边距 */
-  public static readonly kpiHeroHeight: number = 104;
+  public static readonly kpiHeroHeight: number = 106;
   public static readonly kpiSmallHeight: number = 78;
   public static readonly kpiSmallPadding: number = 12;
+
+  // ── 统计页独立视觉体系（★ 刻意不复用全局 pageBackground / cardRadius / 投影开关）──
+  //
+  // 统计页由本人负责，页内自成一套：浅灰底 + 16 圆角 + 极淡投影 + 渐变核心卡。
+  // 这些值只在 StatsPage 及其图表里消费，**不改动任何全局令牌**，
+  // 因此不会影响工作台 / 素材库 / 历史报告等队友负责的页面。
+
+  /** 统计页页面背景（比全局纯白深一档，让白卡片浮起来） */
+  public static readonly statsPageBg: string = '#F2F3F7';
+
+  /** 统计页卡片圆角（16 · 大于全局 8） */
+  public static readonly statsCardRadius: number = 16;
+
+  /** 统计页页头标题字号（26 · 大于全局 22，拉开层级） */
+  public static readonly statsTitleSize: number = 26;
+
+  /** 统计页一级 / 二级文字色（中性灰阶，比全局的深蓝灰更"数据化"） */
+  public static readonly statsTextPrimary: string = '#1D2129';
+  public static readonly statsTextRegular: string = '#4E5969';
+
+  /** 统计页卡片投影（大扩散低透明度 · 只在统计页卡片上手动挂） */
+  public static readonly statsShadowRadius: number = 14;
+  public static readonly statsShadowColor: string = '#0E000000';
+  public static readonly statsShadowOffsetY: number = 3;
+
+  /** 统计页核心卡渐变（浅薄荷 → 白 · 135°） */
+  public static readonly kpiGradientStart: string = '#E8F6EF';
+  public static readonly kpiGradientEnd: string = '#FFFFFF';
 }
