@@ -234,4 +234,80 @@ export class UiTheme {
 
   /** 弹窗距页面顶部的距离 · 让它落在输入框之上、又不贴死状态栏 */
   public static readonly alertOffsetTop: number = 8;
+  // ────────────────── 统计页专用（2026-10-17 · 仅本页消费，不改动上方任何全局值） ──────────────────
+
+  /**
+   * 统计页图表色板（回归 UI 统一风格后的中性化版本）
+   *
+   * ★ 语义顺序固定：正常 / 轻度 / 中度 / 重度，由 StatsMapper 保证，
+   *   本数组只负责"画出来"，与数据层 `UiConstant.severityMeta()` 的取值互不替代。
+   * ★ 取值在原有色相上略降饱和，避免四个高饱和色并排把页面拉成仪表盘。
+   */
+  public static readonly severityPieColors: string[] = ['#17B26A', '#2E6BE6', '#F79009', '#F04438'];
+
+  /** 折线阈值线色板（index 与 19 / 28 一一对应） */
+  public static readonly chartThresholdColors: string[] = ['#2E6BE6', '#F79009'];
+
+  /** 统计页强调色（折线 / 核心数字）· 与主色同族的绿，用于"数据"而非"交互" */
+  public static readonly statAccent: string = '#17B26A';
+
+  /** 图例标签色 */
+  public static readonly legendLabelColor: string = '#4E5969';
+
+  /** 图表横向网格线 */
+  public static readonly chartGrid: string = '#E5E6EB';
+
+  /** 折线下方渐变面积 · 顶 / 底（rgba 形式，mpchart 需要 #AARRGGBB） */
+  public static readonly chartLineFillTop: string = '#2617B26A';
+  public static readonly chartLineFillBottom: string = '#0017B26A';
+
+  /** 核心指标卡浅底（不用渐变，纯色浅底 + 描边表达层级） */
+  public static readonly kpiHeroTint: string = '#F0FDF9';
+  public static readonly kpiHeroBorder: string = '#CCFBF1';
+
+  /** 统计页左右内边距 */
+  public static readonly statsPagePadding: number = 16;
+
+  /** 坐标轴刻度 / 环心副文字 / 小单位（11） */
+  public static readonly fontSizeAxis: number = 11;
+
+  /** 环心核心数字（28 / 700） */
+  public static readonly fontSizeChartCenter: number = 28;
+
+  /** 数字后缀单位（次 / ms · 13） */
+  public static readonly fontSizeUnit: number = 13;
+
+  /** 小卡数字后缀单位（10 · 三卡并排时防挤压） */
+  public static readonly fontSizeUnitSmall: number = 10;
+
+  /** 环形图：外径 152（半径 76）/ 环宽 16 / 内径 60 */
+  public static readonly pieOuterRadius: number = 76;
+  public static readonly pieRingWidth: number = 16;
+  public static readonly pieInnerRadius: number = 60;
+
+  /** 环形图绘制高度 = 152 + mpchart 内部固定扣减 36（见 SeverityPieChart 注释） */
+  public static readonly pieHeight: number = 188;
+
+  /** 扇区间隙 */
+  public static readonly pieSliceSpace: number = 3;
+
+  /** 图例色块 10×10 / 圆角 3 / 单项定宽 132 */
+  public static readonly legendDotSize: number = 10;
+  public static readonly legendDotRadius: number = 3;
+  public static readonly legendItemWidth: number = 132;
+
+  /** 折线：线宽 2.5 / 数据点半径 4 / 白心半径 2 / 绘制高度 232 */
+  public static readonly lineWidth: number = 2.5;
+  public static readonly linePointRadius: number = 4;
+  public static readonly linePointHoleRadius: number = 2;
+  public static readonly lineHeight: number = 232;
+
+  /** 横向网格虚线节奏 */
+  public static readonly chartGridDashLength: number = 4;
+  public static readonly chartGridDashSpace: number = 4;
+
+  /** KPI 大卡 / 小卡高度与内边距 */
+  public static readonly kpiHeroHeight: number = 104;
+  public static readonly kpiSmallHeight: number = 78;
+  public static readonly kpiSmallPadding: number = 12;
 }

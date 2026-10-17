@@ -10,16 +10,23 @@
  *   `AppStore.statsLoading` / `refreshStats()`
  * 网页端对应：src/views/StatsView.vue（KPI 四联卡 + 严重度饼图 + BDI 趋势折线）
  *
- * ★ 页面纪律（沿用本工程约定）：不 import 任何领域 store 之外的网络层；
- *   取数只找 AppStore 门面；字段一律驼峰。
+ * ★ 版式（2026-10-17 · 与全工程「扁平 + 圆角8 + 无渐变」的 UI 规范对齐）：
+ *   页面左右内边距 16 / 模块垂直间距 16；
+ *   顶部 KPI 区 = 「总分析次数」满行核心卡（浅薄荷底 + 描边，不用渐变）
+ *                + 下方 3 张等宽小卡并排（平均推理耗时 / 素材总数 / 重度占比）；
+ *   环形图、折线图各占一张独立卡片。
+ *   ★ 层级靠「浅色块 + 1vp 描边」表达，不用投影：`UiTheme.cardShadowEnabled` 为 false，
+ *     全工程是扁平风，本页跟随，避免切页签时观感跳变。
  *
- * ★ 语法纪律（2026-10-16 踩坑记录，详见 build() 内注释）：build()/@Builder
- *   体内【不能声明局部变量】。
+ * ★ 转场：每块内容包一层 `RevealCard({ order })` 做错峰滑入（队友实现的通用转场）。
+ *   KPI 三小卡那一排不包 —— 它们在 Row 里靠 `layoutWeight(1)` 均分宽度，
+ *   外面再套容器会破坏均分（见 buildContent 注释）。
+ *
+ * ★ 语法纪律（2026-10-16 踩坑）：build()/@Builder 体内【不能声明局部变量】。
  */
 
 import { AppStore } from '../store/AppStore';
 import { AppBootstrap } from '../common/AppBootstrap';
-import { CardTransit } from '../common/CardTransit';
 import { UiTheme } from '../common/UiTheme';
 import { TabPageParam } from '../types/PageParams';
 import { StatsModel } from '../types/Index';
@@ -27,9 +34,12 @@ import { PageHeader } from '../components/PageHeader';
 import { AppCard } from '../components/AppCard';
 import { ErrorRetryView } from '../components/ErrorRetryView';
 import { SkeletonBlock } from '../components/SkeletonView';
+import { RevealCard } from '../components/RevealCard';
 import { SeverityPieChart } from '../components/charts/SeverityPieChart';
 import { BdiTrendChart } from '../components/charts/BdiTrendChart';
-import { RevealCard } from '../components/RevealCard';
+
+/** 次级 KPI 数字字号（三卡并排，20 是 393 宽下的安全上限） */
+const KPI_SUB_METRIC_SIZE: number = 20;
 
 @ComponentV2
 export struct StatsPage {
@@ -49,16 +59,13 @@ export struct StatsPage {
   }
 
   build() {
-    // ★ 语法纪律（2026-10-16 踩坑记录）：build()/@Builder 体内是 ArkUI UI 语法，
-    //   【不能声明局部变量】（const/let 都不行，带不带类型标注都会让 arkts 插件
-    //   在容器收尾处报 "Unexpected token"，再伪装成 10905210 "单根节点"错误）。
-    //   需要快照/收窄时，把逻辑放到 @Computed getter 里，或在调用处用 `as` 收窄。
-    //   （UI 元素后跟分号是合法的，2026-10-16 实测；本工程风格是不跟。）
-    // ★ 必须包一层 Scroll：本页内容（页头 + 四张 KPI 卡 + 饼图卡 + 折线卡）高于一屏，
-    //   之前直接用 Column 导致第二张图表被顶到屏幕外、藏在底部页签栏后面（看不到图）。
+    // ★ 语法纪律（2026-10-16 踩坑）：build()/@Builder 体内是 ArkUI UI 语法，
+    //   【不能声明局部变量】（const/let 都不行），否则 arkts 插件在容器收尾处
+    //   报 "Unexpected token"，并伪装成 10905210 "单根节点"错误。
+    // ★ 必须包一层 Scroll：本页内容（页头 + KPI 区 + 饼图卡 + 折线卡）高于一屏。
     Scroll() {
       Column({ space: UiTheme.gapL }) {
-        // 页头（0 号位 · 转场由 RevealCard 内部负责）
+        // 页头 · 0 号位（转场由 RevealCard 内部负责）
         RevealCard({ order: 0 }) {
           Column() {
             PageHeader({ title: '统计', subtitle: '分析次数、严重度分布与 BDI 趋势' })
@@ -84,8 +91,8 @@ export struct StatsPage {
       }
       .width('100%')
       .padding({
-        left: UiTheme.pagePadding,
-        right: UiTheme.pagePadding,
+        left: UiTheme.statsPagePadding,
+        right: UiTheme.statsPagePadding,
         top: UiTheme.gapL,
         bottom: UiTheme.gapXxl
       })
@@ -98,37 +105,72 @@ export struct StatsPage {
     .backgroundColor(UiTheme.pageBackground)
   }
 
-  /** 加载中骨架：与真实内容同构（KPI 行 + 两张图），避免加载完成时布局跳动 */
+  /** 加载中骨架：与真实内容同构（核心卡 + 3 小卡 + 两张图），避免加载完成时布局跳动 */
   @Builder
   buildSkeleton() {
-    Column({ space: UiTheme.gapM }) {
-      SkeletonBlock({ blockHeight: 72, radius: UiTheme.cardRadius })
-      SkeletonBlock({ blockHeight: 72, radius: UiTheme.cardRadius })
-      SkeletonBlock({ blockHeight: 220, radius: UiTheme.cardRadius })
-      SkeletonBlock({ blockHeight: 220, radius: UiTheme.cardRadius })
+    Column({ space: UiTheme.gapL }) {
+      SkeletonBlock({ blockHeight: UiTheme.kpiHeroHeight, radius: UiTheme.cardRadius })
+
+      Row({ space: UiTheme.gapM }) {
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
+        SkeletonBlock({ blockWidth: '31%', blockHeight: UiTheme.kpiSmallHeight, radius: UiTheme.cardRadius })
+      }
+      .width('100%')
+
+      SkeletonBlock({ blockHeight: 300, radius: UiTheme.cardRadius })
+      SkeletonBlock({ blockHeight: 300, radius: UiTheme.cardRadius })
     }
     .width('100%')
   }
 
   @Builder
   buildContent(stats: StatsModel) {
-    // ── KPI 卡片（对应网页端 StatCard 四联）──
-    // ★ 四个 KPI 卡在 Row 里靠 `layoutWeight(1)` 均分宽度，外层再套容器会破坏布局，
-    //   所以这一排不参与逐组件转场，只让页头与两张图表卡参与。
-    Row({ space: UiTheme.gapM }) {
-      this.kpiCard('总分析次数', `${stats.totalAnalyses}`)
-      this.kpiCard('平均推理耗时', `${stats.avgInferenceTimeMs.toFixed(1)} ms`)
-    }
-    .width('100%')
-
-    Row({ space: UiTheme.gapM }) {
-      this.kpiCard('素材总数', `${stats.totalMedia}`)
-      this.kpiCard('重度占比', this.severePct(stats))
-    }
-    .width('100%')
-
-    // ── 严重度分布（环形饼图 + 圆心总数）· 1 号位 ──
+    // ── 核心 KPI 卡 · 1 号位（满行 · 浅薄荷底 + 描边表达层级）──
     RevealCard({ order: 1 }) {
+      Column({ space: UiTheme.gapS }) {
+        Text('总分析次数')
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .maxLines(1)
+
+        Text() {
+          Span(`${stats.totalAnalyses}`)
+            .fontSize(UiTheme.fontSizeMetric)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UiTheme.statAccent)
+          Span(' 次')
+            .fontSize(UiTheme.fontSizeUnit)
+            .fontColor(UiTheme.textSecondary)
+        }
+        .width('100%')
+        .textAlign(TextAlign.Start)
+        .maxLines(1)
+      }
+      .width('100%')
+      .height(UiTheme.kpiHeroHeight)
+      .alignItems(HorizontalAlign.Start)
+      .justifyContent(FlexAlign.Center)
+      .padding(UiTheme.cardPadding)
+      .backgroundColor(UiTheme.kpiHeroTint)
+      .borderRadius(UiTheme.cardRadius)
+      .border({ width: 1, color: UiTheme.kpiHeroBorder })
+    }
+
+    // ── 3 张等宽小卡 ──
+    // ★ 这一排不包 RevealCard：小卡在 Row 里靠 layoutWeight(1) 均分宽度，
+    //   外层再套容器会破坏均分（同队友在工作台页踩到的坑）。
+    Row({ space: UiTheme.gapM }) {
+      this.smallKpi('平均推理耗时', `${stats.avgInferenceTimeMs.toFixed(1)}`, 'ms')
+      this.smallKpi('素材总数', `${stats.totalMedia}`, '项')
+      this.smallKpi('重度占比', this.severePct(stats), this.severePct(stats) === '--' ? '' : '%')
+    }
+    .width('100%')
+
+    // ── 严重度分布（环形饼图 + 环心总数）· 2 号位 ──
+    RevealCard({ order: 2 }) {
       AppCard({ title: '严重等级分布', subtitle: '按 BDI-II 四档统计' }) {
         if (stats.totalAnalyses > 0) {
           SeverityPieChart({
@@ -145,8 +187,8 @@ export struct StatsPage {
       }
     }
 
-    // ── BDI 日均趋势（折线 + 三条阈值线）· 2 号位 ──
-    RevealCard({ order: 2 }) {
+    // ── BDI 日均趋势（折线 + 两条阈值线）· 3 号位 ──
+    RevealCard({ order: 3 }) {
       AppCard({ title: 'BDI 日均趋势', subtitle: '按检测日期聚合的日均分' }) {
         if (stats.bdiTrend.length === 0) {
           Text('暂无趋势数据')
@@ -161,29 +203,51 @@ export struct StatsPage {
     }
   }
 
+  /**
+   * 次级 KPI 小卡（三张等宽并排 · 白底 + 细描边，无投影）
+   * 标签 12/辅助色 在上，数字 20/600/一级色 + 单位 10 在下
+   */
   @Builder
-  kpiCard(title: string, value: string) {
-    Column({ space: UiTheme.gapXs }) {
+  smallKpi(title: string, value: string, unit: string) {
+    Column({ space: UiTheme.gapS }) {
       Text(title)
         .fontSize(UiTheme.fontSizeCaption)
         .fontColor(UiTheme.textSecondary)
-      Text(value)
-        .fontSize(UiTheme.fontSizeMetric)
-        .fontWeight(FontWeight.Bold)
-        .fontColor(UiTheme.textPrimary)
+        .width('100%')
+        .textAlign(TextAlign.Start)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      Text() {
+        Span(value)
+          .fontSize(KPI_SUB_METRIC_SIZE)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UiTheme.textPrimary)
+        Span(` ${unit}`)
+          .fontSize(UiTheme.fontSizeUnitSmall)
+          .fontColor(UiTheme.textSecondary)
+      }
+      .width('100%')
+      .textAlign(TextAlign.Start)
+      .maxLines(1)
+      .height(28)
     }
     .layoutWeight(1)
-    .padding(UiTheme.cardPadding)
+    .height(UiTheme.kpiSmallHeight)
+    .alignItems(HorizontalAlign.Start)
+    .justifyContent(FlexAlign.Center)
+    .padding(UiTheme.kpiSmallPadding)
     .backgroundColor(UiTheme.cardBackground)
     .borderRadius(UiTheme.cardRadius)
+    .border({ width: 1, color: UiTheme.divider })
   }
 
-  /** 重度占比（对应网页端 severePct） */
+  /** 重度占比（对应网页端 severePct · 返回不带 % 的数值串） */
   private severePct(stats: StatsModel): string {
     if (stats.totalAnalyses <= 0) {
       return '--';
     }
     const severe: number = stats.severityDistribution['severe'] ?? 0;
-    return `${((severe / stats.totalAnalyses) * 100).toFixed(1)}%`;
+    return ((severe / stats.totalAnalyses) * 100).toFixed(1);
   }
 }
