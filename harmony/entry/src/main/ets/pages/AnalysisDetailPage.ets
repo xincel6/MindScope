@@ -47,7 +47,7 @@ import { UiTheme } from '../common/UiTheme';
 import { display } from '@kit.ArkUI';
 import { AppStore } from '../store/AppStore';
 import { AnalysisDetailPageParam } from '../types/PageParams';
-import { AnalysisFrameModel, TaskStatus } from '../types/Index';
+import { AnalysisFrameModel, CurrentTaskModel, TaskStatus } from '../types/Index';
 import { PageHeader } from '../components/PageHeader';
 import { RippleCard } from '../components/RippleCard';
 import { ProgressBar } from '../components/common/ProgressBar';
@@ -182,6 +182,23 @@ export struct AnalysisDetailPage {
   // ══════════════════ 实时读数（实时模式取 store，快照模式取参数）══════════════════
 
   /**
+   * 任务状态 · **实时模式必须取 store**
+   * ★ 参数里的 `status` 是窗口层在本页**入栈前**写进去的一次性投影，而窗口层的
+   *   `syncDetailParam()` 只在"切页签 / 点工作台卡片"时被调用 —— WS 收尾**不会**触发它。
+   *   所以若只读参数，页面会永远停在"分析中"（进度条已 100%、分数也出来了，状态还是分析中）。
+   *   `AppStore.currentTask()` 读的是 `@Trace` 字段，状态一推进 `@Computed` 立刻失效重算。
+   * ★ 快照模式（历史素材）当然仍读参数：那是一次冻结的报告投影，不跟随任何实时会话。
+   */
+  @Computed
+  get liveStatus(): TaskStatus {
+    if (!this.pageParam.followLiveTask) {
+      return this.pageParam.status;
+    }
+    const task: CurrentTaskModel | null = this.app.currentTask();
+    return task === null ? this.pageParam.status : task.status;
+  }
+
+  /**
    * 帧数 · 实时模式必须取 store
    * ★ 因为它由 `AnalysisState.frameCount` 每帧自增，是这一轮唯一能证明"数据在流动"的
    *   实时量；而参数里的 `frameCount` 只在窗口层同步时被写入（不是每帧）。
@@ -215,7 +232,7 @@ export struct AnalysisDetailPage {
   /** 状态中文标签 */
   @Computed
   get statusLabel(): string {
-    const status: TaskStatus = this.pageParam.status;
+    const status: TaskStatus = this.liveStatus;
     if (status === TaskStatus.running) {
       return '分析中';
     }
@@ -231,7 +248,7 @@ export struct AnalysisDetailPage {
   /** 状态标签颜色 · 运行中用主色，完成用分数档位色，失败用错误色 */
   @Computed
   get statusColor(): string {
-    const status: TaskStatus = this.pageParam.status;
+    const status: TaskStatus = this.liveStatus;
     if (status === TaskStatus.failed) {
       return UiTheme.danger;
     }
@@ -265,7 +282,7 @@ export struct AnalysisDetailPage {
     if (!this.pageParam.followLiveTask) {
       return '这是该素材最近一次分析的报告快照，逐帧图表不随实时数据刷新';
     }
-    const status: TaskStatus = this.pageParam.status;
+    const status: TaskStatus = this.liveStatus;
     if (status === TaskStatus.running) {
       return `服务端正在逐帧推理，已收到 ${this.liveFrameCount} 帧`;
     }
@@ -737,7 +754,7 @@ export struct AnalysisDetailPage {
 
           // ── ⑦ 取消分析（弱化：★ 视频场景服务端早已算完，取消基本无效） ──
           //    ★ 只在"实时任务且正在跑"时出现：历史快照没有可取消的会话
-          if (this.pageParam.followLiveTask && this.pageParam.status === TaskStatus.running) {
+          if (this.pageParam.followLiveTask && this.liveStatus === TaskStatus.running) {
             Button('取消分析')
               .width('100%')
               .height(44)

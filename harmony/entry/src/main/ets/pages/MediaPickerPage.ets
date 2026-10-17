@@ -10,8 +10,25 @@
  * ```
  *
  * 三段式布局：① 选择卡片 ② 已选素材预览 ③ 统一的上传动作区。
- * 页面自己**只有**两个本地状态：`submitting`（回调返回前的兜底防连点）。
+ * 页面自己**只有**一个本地状态：`submitting`（回调返回前的兜底防连点）。
  * 其余全部来自参数 —— 因为"选中的素材"属于业务数据，应由窗口层持有。
+ *
+ * ══════════════════ ★★ 为什么"选完就自动开始"（BUG-11）══════════════════
+ * 原本的交互是"选素材 → 再按一次「开始分析」→ 才上传跳转"。这个多出来的一步在真机上
+ * 被用户直接理解成"我选了但什么都没发生"（实测反馈：*选了图片后没进入分析页面，
+ * 仍旧停在素材选择页，等于没选*）。而在同一时期，参数类不是 `@ObservedV2`，
+ * 选完素材后连"预览 + 按钮文案"都不会更新，于是页面上**真的什么都没变**。
+ *
+ * 现在：
+ *   ① `MediaPickerPageParam` 是 `@ObservedV2`（见 `types/PageParams.ets` 的说明），
+ *      选完素材立刻能看到预览、按钮变成「开始分析」、错误文案能显示；
+ *   ② **选到素材就自动接着上传并进详情页**（`requestPick → submit`），
+ *      用户的心智链路"选完即开始分析"不用再点第二次；
+ *   ③ 主按钮保留：上传失败时它就是**重试**入口（此时 `hasPicked` 仍为 true）。
+ *
+ * ★ 页面的 `busy` 同时看参数里的 `uploading` 与本地 `submitting`：
+ *   前者是权威来源（窗口层正在上传），后者只负责"回调还没返回"的那一小段时间，
+ *   避免用户在系统选择器弹出前连点两下。
  */
 
 import { UiTheme } from '../common/UiTheme';
@@ -43,7 +60,13 @@ export struct MediaPickerPage {
     return this.pageParam.hasPicked ? '开始分析' : '选择素材';
   }
 
-  /** 点「选择素材」· 交给窗口层开系统选择器 */
+  /**
+   * 点「选择素材」· 交给窗口层开系统选择器
+   *
+   * ★ 选到素材后**立刻**接着走 `submit()`（上传 + 进详情页）。
+   *   `submitting` 必须先落回 false 再调 `submit()`，否则会被它自己的 `busy` 挡掉。
+   * ★ 用户取消（回调返回 false）则什么都不做：取消不是错误，不能弹红字。
+   */
   private requestPick(): void {
     if (this.busy) {
       return;
@@ -52,6 +75,11 @@ export struct MediaPickerPage {
     this.pageParam.onPickRequest()
       .then((picked: boolean) => {
         this.submitting = false;
+        // ★ 再确认一次 `hasPicked`：回调说"选到了"但参数没被回填时，
+        //   直接进 submit() 会因为它自己的分支又去开一次系统选择器。
+        if (picked && this.pageParam.hasPicked) {
+          this.submit();
+        }
       })
       .catch(() => {
         this.submitting = false;

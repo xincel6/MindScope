@@ -239,8 +239,19 @@ export interface RecentMediaModel {
  *   里按扩展名 + MIME 双条件做，判定结果存这里。
  */
 export interface PickedMediaModel {
-  /** 系统相册 URI（形如 file://media/Photo/12/IMG_xxx/IMG_20260101_120000.jpg） */
+  /** 系统相册 URI（形如 file://media/Photo/12/IMG_xxx/IMG_20260101_120000.jpg）· 只用于 `Image` 预览 */
   uri: string;
+  /**
+   * 上传用的**应用沙箱绝对路径**（形如 `<cacheDir>/picked/IMG_20260101_120000.jpg`）
+   *
+   * ★★ 为什么不能直接拿 `uri` 去上传（真机实测踩过，见 `BUG清单.md` BUG-12）：
+   *   相册 URI 是**媒体库 provider 的 URI**，不是文件系统路径。上传走
+   *   `http.MultiFormData.filePath`，它只认本地路径，吃这个 URI 会抛
+   *   **2300026 "Failed to open or read local data from the file or application"**，
+   *   看起来像"服务端连不上"，实际请求连正文都没读出来。
+   *   所以 `MediaPicker` 选完会先 `fs.copyFile` 到应用缓存，再把这个路径交给上传。
+   */
+  uploadPath: string;
   /** 用于上传的文件名（后端把它写进 media_assets.name，会显示在列表上） */
   fileName: string;
   /** MIME，如 image/jpeg；不确定时为 application/octet-stream */

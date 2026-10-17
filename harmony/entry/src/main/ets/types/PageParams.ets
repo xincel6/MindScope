@@ -279,8 +279,22 @@ export class WorkbenchPageParam extends TabPageParam {
  * 这一页负责"系统选择器 → 上传服务端"的完整动作，页面自己不碰网络与系统能力：
  *   - 点按钮   → 调 `onPickRequest`（窗口层决定用系统选择器还是别的方式）
  *   - 上传     → 调 `onUpload`（窗口层调 `MediaStore.uploadMedia`）
- *   - 上传成功 → 窗口层负责本页内刷新状态 + 跳转分析详情页（页面不碰路由栈）
+ *   - 上传成功 → 窗口层用 `replacePathByName` 把本页换成分析详情页（页面不碰路由栈）
+ *
+ * ══════════════════ ★★ 为什么**只有这一个**参数类是 `@ObservedV2` ══════════════════
+ * 本页是**选完素材后页面自己要立刻变样**的页面：预览要出现、按钮要从「选择素材」变成
+ * 「开始分析」、上传态要亮、错误文案要显示。而这些字段是窗口层在
+ * `await 系统选择器 / await 上传请求` **之后**才回填的 —— 也就是**页面已经挂载着**的时候。
+ *
+ * 参数对象是经 `Navigation.navDestination` 传进页面的：它不是 `@ObservedV2` 的话，
+ * 改字段**不会**让已挂载的页面收到新值（这是本工程 BUG-10 的同一条根因）。
+ * 实测现象就是 BUG-11：选完图片，页面一点变化都没有 —— "等于没选"。
+ *
+ * 其它参数类（登录 / 注册 / 页签 / 详情页）的字段都是"push 之前写一次、页面挂载后不再变"，
+ * 页面靠自己的 `@Local` + 回调就能跑起来，所以**不要**给它们也加装饰
+ * —— 装饰器不是免费的，它会给每次字段写入都挂一层观察者。
  */
+@ObservedV2
 export class MediaPickerPageParam extends PageParam {
   /** 页面标题（固定文案也走参数，方便将来改口径） */
   public title: string = '选择素材';
@@ -298,23 +312,25 @@ export class MediaPickerPageParam extends PageParam {
   /** 返回工作台 · 窗口层出栈 */
   public onBack: () => void = () => {};
 
+  // ── 以下字段会被窗口层在页面挂载后改动，必须 `@Trace` 才会刷新界面 ──
+
   /** 是否已有选中的素材（决定是否显示预览与上传按钮） */
-  public hasPicked: boolean = false;
+  @Trace hasPicked: boolean = false;
 
   /** 已选素材的展示名 */
-  public pickedName: string = '';
+  @Trace pickedName: string = '';
 
   /** 已选素材是否为视频（预览区据此显示播放图标而非缩略图） */
-  public pickedIsVideo: boolean = false;
+  @Trace pickedIsVideo: boolean = false;
 
   /** 已选素材的本地 URI · 图片可直接喂 `Image` 预览 */
-  public pickedUri: string = '';
+  @Trace pickedUri: string = '';
 
   /** 是否正在上传 */
-  public uploading: boolean = false;
+  @Trace uploading: boolean = false;
 
   /** 错误文案 · 非空即展示（含"格式不支持""上传失败"） */
-  public errorMsg: string = '';
+  @Trace errorMsg: string = '';
 }
 
 /**

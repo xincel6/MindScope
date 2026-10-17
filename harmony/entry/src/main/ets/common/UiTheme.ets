@@ -147,7 +147,13 @@ export class UiTheme {
    *   文档示例都是 6 位；原先写 8 位（`#0F1E3A5F`，带 alpha）在预览器上会让卡片整片不渲染
    *   —— 属于"编译通过、运行白屏"的隐形坑。要弱化投影请调低 `cardShadowOpacity`，
    *   不要往色值里塞 alpha。
+   *
+   * ★★ `cardShadowEnabled` 是**投影总开关**，当前为 false（扁平风格）。
+   *   用户明确要求"去掉卡片的 3D 效果"。下面的半径/色值/位移/透明度全部保留，
+   *   需要恢复立体感时把开关置 true 即可 —— 不要删这些令牌。
    */
+  public static readonly cardShadowEnabled: boolean = false;
+
   public static readonly cardShadowRadius: number = 10;
   public static readonly cardShadowColor: string = '#1E3A5F';
   public static readonly cardShadowOffsetY: number = 2;

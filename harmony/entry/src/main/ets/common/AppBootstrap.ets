@@ -27,6 +27,7 @@ import { AppStore } from '../store/AppStore';
 import { StorageManager } from '../persistence/StorageManager';
 import { ApiConfig } from './ApiConfig';
 import { Logger } from './Logger';
+import { MediaPicker } from './MediaPicker';
 
 /** 应用启动引导 · 集中对外接口在顶部 */
 export class AppBootstrap {
@@ -92,6 +93,11 @@ export class AppBootstrap {
 
   private static async run(context: Context): Promise<void> {
     AppBootstrap.log.i('=== 引导开始 ===');
+
+    // ⓪ 把上下文交给需要系统能力的基础设施
+    //    ★ 相册选完的文件必须复制进应用沙箱才能上传（见 MediaPicker.stageToCache 与 BUG-12），
+    //      而算沙箱路径需要 context.cacheDir —— 所以启动时注入一次。
+    MediaPicker.attachContext(context);
 
     // ① + ② 存储层初始化（内部会打开 preferences、绑定 ApiConfig 并读回 host/port/token）
     const storageOk: boolean = await StorageManager.init(context);

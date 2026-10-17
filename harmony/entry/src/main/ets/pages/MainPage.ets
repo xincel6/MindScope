@@ -337,6 +337,10 @@ export struct MainPage {
    *
    * 顺序不能变：**先记当前任务再启动分析**，否则 WS 的第一帧可能在任务登记之前到达，
    * `syncCurrentTask()` 会因为"还没有任务"而直接返回，工作台就看不到进度。
+   *
+   * ★ 跳转用 `replacePathByName`（不是 `pushPathByName`）：上传成功后选择页的使命就结束了，
+   *   把它**换成**详情页，栈深仍是 2 —— 用户从详情页按返回是回到工作台（计划 §3 的链路），
+   *   而不是回到选择页对着同一份素材再点一次「开始分析」（那会重复上传、重复起分析）。
    */
   private async uploadPicked(): Promise<boolean> {
     const media: PickedMediaModel | null = this.picked;
@@ -345,13 +349,24 @@ export struct MainPage {
       this.refreshUi();
       return false;
     }
+    // ★ 必须用沙箱副本路径上传：相册 URI 是媒体库 provider 的 URI，
+    //   http 的 filePath 读不了它（会抛 2300026，看起来像"网络不可达"）。见 BUG-12。
+    if (media.uploadPath.length === 0) {
+      this.pickerParam.errorMsg = '无法读取所选素材，请重新选择';
+      this.refreshUi();
+      return false;
+    }
+    // 连点保护：页面侧已用 busy 挡过一次，这里再挡一次真正的重复上传
+    if (this.pickerParam.uploading) {
+      return false;
+    }
 
     this.pickerParam.uploading = true;
     this.pickerParam.errorMsg = '';
     this.refreshUi();
 
     const spec: UploadFileSpec = {
-      filePath: media.uri,
+      filePath: media.uploadPath,
       fileName: media.fileName,
       mimeType: media.mimeType
     };
@@ -376,10 +391,20 @@ export struct MainPage {
       this.pickerParam.errorMsg = started.message;
     }
 
-    // ③ 同步参数后跳到详情页（用 push，返回键即回到选择页 → 再返回回到工作台）
+    // ③ 同步参数（★ 实时模式：详情页字段随 WS 刷新）
+    this.detailParam.followLiveTask = true;
     this.refreshUi();
     this.syncDetailParam();
-    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
+
+    // ④ 选择页 → 详情页（替换，不是压栈）；选中态清掉，避免残留素材被重复上传
+    this.picked = null;
+    // ★ 上传是异步的：这段等待里用户可能已经按返回把选择页弹掉了（甚至切到别的页签）。
+    //   栈深回到 1 说明最上层已经不是选择页，此时再 replace 会把**工作台/别的页签**换掉，
+    //   所以只在"选择页仍压在上面"时才做替换。分析已经在跑，用户可以照常从
+    //   工作台「当前任务」卡片进入详情页 —— 不跳转也不会丢失这次分析。
+    if (this.navStack.size() > 1) {
+      this.navStack.replacePathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
+    }
     return true;
   }
 

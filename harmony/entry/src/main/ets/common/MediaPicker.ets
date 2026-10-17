@@ -5,16 +5,33 @@
  *   - **不需要任何权限**，也不需要自己写 `requestPermissionsFromUser`：
  *     选择器由系统弹窗承载，用户选中后系统才把 URI 临时授权给本应用。
  *     所以本模块**没有**往 `module.json5` 加相册权限，这是刻意的 —— 加了反而会被应用市场判为过度申请。
- *   - 选择器返回的是 `file://media/...` 形式的 URI，`@kit.NetworkKit` 的
- *     `multiFormDataList[].filePath` 可以直接吃这个 URI，不需要先拷贝进沙箱。
+ *
+ * ══════════════════ ★★ 选完之后**必须**把文件拷进应用沙箱（BUG-12）══════════════════
+ * 早期版本的注释写着"选择器返回的 `file://media/...` URI 可以直接喂给
+ * `multiFormDataList[].filePath`，不需要先拷贝进沙箱" —— **这句话是错的**，真机实测：
+ *
+ * ```
+ * 网络不可达：Failed to open or read local data from the file or application。
+ * ```
+ *
+ * 这句是 HarmonyOS `@ohos.net.http` 的 **2300026** 错误（见 SDK 里 http.d.ts 的错误码表），
+ * 意思是"打不开要上传的本地文件"，**请求连正文都没读出来**，与服务端毫无关系。
+ * 根因：`file://media/Photo/...` 是**媒体库 provider 的 URI**，不是文件系统路径；
+ * `MultiFormData.filePath` 只接受真实路径（或应用沙箱路径）。
+ *
+ * 正确做法（本模块 `stageToCache` 做的）：
+ *   `fs.openSync(uri, READ_ONLY)`（选择器给了临时读权限，能打开）
+ *     → `fs.copyFileSync(fd, cacheDir/picked/<原文件名>)`
+ *     → 上传时用**沙箱路径**。
  *
  * ★ 为什么需要这个文件而不是在页面里直接调：
  *   ① 页面纪律要求"页面只做展示"，系统能力调用属于基础设施；
- *   ② 选完之后的"URI → 文件名 / MIME / 图片还是视频"这段推导有细节，
+ *   ② 选完之后的"URI → 文件名 / MIME / 图片还是视频 / 沙箱副本"这段推导有细节，
  *      集中一处才好维护（且可单测）。
  */
 
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { fileIo as fs } from '@kit.CoreFileKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { Logger } from './Logger';
 import { MediaType, PickedMediaModel } from '../types/Index';
@@ -58,11 +75,27 @@ export interface PickResult {
 
 /** 素材选择器 · 全为静态方法 */
 export class MediaPicker {
+  /** 沙箱副本目录（应用缓存下）· 不进图库、不占用户可见空间，由系统缓存回收 */
+  private static readonly STAGE_DIR: string = 'picked';
+
+  /**
+   * 应用上下文 · 由 `AppBootstrap.start(context)` 在启动时注入一次
+   * ★ 只有"把相册 URI 落进沙箱"这一步需要它（要 `cacheDir`）；
+   *   本模块其余逻辑都是纯函数，便于单测。
+   */
+  private static appContext: Context | null = null;
+
+  /** 注入应用上下文（幂等；未注入时 `stageToCache` 会直接失败并记日志） */
+  public static attachContext(context: Context): void {
+    MediaPicker.appContext = context;
+  }
+
   /**
    * 弹出系统选择器，让用户选**一张图片或一段视频**
    *
    * ★ 取消不算错误：返回 `{media: null, error: ''}`，调用方据此静默返回即可
    *   （把"用户主动取消"弹成红色错误是常见的体验缺陷）。
+   * ★ 选到之后会先把文件拷进沙箱，再返回带 `uploadPath` 的结果 —— 原因见文件头。
    */
   public static async pickOne(): Promise<PickResult> {
     const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
@@ -79,7 +112,25 @@ export class MediaPicker {
         // 用户取消选择
         return MediaPicker.cancelled();
       }
-      return MediaPicker.fromUri(uris[0]);
+      const parsed: PickResult = MediaPicker.fromUri(uris[0]);
+      const picked: PickedMediaModel | null = parsed.media;
+      if (picked === null) {
+        // 格式不支持等：原样把提示带回去
+        return parsed;
+      }
+      // ★ 关键一步：拷进沙箱，拿到真正能上传的路径
+      const staged: string = await MediaPicker.stageToCache(picked);
+      if (staged.length === 0) {
+        return { media: null, error: '无法读取所选素材（相册授权可能已失效），请重新选择' };
+      }
+      const media: PickedMediaModel = {
+        uri: picked.uri,
+        uploadPath: staged,
+        fileName: picked.fileName,
+        mimeType: picked.mimeType,
+        type: picked.type
+      };
+      return { media: media, error: '' };
     } catch (err) {
       const e: BusinessError = err as BusinessError;
       Logger.e('打开素材选择器失败', err as Object);
@@ -119,11 +170,65 @@ export class MediaPicker {
     const isVideo: boolean = VIDEO_MIME[ext] !== undefined;
     const media: PickedMediaModel = {
       uri: uri,
+      // ★ 沙箱路径由 `stageToCache()` 在 pickOne 里补上；单独调 fromUri 时留空
+      uploadPath: '',
       fileName: fileName,
       mimeType: MediaPicker.mimeOf(ext),
       type: isVideo ? MediaType.video : MediaType.image
     };
     return { media: media, error: '' };
+  }
+
+  /**
+   * 把相册选择器返回的 URI **复制进应用沙箱**，返回可直接上传的绝对路径（失败返回空串）
+   *
+   * ★★ 为什么必须复制（BUG-12，真机实测）：
+   *   `file://media/Photo/...` 是媒体库 provider 的 URI，不是文件系统路径；
+   *   `http.MultiFormData.filePath` 拿去 open 会抛 **2300026
+   *   "Failed to open or read local data from the file or application"**，
+   *   而这个错误在 `ApiError` 里被归到"网络不可达"，看起来极像服务端问题。
+   *   `fs.open(uri, READ_ONLY)` 能打开它（选择器已给临时读权限），
+   *   所以这里 open → copyFile 到 `cacheDir/picked/`，上传改用沙箱路径。
+   *
+   * ★ 用**异步** fs API：视频素材可能几十上百 MB，同步拷贝会把 UI 线程卡住。
+   * ★ 保留原文件名：后端按扩展名判类型（图片/视频），并把名字写进 `media_assets.name`。
+   * ★ 任何失败都不抛异常，只记日志 + 返回空串，由调用方给用户一句明确的话。
+   */
+  private static async stageToCache(media: PickedMediaModel): Promise<string> {
+    const context: Context | null = MediaPicker.appContext;
+    if (context === null) {
+      Logger.e('MediaPicker 未注入上下文，无法复制相册素材（引导流程未跑？）');
+      return '';
+    }
+
+    let src: fs.File | null = null;
+    try {
+      const dir: string = `${context.cacheDir}/${MediaPicker.STAGE_DIR}`;
+      try {
+        // recursion=true 等价于 mkdir -p；个别版本在目录已存在时仍会 reject，忽略即可
+        await fs.mkdir(dir, true);
+      } catch (mkdirErr) {
+        Logger.d(`缓存目录已存在或创建被跳过 · ${dir}`);
+      }
+
+      const dest: string = `${dir}/${media.fileName}`;
+      src = await fs.open(media.uri, fs.OpenMode.READ_ONLY);
+      await fs.copyFile(src.fd, dest);
+      const stat: fs.Stat = await fs.stat(dest);
+      Logger.i(`相册素材已复制到沙箱 · ${media.fileName} · ${stat.size} 字节`);
+      return dest;
+    } catch (err) {
+      Logger.e(`相册素材复制失败（上传会因读不到文件而报 2300026）· ${media.uri}`, err as Object);
+      return '';
+    } finally {
+      if (src !== null) {
+        try {
+          await fs.close(src);
+        } catch (closeErr) {
+          Logger.w('关闭相册文件句柄失败');
+        }
+      }
+    }
   }
 
   /** 从 URI 末段取文件名（解码百分号转义；取不到时回退一个占位名） */

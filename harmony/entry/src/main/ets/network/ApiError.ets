@@ -73,6 +73,12 @@ export function isNetworkFailure(err: Object): boolean {
  * 已知码见 @ohos.net.http / @ohos.net.webSocket：
  *  201 权限缺失（module.json5 未声明 INTERNET）
  *  2300006 无法解析主机名 · 2300007 无法连接 · 2300028 超时
+ *  2300025 上传失败（服务端拒绝）· **2300026 打不开要上传的本地文件**
+ *
+ * ★ 2300026 特别容易误诊（真机踩过，见 BUG清单.md BUG-12）：
+ *   它常常不是网络问题，而是 `filePath` 给了一个**读不了的路径**
+ *   （典型：把相册的 `file://media/...` provider URI 当本地路径用）。
+ *   所以这里单独给一句准确的话，不要让它继续被说成"网络不可达"。
  */
 export function toApiError(err: Object): ApiError {
   const apiErr: ApiError | null = tryCastApiError(err);
@@ -88,6 +94,10 @@ export function toApiError(err: Object): ApiError {
     reason = '无法解析主机名（检查服务端地址）';
   } else if (code === 2300007) {
     reason = '无法连接到服务端（检查后端是否已启动、是否监听 0.0.0.0）';
+  } else if (code === 2300025) {
+    reason = '上传被服务端拒绝（检查文件格式与大小）';
+  } else if (code === 2300026) {
+    reason = '无法读取要上传的本地文件（相册素材需先复制进应用沙箱，不能直接用相册 URI）';
   } else if (code === 2300028) {
     reason = '连接超时（检查是否同一局域网、明文 http 是否被拦截）';
   }

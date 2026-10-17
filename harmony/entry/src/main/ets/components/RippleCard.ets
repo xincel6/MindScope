@@ -141,11 +141,12 @@ export struct RippleCard {
     .width('100%')
     .alignItems(HorizontalAlign.Start)
     .padding(this._padding)
-    // ★ 卡片视觉三项**内联**写在组件链上（不要抽成共享的 AttributeModifier，
+    // ★ 卡片视觉**内联**写在组件链上（不要抽成共享的 AttributeModifier，
     //   原因见 common/CardStyle.ets 顶部说明：共享修饰器实例会导致卡片整片不渲染）
     .backgroundColor(this.backgroundFor())
     .borderRadius(this._radius)
-    .border({ width: 1, color: UiTheme.divider })
+    // 扁平风格：描边是唯一的层次表达（投影已通过 cardShadowEnabled 关闭）
+    .border({ width: 1, color: CardStyle.borderColor() })
     .shadow(CardStyle.shadow())
     // 系统级按压反馈：涟漪从触点扩散，且完全由系统实现，不影响布局
     .clickEffect({ level: ClickEffectLevel.LIGHT })
