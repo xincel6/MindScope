@@ -524,6 +524,14 @@ this.getUIContext().animateTo({ duration: UiTheme.rippleDuration, curve: Curve.E
 > 参数里必须有字段显式声明"当前是哪一种"，并让每次自动同步先判断它。
 > 否则"自动刷新"就会变成"自动覆盖用户正在看的内容"。
 
+> **后续更新（分析页实装轮 · 本轮）**：`followLiveTask` 这个开关已被**删除**。
+> 它虽然是当时正确的修法，但只解决了"参数不被覆盖"，没解决"数据从哪来"：
+> 历史素材的逐帧数据**根本不存在**，页面只能拿"全局最新一帧"顶替 —— 那正是 BUG-14。
+> 现在改为「按 `mediaId` 归档的分析会话」提供数据（`AppStore.analysisSessionOf(mediaId)`），
+> 参数里只放素材元信息与报告回落值。
+> **结论（比原来那条更普适）**：多数据源页面要按**数据身份**（mediaId）取数，
+> 而不是靠一个布尔开关分流，更不要用"全局最新"兜底。
+
 ---
 
 ## BUG-06 · 全局背景改纯白后输入框看不见边界
@@ -577,7 +585,8 @@ this.getUIContext().animateTo({ duration: UiTheme.rippleDuration, curve: Curve.E
    色值一律 6 位 `#RRGGBB`，透明度走独立字段。（BUG-09）
 5. **列表与列表项分两层交互单元**，动画与点击下沉到每一项；
    重放动画要把所有动画属性一起复位；
-   多数据源页面要有 `followLiveTask` 这类显式开关。（BUG-02 / 03 / 04 / 05）
+   **多数据源页面按"数据身份"（如 mediaId）取数，不要用布尔开关分流，
+   更不要用一个"全局最新"兜底。**（BUG-02 / 03 / 04 / 05 / 14）
 
 ### 工作方式上的规则（比技术规则更重要）
 
@@ -620,3 +629,140 @@ this.getUIContext().animateTo({ duration: UiTheme.rippleDuration, curve: Curve.E
 12. 详情页状态标签会从「分析中」自动变成「已完成」/「分析失败」（不需要切页签）；
 13. 选到**不在白名单**的格式（如 `.heic`）时，选择页要明确提示"暂不支持 .heic 格式"，而不是静默无反应；
 14. 上传成功后服务端 `media_assets` 里能查到这条素材，名字是原文件名（如 `IMG_20261016_183531.jpg`）。
+
+---
+
+# 分析页实装轮 · 新增缺陷（BUG-13 / 14 / 15）
+
+> 本轮目标：把「分析详情页」从半成品做成完整页面，并修掉用户实测到的三个缺陷。
+> 涉及文件：`harmony/entry/src/main/ets/**`（端上）、`dashboard/backend/services/frame_processor.py`
+> 与 `dashboard/src/components/right-panel/EmotionCurve.vue`（跨端一致性）。
+> 交付说明：`docs/本轮交付说明-分析页实装.md`。离线守卫：`harmony/scripts/test-analysis-detail.mjs`。
+
+## BUG-13 · 一张图片被服务端推成"10 帧"，退出再看又只剩 1 帧
+
+**现象**
+上传一张图片分析，帧数显示 10、逐帧列表铺满 10 格；返回工作台再从「最近使用的素材」点回来，
+同样的素材变成"1 帧"。用户由此**分不清图片和视频**。
+
+**根因（两处，缺一不可）**
+1. 服务端 `services/frame_processor.py::_process_image` 为了让网页端曲线"有点可画"，
+   把同一次推理的结果**重复推 10 帧**（10 步循环 + 每帧 `sleep(0.2)`）——
+   图片本来只有一次推理，这是**伪造帧数**。
+2. 端上没有"图片 = 单帧"的语义：帧数、逐帧列表、曲线都按"收到几帧算几帧"渲染，
+   于是同一个素材在不同路径下呈现不同帧数。
+
+**修法**
+1. 服务端：图片路径**只推 1 帧**（`frame_id=1, progress=1.0`），删掉 10 步循环。
+2. 端上：`AnalysisChartModel.resolveFrames()/displayFrameCount()` 按**素材类型**归一 ——
+   图片永远最多 1 帧、帧数文案恒为 1（即使服务端仍推了 10 条重复帧）。
+3. 网页端 `EmotionCurve.vue` 同步：单点数据画成**水平直线**并加一句说明。
+
+**涉及文件**
+`dashboard/backend/services/frame_processor.py`、`components/charts/AnalysisChartModel.ets`、
+`pages/AnalysisDetailPage.ets`、`components/charts/EmotionCurveCard.ets`、
+`dashboard/src/components/right-panel/EmotionCurve.vue`
+
+**防复发规则**
+> **不要为了"让图看起来有内容"而伪造数据条数。**
+> 一条样本就画一个样本该有的图（单帧 → 直线 + 刻度尺），不要凑点。
+> 服务端推什么、端上画什么，必须以**素材本身的物理事实**（图片=一次推理，视频=N 帧）为准。
+
+---
+
+## BUG-14 · 换个素材重新分析后，所有历史素材的热力图都变成"最近那个人" ⭐⭐ 本轮主诉
+
+**现象**
+先后上传并分析素材 A、B 之后，从「最近使用的素材」分别打开 A 和 B，
+**两个页面显示的都是 B 的人脸与注意力热力图**；即"后上传的素材覆盖了之前的"。
+
+**根因**
+`components/charts/HeatmapViewModel.buildHeatmapView()` 有第五个参数 `lastFrame`，
+语义是"当前会话里最近的一帧"，并在**没有本素材逐帧数据**时回退成 `frames = [lastFrame]`：
+
+```ts
+// 旧代码（已删）
+if (lastFrame !== null && hasHeat(lastFrame)) {
+  return { frames: [lastFrame], heatmap: lastFrame.heatmapData, source: HeatSource.snapshot };
+}
+```
+
+而当时的分析结果**只有一份全局缓冲**：`AnalysisStateHolder.start()` 第一件事就是
+`reset()` 把 `frameHistory` / `scoreHistory` 清空。于是：
+- 历史素材页**从来没有自己的帧**，必然走这条兜底；
+- 兜底取的是 `AppStore.analysisLastFrame` —— **与所看素材无关的全局最新一帧**；
+- 结果：所有素材都显示最近分析的那个人的结果。顺带还解释了"回来只剩 1 帧"（BUG-13 的另一半）。
+
+**修法**
+1. 数据层改为「**按 mediaId 归档的会话**」：`AnalysisSessionModel`（frames / scores /
+   状态 / 分数 / VLM 文本），存于 `AnalysisState.sessions`（`@Trace`，整体替换引用）。
+   `start()` 只重置 **live 指针** 与"该素材自己那一条"，其它素材的结果原样保留；
+   同一素材再次分析 = 覆盖它自己那一条。
+2. **删除 `lastFrame` 兜底**：`buildHeatmapView(frames, sampleFrames, focusedIndex, isLive)`
+   只画调用方按 mediaId 解析好的帧；取不到就空 → 页面显示"本机未保留逐帧数据"。
+3. 详情页唯一取数入口：`AppStore.analysisSessionOf(pageParam.mediaId)`。
+4. 没有会话时的出口：`AnalysisDetailPageParam.onReanalyze` →「重新分析该素材」
+   （页面因 `analysisLiveMediaId === mediaId` 变真而自动切到实时数据，不必重新入栈）。
+
+**涉及文件**
+`types/model.ts`、`types/storeState.ets`、`store/AnalysisStateHolder.ets`、`store/AppStore.ets`、
+`components/charts/HeatmapViewModel.ets`、`components/charts/AnalysisChartModel.ets`、
+`types/PageParams.ets`、`pages/MainPage.ets`、`pages/AnalysisDetailPage.ets`
+
+**防复发规则**
+> **任何"取不到就回退到全局最新"的兜底，都会把 A 数据画到 B 的界面上。**
+> 兜底只能回退到"同一身份的更粗粒度数据"（例如同一素材的报告分数），
+> 绝不能回退到"全局最近的另一条记录"。
+> 数据层就该存"每条身份自己的结果"，而不是一份全局最近值。
+
+---
+
+## BUG-15 · 分析跑完了，档位标签与「智能解读」永远不出现
+
+**现象**
+上传素材 → 详情页开始分析 → 分数与进度在动，但**档位中文标签（正常/轻度/…）一直是空的**；
+VLM 文本解读也在分析完成后依然不显示。
+
+**根因**
+详情页的档位标签、档位颜色、VLM 文本都从**页面参数**读
+（`pageParam.severityLabel / severityColor / vlmText`），而这些字段由窗口层的
+`MainPage.syncDetailParam()` 从 `AppStore` 抄写。该方法**只在"切页签 / 入栈"时被调用**，
+WebSocket 收帧与 `done` 都不会触发它（文件头那句"WS 每来一帧都会走到这里"与实际不符）。
+入栈那一刻分数还是 0 → `severityLabel` 留空 → 之后**再没有任何时机**把它填上。
+
+**修法**
+1. **删除 `syncDetailParam()` 与参数里的这些实时字段**（连同 `followLiveTask`）。
+2. 页面实时数据全部从 `@Trace` 会话读：
+   `AppStore.analysisSessionOf(mediaId)` → 状态 / 进度 / 分数 / 帧 / VLM；
+   档位由**分数现算**（`severityMetaOf()`，`BdiThreshold` + `UiConstant` 单一口径），
+   不再从参数读快照值。
+3. 参数里只保留"入栈那一刻就确定"的信息：素材名 / 类型 / 报告分数 / 报告时间 + 回调。
+
+**涉及文件**
+`types/PageParams.ets`、`pages/MainPage.ets`、`pages/AnalysisDetailPage.ets`、
+`components/charts/AnalysisChartModel.ets`
+
+**防复发规则**
+> **异步到达的数据不要经"页面参数"这条单向管道传递**（与 BUG-10/BUG-11 同根）：
+> 参数是"入栈那一刻的快照"，而分析结果是**持续到达**的。
+> 判断方法：这段数据在页面挂载**之后**还会不会变？会 → 必须走 `@ObservedV2` + `@Trace` 的源对象。
+
+---
+
+## 本轮验证清单（编译/离线已过，运行时需真机）
+
+已确认：
+- `node harmony/scripts/test-analysis-detail.mjs` → PASS（含 A/B 素材不串台、图片恒 1 帧的回归守卫）
+- `node harmony/scripts/test-heatmap-strip.mjs` → PASS（含"不得跨素材兜底"的源码级守卫）
+- `bash harmony/scripts/build.sh` → `BUILD SUCCESSFUL`（`CompileArkTS` 7.3s，HAP 已重新产出）
+- `npx vue-tsc --noEmit -p tsconfig.app.json` → 本轮改动的 `EmotionCurve.vue` **0 error**
+  （仓库里另有 5 个**历史遗留**的 TS 报错文件，与本轮无关，未动）
+
+待真机确认：
+1. 传一张图片 → 徽标「图片」、**1 帧**、情绪曲线是**水平直线**、严重度是**刻度尺**；
+2. 返回后分别从「当前任务」和「最近使用的素材」再进入 → 仍是同一张脸、同一热力图、仍是 1 帧；
+3. 传一段视频 → N 帧、可横滑、情绪曲线是折线、严重度是**帧级环形分布**（环心「N 帧」）；
+4. 先分析 A 再分析 B，然后分别打开 A / B → **各自显示自己的人脸与热力图**（BUG-14 验证点）；
+5. 打开本轮之前分析过的历史素材（本机无会话）→ 报告分数 + 「本机未保留逐帧数据」+
+   「重新分析该素材」；点后页面应自动开始出帧；
+6. 分析完成后档位标签与「智能解读」**自行出现**（BUG-15 验证点，不需要切页签）。

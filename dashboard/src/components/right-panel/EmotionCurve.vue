@@ -7,9 +7,23 @@ const store = useDashboardStore()
 
 const hasData = computed(() => store.bdiHistory.length > 0)
 
+/**
+ * 单点（图片素材）判定
+ *
+ * ★ 后端的图片分析只做**一次推理、只推一帧**（`services/frame_processor.py::_process_image`），
+ *   所以这里只会拿到 1 个分数。ECharts 用 1 个点画折线只会得到一个孤立圆点，
+ *   看起来像"图没画出来"。
+ *   → 这种情况下把点复制成两个（同分），画成一条**水平直线**：
+ *     图片没有"随帧变化"，直线才是诚实的表达（与鸿蒙端 `EmotionCurveCard` 同口径）。
+ */
+const isSinglePoint = computed(() => store.bdiHistory.length === 1)
+
 const option = computed(() => {
-  const scores = store.bdiHistory.map((p) => p.score)
-  const times = store.bdiHistory.map((p) => p.time)
+  const rawScores = store.bdiHistory.map((p) => p.score)
+  const rawTimes = store.bdiHistory.map((p) => p.time)
+
+  const scores = isSinglePoint.value ? [rawScores[0], rawScores[0]] : rawScores
+  const times = isSinglePoint.value ? [rawTimes[0], ''] : rawTimes
 
   // Build per-point colors from severity
   const colors = scores.map((s) => {
@@ -70,7 +84,9 @@ const option = computed(() => {
   <div class="emotion-curve glass-card">
     <div class="section-title section-title--bordered">
       BDI-II 评分曲线
-      <span v-if="hasData" class="data-count">({{ store.bdiHistory.length }} 点)</span>
+      <span v-if="hasData" class="data-count">
+        {{ isSinglePoint ? '(单帧图片 · 水平直线)' : `(${store.bdiHistory.length} 点)` }}
+      </span>
     </div>
 
     <div v-if="!hasData" class="chart-empty">
@@ -79,6 +95,11 @@ const option = computed(() => {
     </div>
 
     <VChart v-else :option="option" autoresize class="chart-instance" />
+
+    <!-- 单帧图片说明：只有一次推理，曲线是水平直线，不是"图没画出来" -->
+    <p v-if="isSinglePoint" class="single-point-note">
+      图片素材只做 1 次推理，分数恒定为 {{ store.bdiHistory[0]?.score }}，因此曲线是水平直线。
+    </p>
 
     <!-- Score list: always visible when data exists -->
     <div v-if="hasData" class="score-list">
@@ -137,6 +158,13 @@ const option = computed(() => {
   color: var(--text-muted);
   font-weight: 400;
   margin-left: auto;
+}
+
+.single-point-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
 }
 
 .zone-legend {

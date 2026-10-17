@@ -105,7 +105,18 @@ async def _process_image(
     task_id: str,
     queue: asyncio.Queue,
 ) -> None:
-    """Image path: align face, run inference, emit multiple frames for chart."""
+    """Image path: align face, run **one** inference, emit exactly **one** frame.
+
+    ★ 为什么只推 1 帧（历史遗留问题的修复）：
+      旧实现为了让网页端的评分曲线"有点可画"，把同一次推理的结果重复推 10 帧
+      （一个 10 步的循环 + 每帧 sleep 0.2 秒）。这在客户端造成两个可见后果：
+        · 一张图片看起来像"10 帧的视频"，端上分不清图片和视频；
+        · 端上按"收到帧数"渲染逐帧列表/曲线时，数量随实现而变（10 → 1），
+          用户看到"分析时有十帧，退出再看只剩一帧"。
+      图片本来就只有一次推理，**一次推理就该只有一帧**：
+      前端的"单帧图片"语义（水平直线 + 档位刻度尺）由客户端按素材类型渲染，
+      不需要服务端伪造帧数。
+    """
     frame_bgr = _imread_unicode(path)
     if frame_bgr is None:
         await queue.put(None)
@@ -114,29 +125,22 @@ async def _process_image(
     aligned, _heatmap = await align_face(frame_bgr)
     face_b64 = _encode_base64(aligned)
 
-    t0 = time.perf_counter()
     scores, inf_ms, attn_heatmap = await lmtformer_inference(
         [aligned] * FRAMES_PER_BATCH
     )
     score = scores[0]
     elapsed_ms = round(inf_ms, 3)
 
-    # Emit 10 frames over ~2 seconds so the emotion curve is visible
-    steps = 10
-    for i in range(1, steps + 1):
-        progress = i / steps
-        af = AnalysisFrame(
-            frame_id=i,
-            timestamp=time.time(),
-            bdi_score=score,
-            aligned_face=face_b64,
-            heatmap_data=attn_heatmap,
-            inference_time_ms=elapsed_ms,
-            progress=progress,
-        )
-        await queue.put(af)
-        if i < steps:
-            await asyncio.sleep(0.2)
+    af = AnalysisFrame(
+        frame_id=1,
+        timestamp=time.time(),
+        bdi_score=score,
+        aligned_face=face_b64,
+        heatmap_data=attn_heatmap,
+        inference_time_ms=elapsed_ms,
+        progress=1.0,
+    )
+    await queue.put(af)
 
     await queue.put(None)
 

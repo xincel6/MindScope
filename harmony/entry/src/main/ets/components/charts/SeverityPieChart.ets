@@ -37,6 +37,15 @@ export struct SeverityPieChart {
   /** 分析总次数 · 画在环中心（对应网页端 pie-total 叠加层） */
   @Param total: number = 0;
 
+  /**
+   * 环心文案覆盖 · 非空时优先于默认的「N 例」
+   *
+   * ★ 分析详情页的帧级分布要写「N 帧」（统计单位是帧，不是"例"），
+   *   所以这里只开一个文案口子，**不改**统计页的任何行为
+   *   （默认空串 → 仍然走 `${total} 例`）。
+   */
+  @Param centerText: string = '';
+
   private model: PieChartModel = new PieChartModel();
 
   /** 组件是否已销毁 · 延迟重绘前先看它，避免往已释放的 Canvas 上画 */
@@ -59,6 +68,12 @@ export struct SeverityPieChart {
 
   @Monitor('total')
   private onTotalChanged(): void {
+    this.render();
+  }
+
+  /** 环心文案也可能单独变（例如帧数不变但切换口径） */
+  @Monitor('centerText')
+  private onCenterTextChanged(): void {
     this.render();
   }
 
@@ -125,7 +140,12 @@ export struct SeverityPieChart {
     dataSet.setSelectionShift(4);
 
     this.model.setData(new PieData(dataSet));
-    this.model.setCenterText(this.total > 0 ? `${this.total} 例` : '');
+    // 环心文案：优先用调用方给的（分析页写"N 帧"），否则保持统计页的"N 例"
+    if (this.centerText.length > 0) {
+      this.model.setCenterText(this.centerText);
+    } else {
+      this.model.setCenterText(this.total > 0 ? `${this.total} 例` : '');
+    }
     this.model.invalidate();
   }
 

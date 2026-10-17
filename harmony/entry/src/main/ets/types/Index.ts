@@ -36,8 +36,8 @@ export {
 export {
   UserModel, SessionModel, MediaItemModel, DiagnosisReportModel, ReportListItemModel,
   ReportPageModel, ReportFilterModel, BdiTrendPointModel, StatsModel, SeverityBucketModel,
-  AnalysisFrameModel, FaceAnalyzeModel, HealthModel, ActionResultModel, MediaOptionModel,
-  DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel
+  AnalysisFrameModel, AnalysisSessionModel, FaceAnalyzeModel, HealthModel, ActionResultModel,
+  MediaOptionModel, DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel
 } from './model';
 
 // ── 映射器 ──

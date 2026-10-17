@@ -21,7 +21,7 @@
  *   不需要也无法 import（`@kit.ArkUI` 并未导出它）。直接写类型名即可。
  */
 
-import { TaskStatus } from './enums';
+import { MediaType } from './enums';
 import { CurrentTaskModel, RecentMediaModel } from './model';
 
 /** 全部页面参数的基类 · 让"页面参数"在类型上有一个共同祖先，便于统一签名与调试 */
@@ -334,64 +334,55 @@ export class MediaPickerPageParam extends PageParam {
 }
 
 /**
- * 分析详情页参数（`pages/AnalysisDetailPage.ets`）· **本轮为占位页**
+ * 分析详情页参数（`pages/AnalysisDetailPage.ets`）
  *
- * 折线图 / 饼图 / 热力图组件尚未实现，所以本页只放：
- *   - 素材名与类型（证明跳转链路通了）
- *   - 真实的分析进度与实时分数（数据来自 WS，不是假数据）
- *   - 明确的"图表区待实现"占位块
+ * ══════════════════ ★★ 本轮（分析页实装轮）契约变更 ══════════════════
+ * 旧实现把**实时数据也塞进参数**（`followLiveTask` / `status` / `progress` / `bdiScore` /
+ * `severityLabel` / `severityColor` / `vlmText` / `frameCount`），再由窗口层的
+ * `syncDetailParam()` 从 `AppStore` 抄一遍。那条链路有两个死结：
+ *   ① `syncDetailParam()` 只在"切页签 / 入栈"时被调用，**WS 每来一帧不会触发它**
+ *      → 分析跑完了，档位标签与智能解读也永远不出现（BUG-15），帧数还停在 0；
+ *   ② "实时 / 历史快照"靠一个布尔开关区分，可真正的判据是"这条素材是不是当前会话"。
  *
- * ★ 状态语义：`status` 直接取 `TaskStatus`，页面按它决定显示
- *   「分析中 / 已完成 / 失败」三种文案，不去读 `AppStore.analyzing`。
+ * 现在参数只承载**入栈那一刻就确定**的信息（素材元信息 + 报告回落值 + 回调），
+ * 页面自己按 `mediaId` 从 `AppStore` 的 `@Trace` 会话里读实时数据：
+ *   `AppStore.analysisSessionOf(pageParam.mediaId)`
+ *     · 有  → 用会话（实时进行中 / 刚跑完 / 本机归档，三者同一条数据形状）；
+ *     · 没有 → 回落到本参数里的报告分数（并提示"本机未保留逐帧数据"）。
+ * `syncDetailParam()` 已整体删除，页面不再有两份真相。
  */
 export class AnalysisDetailPageParam extends PageParam {
-  /**
-   * 本页数据是否**跟随当前正在跑的分析任务**（窗口层每次同步都会覆盖本页字段）
-   *
-   * ★ true  → 从工作台「当前任务」进入：进度/分数随 WS 实时刷新；
-   * ★ false → 从「最近使用的素材」进入历史快照：本页字段是**冻结**的一次性投影，
-   *           窗口层的 `syncDetailParam()` 会直接跳过本页，不再覆盖。
-   *   没有这个开关的话，查看历史素材时页面会被"当前任务"的数据反复改写 —— 本轮修掉的 bug 之一。
-   */
-  public followLiveTask: boolean = true;
-
-  /** 素材 id（当前任务 id） */
+  /** 要展示的素材 id · 页面按它去取**该素材自己的**分析会话（绝不跨素材兜底） */
   public mediaId: string = '';
 
   /** 素材名 */
   public mediaName: string = '';
 
-  /** 素材类型中文（"图片" / "视频"） */
-  public mediaTypeLabel: string = '';
+  /**
+   * 素材类型 · 图片/视频的全部展示语义（单帧还是逐帧、直线还是折线、刻度尺还是饼图）
+   * 都由它决定，所以必须显式传，不能靠"猜"
+   */
+  public mediaType: MediaType = MediaType.image;
 
-  /** 任务状态 */
-  public status: TaskStatus = TaskStatus.none;
+  /** 该素材最近一次报告里的 BDI 分数（没有本机会话时的回落值；0 = 没有报告） */
+  public reportScore: number = 0;
 
-  /** 分析进度 0–1 */
-  public progress: number = 0;
-
-  /** 已收到帧数（占位区用来证明数据在流动） */
-  public frameCount: number = 0;
-
-  /** 最新 BDI 分数（0 表示还没出分） */
-  public bdiScore: number = 0;
-
-  /** 分数档位中文标签（"正常"/"轻度"/"中度"/"重度"）· 分数为 0 时为空串 */
-  public severityLabel: string = '';
-
-  /** 分数档位颜色 */
-  public severityColor: string = '';
-
-  /** 服务端 VLM 文本解读 · 可能一直为空（不是所有素材都会触发） */
-  public vlmText: string = '';
-
-  /** 错误文案 · 非空即展示 */
-  public errorMsg: string = '';
+  /** 该素材最近一次分析时间（"YYYY-MM-DD HH:mm:ss"，空串 = 没有报告） */
+  public reportTime: string = '';
 
   /** 点返回 · 窗口层出栈（**不停分析**，分析在 AppStore 上继续跑） */
   public onBack: () => void = () => {};
 
   /** 点「取消分析」· 窗口层调 AppStore.cancelAnalysis（★ 视频场景基本无效，按钮要弱化） */
   public onCancelAnalysis: () => void = () => {};
+
+  /**
+   * 点「重新分析」· 窗口层对**同一素材**重新起一次分析
+   *
+   * ★ 这是"本机没有逐帧数据"（App 重启后打开历史素材 / 归档被淘汰）时的出口：
+   *   重新分析会覆盖该素材自己的会话，页面因 `analysisLiveMediaId === mediaId` 变真
+   *   而自动切到实时数据，**不需要重新入栈**。
+   */
+  public onReanalyze: () => void = () => {};
 }
 

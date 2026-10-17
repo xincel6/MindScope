@@ -18,8 +18,8 @@ import { Logger } from '../common/Logger';
 import { HttpClient } from '../network/HttpClient';
 import { StorageManager } from '../persistence/StorageManager';
 import {
-  ActionResultModel, AnalysisFrameModel, BootPhase, BdiThreshold, CurrentTaskModel, BDI_MAX_SCORE,
-  MediaItemModel, MediaType, normalizeMediaId, RecentMediaModel, ReportListItemModel,
+  ActionResultModel, AnalysisFrameModel, AnalysisSessionModel, BootPhase, BdiThreshold, CurrentTaskModel,
+  BDI_MAX_SCORE, MediaItemModel, MediaType, normalizeMediaId, RecentMediaModel, ReportListItemModel,
   SeverityBucketModel, SocketState, StatsModel, TaskStatus, UiConstant, UserModel
 } from '../types/Index';
 import { AnalysisState, AppState, AuthState, MediaState, ReportState, StatsState } from '../types/storeState';
@@ -86,13 +86,18 @@ export class AppStore {
   @Trace statsLoading: boolean = false;
 
   // ── 分析会话镜像 ──
+  /**
+   * ★★ 这些字段是"**live 会话指针对**的一次性投影"，只有 `sync()` 被调用时才刷新。
+   *   逐帧数据（帧 / 分数）**不在这里**：它们由 `analysisSessionsOf()` /
+   *   `analysisSessionOf()` 直接返回桥接器里 `@Trace` 的那个数组，
+   *   于是每来一帧都能实时刷新，不依赖 `sync()` 的调用时机
+   *   （这条纪律与本项目 BUG-10/BUG-15 同源：异步数据不要靠"父组件改参数"刷新）。
+   */
   @Trace analyzing: boolean = false;
   @Trace analysisProgress: number = 0;
   @Trace analysisScore: number = 0;
   @Trace analysisFrameCount: number = 0;
   @Trace analysisLastFrame: AnalysisFrameModel | null = null;
-  /** 本次分析逐帧分数序列（工作台实时评分曲线直接吃它） */
-  @Trace scoreHistory: number[] = [];
   @Trace analysisVlmText: string = '';
   @Trace analysisError: string = '';
   @Trace socketState: SocketState = SocketState.idle;
@@ -268,6 +273,8 @@ export class AppStore {
     this.domainReport.clear();
     this.domainStats.clear();
     this.analysisHolder?.stop();
+    // ★ 换账号后不能看到上一个用户的分析结果：归档会话一并清掉
+    this.analysisHolder?.clearSessions();
     // 换账号后不该看到上一个用户的任务
     this.clearCurrentTask();
     this.sync();
@@ -311,7 +318,6 @@ export class AppStore {
       this.analysisScore = holder.scoreOf();
       this.analysisFrameCount = holder.frameCountOf();
       this.analysisLastFrame = holder.lastFrameOf();
-      this.scoreHistory = holder.scoreHistoryOf();
       this.analysisVlmText = holder.vlmTextOf();
       this.socketState = holder.socketStateOf();
       this.syncCurrentTask(holder);
@@ -337,18 +343,25 @@ export class AppStore {
   /**
    * 当前任务快照 · 没有任务时返回 null
    * ★ 页面只读这个投影对象，不必自己访问 `analysis()`
+   * ★ 进度与分数**优先取该素材自己的会话**：镜像字段只在 `sync()` 时刷新，
+   *   而会话是 `@Trace` 的，每来一帧都变 —— 工作台进度条因此真正"动起来"
+   *   （旧实现只看镜像字段，进度会一直停在开始分析那一刻）。
    */
   public currentTask(): CurrentTaskModel | null {
     if (this.currentTaskStatus === TaskStatus.none || this.currentTaskMediaId.length === 0) {
       return null;
     }
+    const session: AnalysisSessionModel | null = this.analysisSessionOf(this.currentTaskMediaId);
+    const progress: number = session === null ? this.analysisProgress : session.progress;
+    const score: number =
+      session !== null ? session.score : (this.currentTaskStatus === TaskStatus.done ? this.currentTaskScore : this.analysisScore);
     const task: CurrentTaskModel = {
       mediaId: this.currentTaskMediaId,
       mediaName: this.currentTaskMediaName,
       mediaType: this.currentTaskMediaType,
       status: this.currentTaskStatus,
-      progress: this.analysisProgress,
-      bdiScore: this.currentTaskStatus === TaskStatus.done ? this.currentTaskScore : this.analysisScore,
+      progress: progress,
+      bdiScore: score,
       errorMsg: this.currentTaskError
     };
     return task;
@@ -553,12 +566,15 @@ export class AppStore {
   /**
    * 开始分析一段媒体（WS 通道）
    * @param mediaId 服务端媒体 id
+   * ★ 素材类型必须一起交给桥接器：图片（单次推理 = 1 帧）与视频（逐帧采样）
+   *   的展示语义完全不同，页面靠它决定"画折线还是画直线、画饼图还是画刻度尺"。
    */
   public startAnalysis(mediaId: string): ActionResultModel {
     const item: MediaItemModel | null = this.findMedia(mediaId);
     const id: string = item === null ? normalizeMediaId(mediaId) : item.id;
+    const type: MediaType = item === null ? MediaType.image : item.type;
     try {
-      this.analysis().start(id);
+      this.analysis().start(id, type);
       this.sync();
       return AppStore.ok('已开始分析');
     } catch (err) {
@@ -593,16 +609,41 @@ export class AppStore {
   }
 
   /**
-   * **逐帧序列**（横向逐帧列表 / 视频切分视图的数据源）
+   * **按素材归档的分析会话列表**（详情页/工作台的唯一帧数据入口）
    *
-   * ★ 每次调用返回的是桥接器里那个 `@Trace` 数组**本身**，不是副本：
+   * ★ 返回的是桥接器里那个 `@Trace` 数组**本身**，不是副本：
    *   页面在 `@Computed` 里读它，每来一帧（整体替换引用）就会失效重算，
    *   不依赖窗口层 `sync()` 的调用时机 —— 这是"逐帧实时"最可靠的一条链路。
    * ★ 桥接器还没建时返回空数组（页面走占位态）。
    */
-  public analysisFrameHistory(): AnalysisFrameModel[] {
+  public analysisSessionsOf(): AnalysisSessionModel[] {
     const holder: AnalysisStateHolder | null = this.analysisHolder;
-    return holder === null ? [] : holder.frameHistory();
+    return holder === null ? [] : holder.sessionsOf();
+  }
+
+  /**
+   * 取某一素材自己的分析会话（没有则 null）
+   * ★ 详情页只认这个入口：**看哪个素材就只拿那个素材的结果**，
+   *   取不到就老实显示"本机未保留逐帧数据"，绝不拿别的素材兜底。
+   */
+  public analysisSessionOf(mediaId: string): AnalysisSessionModel | null {
+    const holder: AnalysisStateHolder | null = this.analysisHolder;
+    return holder === null ? null : holder.sessionOf(normalizeMediaId(mediaId));
+  }
+
+  /** 当前 live 会话对应的素材 id（空串 = 还没有任何会话） */
+  public analysisLiveMediaIdOf(): string {
+    const holder: AnalysisStateHolder | null = this.analysisHolder;
+    return holder === null ? '' : holder.liveMediaIdOf();
+  }
+
+  /**
+   * 实时错误文案（含"重连中"这类状态提示）
+   * ★ 用访问器而不是 `analysisError` 镜像：镜像是 `sync()` 快照，会滞后一条消息。
+   */
+  public analysisErrorOf(): string {
+    const holder: AnalysisStateHolder | null = this.analysisHolder;
+    return holder === null ? '' : holder.errorOf();
   }
 
   /** 进度百分比文案 */

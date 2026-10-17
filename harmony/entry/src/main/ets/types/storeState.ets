@@ -20,7 +20,7 @@
 
 import { BootPhase, MediaType, SocketState } from './enums';
 import {
-  AnalysisFrameModel, DiagnosisReportModel, MediaItemModel, ReportFilterModel,
+  AnalysisFrameModel, AnalysisSessionModel, DiagnosisReportModel, MediaItemModel, ReportFilterModel,
   ReportListItemModel, SeverityBucketModel, StatsModel, UserModel
 } from './model';
 
@@ -78,7 +78,18 @@ export class AuthState {
   @Trace errorMsg: string = '';
 }
 
-/** 最近一次分析会话的响应式状态（WS 推送驱动） */
+/**
+ * 分析会话的响应式状态（WS 推送驱动）
+ *
+ * ★★ 本轮（分析页实装轮）结构变更：**"一份全局帧缓冲" → "按素材归档的会话列表"**
+ *   旧实现把逐帧数据放在 `frameHistory` / `scoreHistory` 两个**全局**数组里，
+ *   于是出现两个必然后果：
+ *     · 开始分析素材 B 时 `reset()` 把 A 的帧清空（用户看到"后上传的覆盖了前面的"）；
+ *     · 历史素材页没有自己的帧，只能拿"全局最后一帧"顶替
+ *       → 所有素材的热力图都变成最近分析的那个人。
+ *   现在逐帧数据**只存在于 `sessions` 里那一条属于该素材的会话**，全局状态退化为
+ *   "当前 live 会话的指针"（mediaId / running / 进度 / 末帧…），两份职责分清。
+ */
 @ObservedV2
 export class AnalysisState {
   @Trace running: boolean = false;
@@ -88,27 +99,21 @@ export class AnalysisState {
   @Trace progress: number = 0;
   /** 最新一帧的 BDI 分数 */
   @Trace bdiScore: number = 0;
-  /** 已收到的帧数 */
+  /** 已收到的帧数（live 会话的计数，与 `sessions` 里那一条保持一致） */
   @Trace frameCount: number = 0;
-  /** 最近一帧（热力图 / 人脸图渲染用） */
+  /** 最近一帧（人脸图渲染 / 推理耗时展示用） */
   @Trace lastFrame: AnalysisFrameModel | null = null;
   /**
-   * **逐帧序列**（横向逐帧列表 / 视频切分视图的数据源）
+   * **按素材归档的分析会话**（一个 mediaId 一条）
    *
-   * · 每收到一帧就追加，超出上限时从头部腾出空间（视频路径实测约 60 帧，
-   *   图片路径固定 10 帧；上限见 `store/AnalysisStateHolder.ets` 的 `MAX_FRAME_HISTORY`）
-   * · ★ 追加时【整体替换数组引用】（`concat` + `slice` 后赋值），
-   *   保证 V2 的 `@Trace` 一定感知到变化 —— 原地 `push` 不会触发刷新
-   * · ★ 元素是**完整帧对象**（含该帧自己的对齐人脸与热度矩阵），
-   *   所以横向列表里每一格画的都是"那一帧"的真实结果，不是最后一帧的复制
+   * · 同一素材再次分析 = 覆盖它自己那一条，其它素材的结果保留；
+   * · 每收到一帧就整体替换数组引用（`concat` + `slice` 后赋值），
+   *   保证 V2 的 `@Trace` 一定感知到变化 —— 原地改元素不会触发刷新；
+   * · live 会话即 `mediaId === 上面那个 mediaId` 的那一条，**没有第二份帧数据**；
+   * · 上限见 `store/AnalysisStateHolder.ets`：会话数 6、单会话帧 90（收尾裁到 30）、
+   *   分数点 120。
    */
-  @Trace frameHistory: AnalysisFrameModel[] = [];
-  /**
-   * 逐帧 BDI 分数序列（工作台「实时评分曲线」的数据源）
-   * · 每收到一帧就追加一个整数分，最多保留最近 `MAX_SCORE_POINTS` 个点
-   * · ★ 追加时【整体替换数组引用】，保证 V2 状态一定触发界面刷新
-   */
-  @Trace scoreHistory: number[] = [];
+  @Trace sessions: AnalysisSessionModel[] = [];
   /** VLM 文本解读 */
   @Trace vlmText: string = '';
   /** done 消息里的最终分数 */

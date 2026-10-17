@@ -1,16 +1,18 @@
 /**
- * ScoreTrendChart · 实时评分曲线（工作台）
+ * ScoreTrendChart · 逐帧评分曲线（工作台的实时曲线 / 分析详情页的情绪曲线）
  *
- * 数据契约：父页面传 `AppStore.scoreHistory`（number[]，本次分析逐帧 BDI 分数，
- *   由 AnalysisStateHolder 在每收到一帧时追加，最多保留 MAX_SCORE_POINTS 个点）
+ * 数据契约：父页面传一个 `number[]`（本次分析逐帧 BDI 分数）
+ *   · 工作台：`AppStore.analysisSessionOf(当前任务 id).scores`
+ *   · 分析详情页：`AnalysisChartModel.buildCurveView().points`
+ *     —— 那里已经把"图片素材只有 1 个分数"的情形分流成直线形态（本组件只负责 ≥2 点的折线）
  *
- * 网页端对应：src/components/right-panel/EmotionCurve.vue
+ * 网页端对应：`dashboard/src/components/right-panel/EmotionCurve.vue`
  *   （BDI-II 评分曲线：折线 + 面积填充 + Y 轴 0–63 + 四档严重度区图例；
  *     网页端每个点按分数分色，mpchart 的单条 LineDataSet 不支持逐点配色，
  *     这里改为「整条线用主色 + 保留下方四档区图例」来承载同一语义）
  *
  * ★ 与 BdiTrendChart 的区别：BdiTrendChart 吃的是「按天聚合的日均分」（统计页），
- *   本组件吃的是「一次分析会话内的逐帧分」（工作台），X 轴是帧序号而不是日期。
+ *   本组件吃的是「一次分析会话内的逐帧分」，X 轴是帧序号而不是日期。
  *
  * ★ API 已对照 ohpm 源 3.0.30 源码核实（见 docs/交接说明-统计页图表.md 第六节）。
  */
@@ -82,7 +84,7 @@ export struct ScoreTrendChart {
     this.disposed = true;
   }
 
-  /** 每来一帧分数，scoreHistory 都是新数组 → 重灌数据 */
+  /** 每来一帧分数，传入的都是新数组 → 重灌数据 */
   @Monitor('scores')
   private onScoresChanged(): void {
     this.render();

@@ -151,6 +151,52 @@ export interface AnalysisFrameModel {
   progress: number;
 }
 
+/**
+ * **一次分析的归档会话**（按 `mediaId` 归档，一个素材一条）
+ *
+ * ────────────────── 为什么需要它 ──────────────────
+ * 旧实现只有"一份全局帧缓冲"：开始分析 B 时把 A 的帧清空，历史素材页又拿
+ * "全局最新一帧"顶替 → 结果就是「换一个素材，所有素材的热力图都变成最近那个人」。
+ * 归档改成**按素材存**：同一素材再次分析只覆盖它自己那一条，其它素材的结果保留。
+ *
+ * ★ 与 `AnalysisState` 的分工（避免两份真相）：
+ *   · `AnalysisState` 只保留"当前 live 会话的指针"（mediaId / running / 进度 / 末帧…）；
+ *   · 逐帧数据（`frames` / `scores`）**只存在于本结构的会话里**，live 会话就是
+ *     归档里 `mediaId === liveMediaId` 的那一条。
+ *
+ * ★ 只在内存里，App 重启即消失（本轮非目标：不做持久化，见交付说明）。
+ */
+export interface AnalysisSessionModel {
+  /** 服务端媒体 id（字符串，已归一化） */
+  mediaId: string;
+  /** 素材类型 · 决定"图片 = 单帧 / 视频 = 逐帧"的所有展示语义 */
+  mediaType: MediaType;
+  /** 会话状态：running / done / failed */
+  status: TaskStatus;
+  /** 0–1 */
+  progress: number;
+  /** 最新分数（done 之后为 done 消息里的 finalScore） */
+  score: number;
+  /** **实际收到的帧数**（不因 frames 尾部裁剪而变小，图片恒为 1） */
+  frameCount: number;
+  /**
+   * 逐帧结果（含各自的人脸图与 16×16 热度矩阵）· 供横向逐帧列表
+   * ★ live 期间上限 90 帧，收尾后裁剪到 30 帧（内存可控）
+   */
+  frames: AnalysisFrameModel[];
+  /**
+   * 逐帧 BDI 分数（整数）· 供情绪曲线
+   * ★ 与 `frames` 分开存：帧数组会为省内存被裁剪，而曲线要看完整走势
+   */
+  scores: number[];
+  /** VLM 文本解读（可能一直为空） */
+  vlmText: string;
+  /** 失败/重连文案（空串表示无错） */
+  errorMsg: string;
+  /** 最近一次写入时刻（毫秒）· 归档淘汰按它排序 */
+  updatedAt: number;
+}
+
 /** 面部分析结果（POST /api/analyze/face） */
 export interface FaceAnalyzeModel {
   bdiScore: number;

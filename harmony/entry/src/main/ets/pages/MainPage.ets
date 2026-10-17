@@ -28,8 +28,8 @@
 import { UiTheme } from '../common/UiTheme';
 import { AppStore } from '../store/AppStore';
 import {
-  ActionResultModel, BdiThreshold, CurrentTaskModel, MediaItemModel, MediaType,
-  PickedMediaModel, RecentMediaModel, TaskStatus, UiConstant
+  ActionResultModel, CurrentTaskModel, MediaItemModel, MediaType, PickedMediaModel,
+  RecentMediaModel
 } from '../types/Index';
 import { UploadFileSpec } from '../network/HttpClient';
 import {
@@ -84,9 +84,6 @@ export struct MainPage {
 
   /** 素材选择页当前选中的素材（窗口层持有，页面只读投影字段） */
   private picked: PickedMediaModel | null = null;
-
-  /** 分析详情页当前展示的素材 id（用于从工作台重新进入时定位） */
-  private detailMediaId: string = '';
 
   // ══════════════════ 生命周期 ══════════════════
 
@@ -172,66 +169,15 @@ export struct MainPage {
    * ★ 工作台的**展示数据不再经参数传递** —— 它直接订阅 `AppStore`（响应式）。
    *   原因见 `WorkbenchPage` 文件头：探活与 WS 进度都是异步到达的，
    *   而经 `navDestination` 传参时，改字段不会让已挂载页面收到新值。
-   *   这里只剩下"注入路由栈引用"这件事，以及顺手同步分析详情页参数。
+   *   这里只剩下"注入路由栈引用"这一件事。
+   *
+   * ★ 分析详情页也不再需要在这里同步：它的实时数据全部从
+   *   `AppStore.analysisSessionOf(mediaId)` 读（旧 `syncDetailParam()` 已删除，
+   *   那个方法只在切页签时被调用，WS 收帧不会触发，正是 BUG-15 的根因）。
    */
   private syncWorkbenchParam(param: WorkbenchPageParam): void {
     const stack: NavPathStack | null = this.navStack;
     param.pathStack = stack;
-    // 详情页可能正在显示，一起刷新（它仍是参数驱动的二级页）
-    this.syncDetailParam();
-  }
-
-  /**
-   * 分析详情页参数投影 · **只在展示实时任务时生效**
-   *
-   * ★ 分析详情页是**二级页面**，它的参数不会随页签切换刷新，
-   *   所以由工作台的同一次投影顺手同步；WS 每来一帧都会走到这里。
-   * ★ 但从「最近使用的素材」进来的历史快照（`followLiveTask === false`）必须**原样保留**，
-   *   否则用户正在看的那条历史素材会被"当前任务"的数据覆盖掉。
-   */
-  private syncDetailParam(): void {
-    const param: AnalysisDetailPageParam = this.detailParam;
-    if (!param.followLiveTask) {
-      return;
-    }
-
-    const app: AppStore = AppStore.get();
-    const task: CurrentTaskModel | null = app.currentTask();
-
-    if (task === null) {
-      param.mediaId = '';
-      param.mediaName = '暂无任务';
-      param.mediaTypeLabel = '';
-      param.status = TaskStatus.none;
-      param.progress = 0;
-      param.bdiScore = 0;
-      param.severityLabel = '';
-      param.severityColor = '';
-      param.frameCount = 0;
-      param.vlmText = '';
-      param.errorMsg = '';
-      return;
-    }
-
-    param.mediaId = task.mediaId;
-    param.mediaName = task.mediaName;
-    param.mediaTypeLabel = UiConstant.mediaTypeLabelOf(task.mediaType);
-    param.status = task.status;
-    param.progress = task.progress;
-    param.bdiScore = task.bdiScore;
-    param.frameCount = app.analysisFrameCount;
-    param.vlmText = app.analysisVlmText;
-    param.errorMsg = task.errorMsg;
-
-    // 分数档位标签与颜色：分数为 0 时留空，避免显示"正常"误导用户
-    if (task.bdiScore > 0) {
-      const level = BdiThreshold.levelOf(task.bdiScore);
-      param.severityLabel = UiConstant.severityLabelOf(level);
-      param.severityColor = UiConstant.severityColorOf(level);
-    } else {
-      param.severityLabel = '';
-      param.severityColor = '';
-    }
   }
 
   // ══════════════════ 动作实现（★ 只有本文件与 Index 允许碰 store）══════════════════
@@ -279,6 +225,27 @@ export struct MainPage {
     };
     this.detailParam.onCancelAnalysis = () => {
       AppStore.get().cancelAnalysis();
+      this.refreshUi();
+    };
+    /**
+     * 重新分析当前页的素材
+     *
+     * ★ 适用场景：App 重启后打开历史素材（本机没有逐帧会话）、归档被淘汰、
+     *   或上一次分析失败。重新分析会**覆盖该素材自己那一条会话**，其它素材不受影响。
+     * ★ 页面不需要重新入栈：`analysisLiveMediaId === mediaId` 变真后，
+     *   页面的 `@Computed` 自动切到实时数据。
+     */
+    this.detailParam.onReanalyze = () => {
+      const param: AnalysisDetailPageParam = this.detailParam;
+      if (param.mediaId.length === 0) {
+        return;
+      }
+      const app: AppStore = AppStore.get();
+      // 先登记当前任务（工作台「当前任务」卡片要能看到它），再起 WS。
+      // ★ 失败也不回滚页面：`start()` 已经建好该素材的会话，
+      //   连接层的错误会通过会话的 errorMsg 显示在页面里（带「重新分析」可再试）。
+      app.setCurrentTask(param.mediaId, param.mediaName, param.mediaType);
+      app.startAnalysis(param.mediaId);
       this.refreshUi();
     };
   }
@@ -381,9 +348,8 @@ export struct MainPage {
       return false;
     }
 
-    // ① 任务登记（先于 WS）
+    // ① 任务登记（先于 WS：否则第一帧可能在任务登记之前到达，工作台就看不到进度）
     app.setCurrentTask(uploaded.id, uploaded.name, uploaded.type);
-    this.detailMediaId = uploaded.id;
 
     // ② 启动分析（WS）。失败也不阻断跳转 —— 详情页会把错误显示出来
     const started: ActionResultModel = app.startAnalysis(uploaded.id);
@@ -391,10 +357,15 @@ export struct MainPage {
       this.pickerParam.errorMsg = started.message;
     }
 
-    // ③ 同步参数（★ 实时模式：详情页字段随 WS 刷新）
-    this.detailParam.followLiveTask = true;
+    // ③ 详情页参数：只写"入栈那一刻就确定"的素材元信息。
+    //    ★ 实时数据（进度/分数/帧/档位/VLM）由页面自己从 AppStore 的会话读，
+    //      窗口层不再抄参数（旧的 syncDetailParam 已删除，见文件头）。
+    this.detailParam.mediaId = uploaded.id;
+    this.detailParam.mediaName = uploaded.name;
+    this.detailParam.mediaType = uploaded.type;
+    this.detailParam.reportScore = 0;
+    this.detailParam.reportTime = '';
     this.refreshUi();
-    this.syncDetailParam();
 
     // ④ 选择页 → 详情页（替换，不是压栈）；选中态清掉，避免残留素材被重复上传
     this.picked = null;
@@ -408,29 +379,30 @@ export struct MainPage {
     return true;
   }
 
-  /** 从工作台点「当前任务」回到分析详情页（实时模式） */
+  /** 从工作台点「当前任务」回到分析详情页（实时数据由页面订阅 store 得到） */
   private openCurrentTask(): void {
     const task: CurrentTaskModel | null = AppStore.get().currentTask();
     if (task === null) {
       return;
     }
-    this.detailMediaId = task.mediaId;
-    // ★ 实时模式：本页字段随 WS 刷新
-    this.detailParam.followLiveTask = true;
-    this.syncDetailParam();
+    this.detailParam.mediaId = task.mediaId;
+    this.detailParam.mediaName = task.mediaName;
+    this.detailParam.mediaType = task.mediaType;
+    this.detailParam.reportScore = task.bdiScore;
+    this.detailParam.reportTime = '';
     this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
   }
 
   /**
-   * 从「最近使用的素材」打开某条素材的分析详情（**历史快照模式**）
+   * 从「最近使用的素材」打开某条素材的分析详情
    *
-   * ★ 为什么需要单独一条路径，而不是复用 `openCurrentTask()`：
-   *   被点的素材**不一定**是当前任务 —— 它有可能是几天前分析过的另一段素材。
-   *   如果沿用实时模式，页面会被"当前任务"的数据覆盖，用户看到的就是错的内容。
-   *   所以这里把该素材的报告数据一次性投影进参数，并关掉跟随（`followLiveTask = false`）。
-   *
-   * ★ 本轮分析详情页仍是占位页（图表未实现），所以这里展示的是
-   *   "该素材最新一次报告"的分数与档位，足够证明跳转链路正确。
+   * ★ 参数里只放**报告侧**的冻结值（分数 / 时间）+ 素材元信息；
+   *   逐帧热力图与曲线由页面按 `mediaId` 去会话归档里取：
+   *     · 本机跑过这条素材（会话还在）→ 直接显示它自己的帧；
+   *     · 本机没有（App 重启过 / 归档被淘汰）→ 提示"本机未保留逐帧数据"，
+   *       并给「重新分析」按钮（`onReanalyze`）。
+   * ★ 绝不再用"当前任务"的数据顶替被点的素材 —— 那正是
+   *   「点开 A 却看到 B 的热力图」的根因（BUG-14）。
    */
   private openRecentDetail(mediaId: string): void {
     const app: AppStore = AppStore.get();
@@ -449,19 +421,11 @@ export struct MainPage {
     }
 
     const param: AnalysisDetailPageParam = this.detailParam;
-    param.followLiveTask = false;
     param.mediaId = hit.mediaId;
     param.mediaName = hit.name;
-    param.mediaTypeLabel = UiConstant.mediaTypeLabelOf(hit.type);
-    param.status = TaskStatus.done;
-    param.progress = 1;
-    param.bdiScore = hit.bdiScore;
-    param.severityLabel = hit.severityLabel;
-    param.severityColor = hit.severityColor;
-    param.frameCount = 0;
-    param.vlmText = '';
-    param.errorMsg = '';
-    this.detailMediaId = hit.mediaId;
+    param.mediaType = hit.type;
+    param.reportScore = hit.bdiScore;
+    param.reportTime = hit.detectedAt;
     this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, param);
   }
 
