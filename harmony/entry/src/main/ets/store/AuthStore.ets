@@ -13,8 +13,8 @@
 
 import { ApiConfig } from '../common/ApiConfig';
 import { AuthApi, AuthRule } from '../network/AuthApi';
-import { isNetworkFailure, isUnauthorized, toApiError } from '../network/ApiError';
-import { ActionResultModel, Mapper, TokenOutDto, UserOutDto, UserModel } from '../types/Index';
+import { ApiError, ApiErrorKind, appError, isNetworkFailure, isUnauthorized, toApiError } from '../network/ApiError';
+import { ActionResultModel, ApiStatus, AuthFailKind, Mapper, TokenOutDto, UserOutDto, UserModel } from '../types/Index';
 import { AuthState } from '../types/storeState';
 import { BaseStore } from './BaseStore';
 
@@ -40,6 +40,18 @@ export class AuthStore extends BaseStore {
 
   /** 错误文案（空串表示无错） */
   @Trace errorMsg: string = '';
+
+  /**
+   * 失败**类别**（本轮新增）
+   *
+   * ★ 解决什么问题：后端对"用户不存在"和"密码错"都返回 401 + 同一句话，
+   *   端上原本没法区分「账号密码不匹配」和「请求根本没到服务端」，
+   *   用户只能反复点登录。有了类别，登录页才能把两类失败**说清楚**。
+   */
+  @Trace failKind: AuthFailKind = AuthFailKind.none;
+
+  /** 失败对应的 HTTP 状态码（网络类/本地校验为 0）· 用于诊断行 */
+  @Trace failStatus: number = 0;
 
   // ────────────────── 单例 ──────────────────
 
@@ -81,9 +93,11 @@ export class AuthStore extends BaseStore {
   public async login(username: string, password: string): Promise<ActionResultModel> {
     const local: string = this.validate(username, password, false);
     if (local.length > 0) {
-      this.errorMsg = local;
+      this.markFail(AuthFailKind.invalid, 0, local);
       return AuthStore.fail(local);
     }
+    // 新一次尝试开始：清掉上一次的失败类别，避免"旧标题配新文案"
+    this.clearFail();
     this.beginLoad();
     try {
       const token: TokenOutDto = await AuthApi.login(username, password);
@@ -101,9 +115,11 @@ export class AuthStore extends BaseStore {
   public async register(username: string, password: string, email: string): Promise<ActionResultModel> {
     const local: string = this.validate(username, password, true);
     if (local.length > 0) {
-      this.errorMsg = local;
+      this.markFail(AuthFailKind.invalid, 0, local);
       return AuthStore.fail(local);
     }
+    // 新一次尝试开始：清掉上一次的失败类别
+    this.clearFail();
     this.beginLoad();
     try {
       const token: TokenOutDto = await AuthApi.register(username, password, email);
@@ -144,6 +160,7 @@ export class AuthStore extends BaseStore {
       this.token = ApiConfig.token;
       this.signedIn = this.token.length > 0;
       this.errorMsg = '';
+      this.clearFail();
       return true;
     } catch (err) {
       const error: Object = err as Object;
@@ -167,6 +184,8 @@ export class AuthStore extends BaseStore {
     this.user = null;
     this.signedIn = false;
     this.errorMsg = message;
+    // 登出后不该残留上一次的失败类别（否则登录页会把"退出"误读成"刚登录失败"）
+    this.clearFail();
     await ApiConfig.clearToken();
     const cleanup: LogoutCleanup | null = this.cleanup;
     if (cleanup !== null) {
@@ -204,6 +223,7 @@ export class AuthStore extends BaseStore {
     this.signedIn = false;
     this.loading = false;
     this.errorMsg = '';
+    this.clearFail();
     this.lastSyncAt = 0;
   }
 
@@ -246,17 +266,66 @@ export class AuthStore extends BaseStore {
     // ★ 注册/登录响应不含用户信息，必须再调一次 /me
     const ok: boolean = await this.loadMe();
     if (!ok) {
-      throw new Error('已取得令牌但读取用户信息失败，请重试');
+      // ★ 用 `appError` 而不是普通 `Error`：普通 Error 会被 `toApiError` 归成
+      //   "网络不可达"，把"端上拿不到用户信息"误报成"服务端没启动"（BUG-12 同类问题）。
+      throw appError('已取得令牌但读取用户信息失败，请重试');
     }
+    this.clearFail();
     this.endLoadOk();
   }
 
-  /** 统一失败处理 · 把 ApiError 转成用户可读文案 */
+  /** 统一失败处理 · 把 ApiError 转成用户可读文案，并记下失败类别 */
   private handleFailure(err: Object): ActionResultModel {
-    const apiErr = toApiError(err);
+    const apiErr: ApiError = toApiError(err);
+    const kind: AuthFailKind = AuthStore.kindOf(apiErr);
+    // ★ 必须先走 `endLoadErr`：它负责把 `loading` 置回 false。
+    //   只写 errorMsg 不碰 loading，会让登录按钮永远停在"登录中…"（真机实测踩到过）。
     this.endLoadErr(apiErr.message);
-    this.log().w(`鉴权失败 · ${apiErr.message}`);
+    this.failKind = kind;
+    this.failStatus = apiErr.code;
+    this.log().w(`鉴权失败 · [${kind}/${apiErr.code}] ${apiErr.message}`);
     return AuthStore.fail(apiErr.message);
+  }
+
+  /** 记一次本地校验失败（没有发网络请求） */
+  private markFail(kind: AuthFailKind, status: number, message: string): void {
+    this.endLoadErr(message);
+    this.failKind = kind;
+    this.failStatus = status;
+  }
+
+  /** 清掉失败标记（成功、登出、恢复登录态时调用） */
+  private clearFail(): void {
+    this.failKind = AuthFailKind.none;
+    this.failStatus = 0;
+  }
+
+  /**
+   * ApiError → 失败类别
+   *
+   * ★ 这张映射表就是"到底是密码错还是连不上"的唯一判断依据：
+   *   · 401 → `credentials`：服务端**已经回应**，问题在账号密码本身；
+   *   · 403 → `disabled`：账号被禁用；
+   *   · network → `network`：请求没到服务端；
+   *   · 5xx / 解析失败 / 端上逻辑失败 → `server`。
+   */
+  private static kindOf(err: ApiError): AuthFailKind {
+    if (err.kind === ApiErrorKind.network) {
+      return AuthFailKind.network;
+    }
+    if (err.kind === ApiErrorKind.http) {
+      if (err.code === ApiStatus.unauthorized) {
+        return AuthFailKind.credentials;
+      }
+      if (err.code === ApiStatus.forbidden) {
+        return AuthFailKind.disabled;
+      }
+      return AuthFailKind.server;
+    }
+    if (err.kind === ApiErrorKind.parse || err.kind === ApiErrorKind.app) {
+      return AuthFailKind.server;
+    }
+    return AuthFailKind.unknown;
   }
 
   private static done(message: string): ActionResultModel {

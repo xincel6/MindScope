@@ -19,6 +19,7 @@
 
 import { AppStore } from '../store/AppStore';
 import { AppBootstrap } from '../common/AppBootstrap';
+import { CardTransit } from '../common/CardTransit';
 import { UiTheme } from '../common/UiTheme';
 import { TabPageParam } from '../types/PageParams';
 import { StatsModel } from '../types/Index';
@@ -28,6 +29,7 @@ import { ErrorRetryView } from '../components/ErrorRetryView';
 import { SkeletonBlock } from '../components/SkeletonView';
 import { SeverityPieChart } from '../components/charts/SeverityPieChart';
 import { BdiTrendChart } from '../components/charts/BdiTrendChart';
+import { RevealCard } from '../components/RevealCard';
 
 @ComponentV2
 export struct StatsPage {
@@ -56,7 +58,14 @@ export struct StatsPage {
     //   之前直接用 Column 导致第二张图表被顶到屏幕外、藏在底部页签栏后面（看不到图）。
     Scroll() {
       Column({ space: UiTheme.gapL }) {
-        PageHeader({ title: '统计', subtitle: '分析次数、严重度分布与 BDI 趋势' })
+        // 页头（0 号位 · 转场由 RevealCard 内部负责）
+        RevealCard({ order: 0 }) {
+          Column() {
+            PageHeader({ title: '统计', subtitle: '分析次数、严重度分布与 BDI 趋势' })
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+        }
 
         if (this.app.statsLoading) {
           this.buildSkeleton()
@@ -104,6 +113,8 @@ export struct StatsPage {
   @Builder
   buildContent(stats: StatsModel) {
     // ── KPI 卡片（对应网页端 StatCard 四联）──
+    // ★ 四个 KPI 卡在 Row 里靠 `layoutWeight(1)` 均分宽度，外层再套容器会破坏布局，
+    //   所以这一排不参与逐组件转场，只让页头与两张图表卡参与。
     Row({ space: UiTheme.gapM }) {
       this.kpiCard('总分析次数', `${stats.totalAnalyses}`)
       this.kpiCard('平均推理耗时', `${stats.avgInferenceTimeMs.toFixed(1)} ms`)
@@ -116,32 +127,36 @@ export struct StatsPage {
     }
     .width('100%')
 
-    // ── 严重度分布（环形饼图 + 圆心总数）──
-    AppCard({ title: '严重等级分布', subtitle: '按 BDI-II 四档统计' }) {
-      if (stats.totalAnalyses > 0) {
-        SeverityPieChart({
-          buckets: this.app.statsBuckets,
-          total: stats.totalAnalyses
-        })
-      } else {
-        Text('暂无分析数据')
-          .fontSize(UiTheme.fontSizeBody)
-          .fontColor(UiTheme.textSecondary)
-          .width('100%')
-          .textAlign(TextAlign.Center)
+    // ── 严重度分布（环形饼图 + 圆心总数）· 1 号位 ──
+    RevealCard({ order: 1 }) {
+      AppCard({ title: '严重等级分布', subtitle: '按 BDI-II 四档统计' }) {
+        if (stats.totalAnalyses > 0) {
+          SeverityPieChart({
+            buckets: this.app.statsBuckets,
+            total: stats.totalAnalyses
+          })
+        } else {
+          Text('暂无分析数据')
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.textSecondary)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        }
       }
     }
 
-    // ── BDI 日均趋势（折线 + 三条阈值线）──
-    AppCard({ title: 'BDI 日均趋势', subtitle: '按检测日期聚合的日均分' }) {
-      if (stats.bdiTrend.length === 0) {
-        Text('暂无趋势数据')
-          .fontSize(UiTheme.fontSizeBody)
-          .fontColor(UiTheme.textSecondary)
-          .width('100%')
-          .textAlign(TextAlign.Center)
-      } else {
-        BdiTrendChart({ trend: stats.bdiTrend })
+    // ── BDI 日均趋势（折线 + 三条阈值线）· 2 号位 ──
+    RevealCard({ order: 2 }) {
+      AppCard({ title: 'BDI 日均趋势', subtitle: '按检测日期聚合的日均分' }) {
+        if (stats.bdiTrend.length === 0) {
+          Text('暂无趋势数据')
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.textSecondary)
+            .width('100%')
+            .textAlign(TextAlign.Center)
+        } else {
+          BdiTrendChart({ trend: stats.bdiTrend })
+        }
       }
     }
   }

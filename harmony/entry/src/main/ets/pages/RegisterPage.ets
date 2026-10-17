@@ -20,6 +20,10 @@ import { UiTheme } from '../common/UiTheme';
 import { RegisterPageParam } from '../types/PageParams';
 import { AppCard } from '../components/AppCard';
 import { LogoPlaceholder } from '../components/LogoPlaceholder';
+import { AuthAlert } from '../components/AuthAlert';
+
+/** 重放弹窗动画时"先卸载、再挂载"的间隔（ms）· 与登录页同一套做法 */
+const ALERT_REPLAY_GAP_MS: number = 24;
 
 @ComponentV2
 export struct RegisterPage {
@@ -35,6 +39,12 @@ export struct RegisterPage {
 
   /** 已被用户"收起"的服务端错误快照 · 与登录页同一套做法（页面不回写 store） */
   @Local dismissedError: string = '';
+
+  // ── 失败弹窗状态（与登录页同一个组件，保证两页手感一致）──
+  @Local alertVisible: boolean = false;
+  @Local alertTitle: string = '注册失败';
+  @Local alertMessage: string = '';
+  @Local alertHint: string = '';
 
   @Computed
   get busy(): boolean {
@@ -84,24 +94,55 @@ export struct RegisterPage {
     }
   }
 
+  /** 注册失败弹窗（与登录页同一个组件、同一套"重放"做法） */
+  private showAlert(title: string, message: string, hint: string): void {
+    this.alertTitle = title.length > 0 ? title : '注册失败';
+    this.alertMessage = message;
+    this.alertHint = hint;
+    if (this.alertVisible) {
+      this.alertVisible = false;
+      setTimeout((): void => {
+        this.alertVisible = true;
+      }, ALERT_REPLAY_GAP_MS);
+      return;
+    }
+    this.alertVisible = true;
+  }
+
+  /** 把窗口层写在参数里的失败三元组弹出来 */
+  private presentServerFailure(): void {
+    const message: string = this.pageParam.authError;
+    this.showAlert(
+      this.pageParam.authErrorTitle,
+      message.length > 0 ? message : '注册失败，请重试',
+      this.pageParam.authErrorHint
+    );
+  }
+
   /** 点「注册并登录」 */
   private submit(): void {
     if (this.busy) {
       return;
     }
-    const nameError: string = AuthRule.checkUsername(this.userName);
+    // ★ 与服务端 `username.strip()` 对齐：先去空白再校验/提交
+    const name: string = this.userName.trim();
+    const nameError: string = AuthRule.checkUsername(name);
     if (nameError.length > 0) {
       this.formError = nameError;
+      this.showAlert('无法提交', nameError, '用户名 3–32 位，可用字母、数字、下划线或中文');
       return;
     }
     const passwordError: string = AuthRule.checkPassword(this.userPassword);
     if (passwordError.length > 0) {
       this.formError = passwordError;
+      this.showAlert('无法提交', passwordError, '密码请输入 6 位以上，注意区分大小写');
       return;
     }
-    const emailError: string = this.checkEmail(this.userEmail.trim());
+    const email: string = this.userEmail.trim();
+    const emailError: string = this.checkEmail(email);
     if (emailError.length > 0) {
       this.formError = emailError;
+      this.showAlert('无法提交', emailError, '邮箱可以不填，填了就要带 @');
       return;
     }
     this.formError = '';
@@ -109,16 +150,23 @@ export struct RegisterPage {
     this.dismissedError = '';
     this.submitting = true;
     // ★ 注册即登录：成功后窗口层会落地登录态，界面自动切换到主界面
-    this.pageParam.onRegister(this.userName, this.userPassword, this.userEmail.trim())
-      .then(() => {
+    this.pageParam.onRegister(name, this.userPassword, email)
+      .then((ok: boolean): void => {
         this.submitting = false;
+        if (ok) {
+          return;
+        }
+        this.presentServerFailure();
       })
-      .catch(() => {
+      .catch((): void => {
         this.submitting = false;
+        this.presentServerFailure();
       });
   }
 
-  build() {
+  /** 注册表单本体（品牌区 + 三个输入框 + 两个按钮） */
+  @Builder
+  formSection() {
     Scroll() {
       Column({ space: UiTheme.gapXl }) {
         // ── ① 品牌区（与登录页一致，保证两页视觉连续） ──
@@ -238,6 +286,32 @@ export struct RegisterPage {
     .height('100%')
     .scrollBar(BarState.Off)
     .align(Alignment.Top)
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      // ── 页面本体 ──
+      Column() {
+        this.formSection()
+      }
+      .width('100%')
+      .height('100%')
+      .backgroundColor(UiTheme.pageBackground)
+
+      // ── 失败弹窗（覆盖在最上层，不占布局；与登录页同一组件） ──
+      if (this.alertVisible) {
+        AuthAlert({
+          title: this.alertTitle,
+          message: this.alertMessage,
+          hint: this.alertHint,
+          onClose: () => {
+            this.alertVisible = false;
+          }
+        })
+      }
+    }
+    .width('100%')
+    .height('100%')
     .backgroundColor(UiTheme.pageBackground)
   }
 }

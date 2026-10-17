@@ -82,6 +82,25 @@ export function mainTabGlyph(tab: MainTab): string {
   return metaOf(tab).glyph;
 }
 
+/**
+ * 取页签在底部导航栏里的顺序下标（0 起）
+ *
+ * ★ 这是"切页签时卡片往哪边滑"的方向基准（见 `common/CardTransit.ets`）：
+ *   新下标 > 旧下标 ⇒ 往右切 ⇒ 卡片向左飞出。所以它必须与底部栏展示顺序**同源**，
+ *   两个都从 `MAIN_TABS` 来，调整页签顺序时滑动方向自动跟着对。
+ *
+ * @param name 路由名（`MainTab` 的字符串值）
+ * @returns 下标；不是一级页签时返回 -1
+ */
+export function mainTabIndexOf(name: string): number {
+  for (let i = 0; i < MAIN_TABS.length; i++) {
+    if ((MAIN_TABS[i].tab as string) === name) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /** 按枚举找元数据 · 找不到时返回第一项兜底 */
 function metaOf(tab: MainTab): MainTabMeta {
   for (let i = 0; i < MAIN_TABS.length; i++) {

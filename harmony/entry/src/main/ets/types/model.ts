@@ -185,6 +185,15 @@ export interface AnalysisSessionModel {
    */
   frames: AnalysisFrameModel[];
   /**
+   * **首帧**的对齐人脸图（裸 base64，无 `data:` 前缀）· 空串表示还没收到任何帧
+   *
+   * ★ 为什么不直接用 `frames[0]`：`frames` 为省内存会被裁剪，而且是**从头部切**
+   *   （live 只留最后 90 帧、收尾裁到 30 帧）。视频跑完后 `frames[0]` 早已不是
+   *   真正的第一帧；而工作台「当前任务」卡片要展示的正是"这次分析的第一帧照片"。
+   *   所以首帧图单独存一份、**永不裁剪**（一张 128×128 JPEG 约 5–15KB，代价可忽略）。
+   */
+  firstFrameFace: string;
+  /**
    * 逐帧 BDI 分数（整数）· 供情绪曲线
    * ★ 与 `frames` 分开存：帧数组会为省内存被裁剪，而曲线要看完整走势
    */
@@ -246,6 +255,24 @@ export interface CurrentTaskModel {
   bdiScore: number;
   /** 失败文案（status = failed 时非空） */
   errorMsg: string;
+  /**
+   * 首帧照片 · 可直接喂给 `Image` 的地址
+   *
+   * 取值顺序（由 `AppStore.currentTask()` 决定，组件不再做判断）：
+   *   ① 该素材会话里的**首帧对齐人脸**（data URL）—— 图片=那唯一一帧，视频=采样出的第一帧；
+   *   ② 首帧还没到但媒体库有缩略图（图片上传后后端会生成）→ 用缩略图；
+   *   ③ 都没有（视频刚上传、还没收到帧）→ 空串，组件画占位块。
+   */
+  firstFrameUrl: string;
+  /** BDI 填充比例 = `bdiScore / BDI_MAX_SCORE`，0–1（进度条用；未出分时为 0） */
+  scoreRatio: number;
+  /** BDI 档位中文标签（正常 / 轻度 / 中度 / 重度）· 未出分时为空串 */
+  severityLabel: string;
+  /**
+   * BDI 档位色（四档严重度色，**不是**错误危险色 `UiTheme.danger`）
+   * ★ 未出分时取中性次要文字色：此时进度条是空的，颜色不该暗示任何档位。
+   */
+  severityColor: string;
 }
 
 /**

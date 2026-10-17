@@ -57,6 +57,13 @@ export class UiTheme {
   public static readonly danger: string = '#DC2626';
 
   /**
+   * 危险提示的**浅底**（本轮新增 · 登录失败弹窗底色）
+   * ★ 与 `danger` 的分工：`danger` 是文字/描边的前景色，它是"一条淡红底"，
+   *   用来让弹窗在一屏白底上被认出"这是警告"，但不刺眼。
+   */
+  public static readonly dangerSoft: string = '#FEF2F2';
+
+  /**
    * 卡片点击涟漪色 · 主色 12% 透明度（ARGB：前两位是 alpha）
    * ★ 纯白背景下必须带透明度，否则涟漪会变成一块实心绿，看着像卡片被选中了。
    * ★ 当前仅作为**保留令牌**：手绘涟漪的方案已撤回（见 `BUG清单.md` BUG-01），
@@ -120,8 +127,14 @@ export class UiTheme {
   /** 辅助说明（仅字段级标注使用，不承载正文信息） */
   public static readonly fontSizeCaption: number = 12;
 
-  /** 重要分数 · 大字号 */
+  /** 重要分数 · 大字号（分析详情页的 hero 分数） */
   public static readonly fontSizeMetric: number = 32;
+
+  /**
+   * 卡片内的关键数值（工作台「当前任务」的 BDI 分数）
+   * ★ 卡片里还要放首帧照片和进度条，直接上 32 会把卡片撑高，取 24 作中间档。
+   */
+  public static readonly fontSizeCardMetric: number = 24;
 
   // ────────────────── 结构尺寸 ──────────────────
 
@@ -175,6 +188,12 @@ export class UiTheme {
   /** 最近素材缩略图边长 */
   public static readonly thumbSize: number = 56;
 
+  /**
+   * 工作台「当前任务」卡片里**首帧照片**的边长
+   * ★ 比列表缩略图大一点：它是这张卡片里唯一的图像，太小就认不出人脸。
+   */
+  public static readonly taskThumbSize: number = 64;
+
   /** 点击涟漪动画时长（毫秒）· 保留令牌（手绘涟漪已撤回，见 BUG清单 BUG-01） */
   public static readonly rippleDuration: number = 300;
 
@@ -183,4 +202,36 @@ export class UiTheme {
 
   /** 卡片按压反馈的过渡时长（毫秒）· 比涟漪更短，手感才"跟手" */
   public static readonly pressDuration: number = 120;
+
+  // ────────────────── 开屏页（本轮新增）──────────────────
+
+  /**
+   * 开屏页图标边长
+   * ★ 比登录页的 96 大一号：开屏时屏幕上只有这一个元素，太小会显得"页面没加载完"。
+   */
+  public static readonly splashLogoSize: number = 112;
+
+  /** 开屏页图标圆角 · 与边长同比放大（96→20 的比例） */
+  public static readonly splashLogoRadius: number = 24;
+
+  /** 开屏页产品名 "MindScope" 字号 */
+  public static readonly fontSizeSplashTitle: number = 30;
+
+  /**
+   * 开屏页最短展示时长（毫秒）
+   * ★ 为什么需要：引导流程在缓存命中时可能 200ms 就结束，
+   *   不留一个下限的话开屏页只会闪一下（比不显示更难看）。
+   */
+  public static readonly splashMinDurationMs: number = 1100;
+
+  // ────────────────── 失败弹窗（本轮新增）──────────────────
+
+  /** 弹窗右侧圆角 · 左侧贴屏幕边缘所以是直角（0），见 `AuthAlert` */
+  public static readonly alertRadius: number = 10;
+
+  /** 弹窗左侧"撞击条"宽度（危险色竖条） */
+  public static readonly alertAccentWidth: number = 4;
+
+  /** 弹窗距页面顶部的距离 · 让它落在输入框之上、又不贴死状态栏 */
+  public static readonly alertOffsetTop: number = 8;
 }

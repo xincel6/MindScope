@@ -8,13 +8,29 @@
  * param.onRegister = (u, p, e) => { ... };      // 点"注册账号"由窗口层决定怎么跳
  * param.authBusy = AppStore.get().auth().loading;
  * param.authError = AppStore.get().auth().errorMsg;
+ * param.authErrorTitle = '登录失败';            // 失败弹窗标题（窗口层按失败类别给）
+ * param.authErrorHint  = '服务端已回应 HTTP 401'; // 失败弹窗诊断行
+ * param.serverLabel = '100.122.178.113:8000';   // 底部常驻的服务端地址
  * ```
  *
  * 页面自己只持有三类状态（都属于"表单本地状态"，不是业务数据）：
  *   - 输入框内容：用户名 / 密码 / 是否明文显示密码
  *   - 本地校验提示：`formError`（用 `AuthRule` 先拦一次，省掉一次必然失败的往返）
- *   - 演示用的"登录中…"兜底态：在回调返回之前防止连点
+ *   - 失败弹窗的三行文案（标题 / 主文案 / 诊断行，全部是从参数**抄过来**的）
  * 鉴权结果、错误文案全部来自参数，页面不解析、不判断错误类型。
+ *
+ * ══════════════════ 本轮（登录页重构）做了什么 ══════════════════
+ * ① **失败一定有"动作"**：任何一次失败（本地校验不过也算）都会弹出
+ *    `components/AuthAlert.ets` —— 从屏幕左侧之外弹性撞进来，停在输入框上方；
+ *    连续失败会**重放**动画（卸载再挂载），不会因为"文案没变"就毫无反馈。
+ * ② **把两类失败分开说**：弹窗的第三行是诊断行，明确写出
+ *    "服务端已回应 HTTP 401"（→ 账号密码问题）还是"请求没有到达服务端"（→ 网络/地址问题）。
+ * ③ **用户名先去空白再校验**：手机输入法很容易带一个尾随空格，
+ *    而服务端是 `username.strip()` 后精确匹配 —— 端上先 trim，两端口径一致。
+ * ④ **底部常驻服务端地址**：账号注册在 A 服务器、App 连 B 服务器时，
+ *    401 的唯一解释就是"账号不在这一台"，这一行小字让这件事一眼可见。
+ * ⑤ 输入框仍然是 `text + onChange` 的受控写法（本轮验证过：值会实时回写到 `@Local`），
+ *    密码框保留「显示/隐藏」，因为"看不见自己输了什么"正是密码类 401 最难的排查点。
  */
 
 import { AuthRule } from '../network/AuthApi';
@@ -23,6 +39,10 @@ import { LoginPageParam } from '../types/PageParams';
 import { AppCard } from '../components/AppCard';
 import { LogoPlaceholder } from '../components/LogoPlaceholder';
 import { ErrorRetryView } from '../components/ErrorRetryView';
+import { AuthAlert } from '../components/AuthAlert';
+
+/** 重放弹窗动画时"先卸载、再挂载"的间隔（ms）· 太短会被合批成同一次渲染 */
+const ALERT_REPLAY_GAP_MS: number = 24;
 
 @ComponentV2
 export struct LoginPage {
@@ -43,9 +63,14 @@ export struct LoginPage {
    * 场景：服务端返回"用户名或密码错误"后，用户开始改密码，这条报错就该消失
    * （否则看起来像"我的修改没生效"）。做法是**页面本地记下这条已展示过的文案**，
    * 而不是回头去清 `AuthStore.errorMsg` —— 页面不回写 store，是本工程的纪律。
-   * 如果下次又拿到不同的错误文案，它不等于快照，会重新显示出来。
    */
   @Local dismissedError: string = '';
+
+  // ── 失败弹窗状态（三行文案 + 是否显示）──
+  @Local alertVisible: boolean = false;
+  @Local alertTitle: string = '登录失败';
+  @Local alertMessage: string = '';
+  @Local alertHint: string = '';
 
   /** 任一来源的忙碌态 */
   @Computed
@@ -75,37 +100,94 @@ export struct LoginPage {
     return this.busy ? '注册中…' : '注册账号';
   }
 
-  // ── 生命周期：把"用户开始重新输入"当作清掉上一次错误的时机 ──
+  /** 底部服务端地址行 · 空串则不显示（避免出现"服务端 "这种半截文案） */
+  @Computed
+  get serverLine(): string {
+    const label: string = this.pageParam.serverLabel;
+    return label.length > 0 ? `服务端 ${label}` : '';
+  }
+
+  // ── 生命周期 ──
 
   aboutToAppear(): void {
     this.formError = '';
+    // ★ 冷启动可能带着一条现成的提示（如"登录已过期，请重新登录"）：
+    //   它是"用户必须知道"的信息，所以进页面就用同一种弹窗表达一次。
+    const preset: string = this.pageParam.authError;
+    if (preset.length > 0) {
+      this.showAlert(this.pageParam.authErrorTitle, preset, this.pageParam.authErrorHint);
+    }
   }
 
-  /** 点「登录」：先本地校验，再把手输入交给窗口层 */
+  // ── 失败弹窗 ──
+
+  /**
+   * 弹一次失败弹窗
+   *
+   * ★ 已经显示着的时候不能只改文案：动画已经播完了，用户会觉得"这次没反应"。
+   *   做法是先卸载、隔一帧再挂载 —— 组件重新 `aboutToAppear` 就一定重放动画
+   *   （属性复位由组件自己负责，见 `AuthAlert.playEnter`）。
+   */
+  private showAlert(title: string, message: string, hint: string): void {
+    this.alertTitle = title.length > 0 ? title : '登录失败';
+    this.alertMessage = message;
+    this.alertHint = hint;
+    if (this.alertVisible) {
+      this.alertVisible = false;
+      setTimeout((): void => {
+        this.alertVisible = true;
+      }, ALERT_REPLAY_GAP_MS);
+      return;
+    }
+    this.alertVisible = true;
+  }
+
+  /** 把窗口层写在参数里的失败三元组弹出来 */
+  private presentServerFailure(): void {
+    const message: string = this.pageParam.authError;
+    this.showAlert(
+      this.pageParam.authErrorTitle,
+      message.length > 0 ? message : '登录失败，请重试',
+      this.pageParam.authErrorHint
+    );
+  }
+
+  // ── 交互 ──
+
+  /** 点「登录」：先本地校验，再把用户输入交给窗口层 */
   private submit(): void {
     if (this.busy) {
       return;
     }
-    const nameError: string = AuthRule.checkUsername(this.userName);
+    // ★ 手机输入法容易带尾随空格：服务端是 strip 后精确匹配，端上先去空白，两端口径一致
+    const name: string = this.userName.trim();
+    const nameError: string = AuthRule.checkUsername(name);
     if (nameError.length > 0) {
       this.formError = nameError;
+      this.showAlert('无法提交', nameError, '用户名 3–32 位，可用字母、数字、下划线或中文');
       return;
     }
     const passwordError: string = AuthRule.checkPassword(this.userPassword);
     if (passwordError.length > 0) {
       this.formError = passwordError;
+      this.showAlert('无法提交', passwordError, '密码请输入 6 位以上，注意区分大小写');
       return;
     }
     this.formError = '';
     // 重新提交时允许服务端的错误再次显示
     this.dismissedError = '';
     this.submitting = true;
-    this.pageParam.onLogin(this.userName, this.userPassword, '')
-      .then(() => {
+    this.pageParam.onLogin(name, this.userPassword, '')
+      .then((ok: boolean): void => {
         this.submitting = false;
+        if (ok) {
+          return;
+        }
+        this.presentServerFailure();
       })
-      .catch(() => {
+      .catch((): void => {
         this.submitting = false;
+        this.presentServerFailure();
       });
   }
 
@@ -126,47 +208,69 @@ export struct LoginPage {
       return;
     }
     this.formError = '';
-    this.pageParam.onRegister(this.userName, this.userPassword, '');
+    this.pageParam.onRegister(this.userName.trim(), this.userPassword, '');
   }
 
-  build() {
-    Column() {
-      Scroll() {
+  // ── 界面 ──
+
+  /** 表单区（品牌 + 输入 + 两个按钮） */
+  @Builder
+  formSection() {
+    Scroll() {
+      Column({ space: UiTheme.gapXl }) {
+        // ── ① 品牌区：图标占位 + 产品名 + 场景说明 ──
         Column({ space: UiTheme.gapXl }) {
-          // ── ① 品牌区：图标占位 + 产品名 + 场景说明 ──
-          Column({ space: UiTheme.gapXl }) {
-            LogoPlaceholder()
+          LogoPlaceholder()
 
-            Column({ space: UiTheme.gapS }) {
-              Text('抑郁症智能辅助评估')
-                .fontSize(UiTheme.fontSizeTitle)
-                .fontWeight(FontWeight.Bold)
-                .fontColor(UiTheme.textPrimary)
-                .width('100%')
-                .textAlign(TextAlign.Start)
+          Column({ space: UiTheme.gapS }) {
+            Text('抑郁症智能辅助评估')
+              .fontSize(UiTheme.fontSizeTitle)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UiTheme.textPrimary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
 
-              Text('面向临床与研究场景')
-                .fontSize(UiTheme.fontSizeBody)
-                .fontColor(UiTheme.textSecondary)
-                .width('100%')
-                .textAlign(TextAlign.Start)
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Start)
+            Text('面向临床与研究场景')
+              .fontSize(UiTheme.fontSizeBody)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
 
-          // ── ② 表单卡片：两个输入框 + 登录 + 注册 ──
-          AppCard({ title: '账号登录', subtitle: '请使用已注册的账号登录系统' }) {
-            Column({ space: UiTheme.gapL }) {
-              // 用户名
-              // ★ 背景改纯白后，输入框的 pageBackground 与卡片同色 → 必须补一条浅灰描边，
-              //   否则用户看不到输入框的边界（这是"全局改纯白"的连带修正）。
-              TextInput({ placeholder: '请输入用户名', text: this.userName })
-                .type(InputType.Normal)
-                .maxLength(AuthRule.usernameMaxLength)
+        // ── ② 表单卡片：两个输入框 + 登录 + 注册 ──
+        AppCard({ title: '账号登录', subtitle: '请使用已注册的账号登录系统' }) {
+          Column({ space: UiTheme.gapL }) {
+            // 用户名
+            // ★ 背景改纯白后，输入框的 pageBackground 与卡片同色 → 必须补一条浅灰描边，
+            //   否则用户看不到输入框的边界（这是"全局改纯白"的连带修正）。
+            TextInput({ placeholder: '请输入用户名', text: this.userName })
+              .type(InputType.Normal)
+              .maxLength(AuthRule.usernameMaxLength)
+              .height(UiTheme.controlHeight)
+              .backgroundColor(UiTheme.cardBackground)
+              .borderWidth(1)
+              .borderColor(UiTheme.divider)
+              .borderRadius(UiTheme.cardRadius)
+              .fontSize(UiTheme.fontSizeBody)
+              .fontColor(UiTheme.textPrimary)
+              .placeholderColor(UiTheme.textSecondary)
+              .enabled(!this.busy)
+              .onChange((value: string) => {
+                this.userName = value;
+                this.onInputChanged();
+              })
+
+            // 密码（默认密文，右侧可切换明文）
+            Row({ space: UiTheme.gapS }) {
+              TextInput({ placeholder: '请输入密码', text: this.userPassword })
+                .type(this.passwordVisible ? InputType.Normal : InputType.Password)
                 .height(UiTheme.controlHeight)
+                .layoutWeight(1)
                 .backgroundColor(UiTheme.cardBackground)
                 .borderWidth(1)
                 .borderColor(UiTheme.divider)
@@ -176,98 +280,85 @@ export struct LoginPage {
                 .placeholderColor(UiTheme.textSecondary)
                 .enabled(!this.busy)
                 .onChange((value: string) => {
-                  this.userName = value;
+                  this.userPassword = value;
                   this.onInputChanged();
                 })
 
-              // 密码（默认密文，右侧可切换明文）
-              Row({ space: UiTheme.gapS }) {
-                TextInput({ placeholder: '请输入密码', text: this.userPassword })
-                  .type(this.passwordVisible ? InputType.Normal : InputType.Password)
-                  .height(UiTheme.controlHeight)
-                  .layoutWeight(1)
-                  .backgroundColor(UiTheme.cardBackground)
-                  .borderWidth(1)
-                  .borderColor(UiTheme.divider)
-                  .borderRadius(UiTheme.cardRadius)
-                  .fontSize(UiTheme.fontSizeBody)
-                  .fontColor(UiTheme.textPrimary)
-                  .placeholderColor(UiTheme.textSecondary)
-                  .enabled(!this.busy)
-                  .onChange((value: string) => {
-                    this.userPassword = value;
-                    this.onInputChanged();
-                  })
-
-                Text(this.passwordVisible ? '隐藏' : '显示')
-                  .fontSize(UiTheme.fontSizeBody)
-                  .fontColor(UiTheme.accent)
-                  .width(44)
-                  .textAlign(TextAlign.Center)
-                  .onClick(() => {
-                    this.passwordVisible = !this.passwordVisible;
-                  })
-              }
-              .width('100%')
-              .alignItems(VerticalAlign.Center)
-
-              // 错误提示
-              if (this.visibleError.length > 0) {
-                Text(this.visibleError)
-                  .fontSize(UiTheme.fontSizeBody)
-                  .fontColor(UiTheme.danger)
-                  .width('100%')
-                  .textAlign(TextAlign.Start)
-                  .maxLines(4)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }
-
-              // 登录（主按钮）
-              Button(this.submitLabel)
-                .width('100%')
-                .height(UiTheme.controlHeight)
-                .fontSize(UiTheme.fontSizeSection)
-                .fontColor(UiTheme.cardBackground)
-                .backgroundColor(UiTheme.primary)
-                .borderRadius(UiTheme.buttonRadius)
-                .enabled(!this.busy)
-                .onClick(() => {
-                  this.submit();
-                })
-
-              // 注册（次按钮 · 跳转独立注册页）
-              Button(this.registerLabel)
-                .width('100%')
-                .height(UiTheme.controlHeight)
-                .fontSize(UiTheme.fontSizeSection)
+              // ★ 保留「显示/隐藏」：密码框看不见内容，是 401 最难自查的一环
+              Text(this.passwordVisible ? '隐藏' : '显示')
+                .fontSize(UiTheme.fontSizeBody)
                 .fontColor(UiTheme.accent)
-                .backgroundColor(Color.Transparent)
-                .borderWidth(1)
-                .borderColor(UiTheme.accent)
-                .borderRadius(UiTheme.buttonRadius)
-                .enabled(!this.busy)
+                .width(44)
+                .textAlign(TextAlign.Center)
                 .onClick(() => {
-                  this.goRegister();
+                  this.passwordVisible = !this.passwordVisible;
                 })
             }
             .width('100%')
-          }
-        }
-        .width('100%')
-        .padding({
-          left: UiTheme.pagePadding,
-          right: UiTheme.pagePadding,
-          top: UiTheme.pagePadding,
-          bottom: UiTheme.gapXl
-        })
-        .alignItems(HorizontalAlign.Start)
-      }
-      .layoutWeight(1)
-      .width('100%')
-      .scrollBar(BarState.Off)
-      .align(Alignment.Top)
+            .alignItems(VerticalAlign.Center)
 
-      // ── ③ 连接失败时的重试出口（规范：网络失败时提供重试按钮） ──
+            // 错误提示（弹窗会消失，这一行保证信息不丢）
+            if (this.visibleError.length > 0) {
+              Text(this.visibleError)
+                .fontSize(UiTheme.fontSizeBody)
+                .fontColor(UiTheme.danger)
+                .width('100%')
+                .textAlign(TextAlign.Start)
+                .maxLines(4)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
+
+            // 登录（主按钮）
+            Button(this.submitLabel)
+              .width('100%')
+              .height(UiTheme.controlHeight)
+              .fontSize(UiTheme.fontSizeSection)
+              .fontColor(UiTheme.cardBackground)
+              .backgroundColor(UiTheme.primary)
+              .borderRadius(UiTheme.buttonRadius)
+              .enabled(!this.busy)
+              .onClick(() => {
+                this.submit();
+              })
+
+            // 注册（次按钮 · 跳转独立注册页）
+            Button(this.registerLabel)
+              .width('100%')
+              .height(UiTheme.controlHeight)
+              .fontSize(UiTheme.fontSizeSection)
+              .fontColor(UiTheme.accent)
+              .backgroundColor(Color.Transparent)
+              .borderWidth(1)
+              .borderColor(UiTheme.accent)
+              .borderRadius(UiTheme.buttonRadius)
+              .enabled(!this.busy)
+              .onClick(() => {
+                this.goRegister();
+              })
+          }
+          .width('100%')
+        }
+      }
+      .width('100%')
+      .padding({
+        left: UiTheme.pagePadding,
+        right: UiTheme.pagePadding,
+        top: UiTheme.pagePadding,
+        bottom: UiTheme.gapXl
+      })
+      .alignItems(HorizontalAlign.Start)
+    }
+    .layoutWeight(1)
+    .width('100%')
+    .scrollBar(BarState.Off)
+    .align(Alignment.Top)
+  }
+
+  /** 底部：连接失败的重试出口 + 当前服务端地址 */
+  @Builder
+  footerSection() {
+    Column({ space: UiTheme.gapS }) {
+      // 连接失败时的重试出口（规范：网络失败时提供重试按钮）
       if (this.pageParam.retryMessage.length > 0) {
         ErrorRetryView({
           message: this.pageParam.retryMessage,
@@ -277,16 +368,51 @@ export struct LoginPage {
             this.pageParam.onRetry();
           }
         })
-          .padding({
-            left: UiTheme.pagePadding,
-            right: UiTheme.pagePadding,
-            bottom: UiTheme.gapL
-          })
+      }
+
+      // ★ 常驻的小字：账号在哪台服务器上一目了然（排查 401 的第一现场信息）
+      if (this.serverLine.length > 0) {
+        Text(this.serverLine)
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .textAlign(TextAlign.Center)
+      }
+    }
+    .width('100%')
+    .padding({
+      left: UiTheme.pagePadding,
+      right: UiTheme.pagePadding,
+      bottom: UiTheme.gapL
+    })
+  }
+
+  build() {
+    Stack({ alignContent: Alignment.TopStart }) {
+      // ── 页面本体 ──
+      Column() {
+        this.formSection()
+        this.footerSection()
+      }
+      .width('100%')
+      .height('100%')
+      .alignItems(HorizontalAlign.Start)
+      .backgroundColor(UiTheme.pageBackground)
+
+      // ── 失败的弹性警告弹窗（覆盖在最上层，不占布局） ──
+      if (this.alertVisible) {
+        AuthAlert({
+          title: this.alertTitle,
+          message: this.alertMessage,
+          hint: this.alertHint,
+          onClose: () => {
+            this.alertVisible = false;
+          }
+        })
       }
     }
     .width('100%')
     .height('100%')
     .backgroundColor(UiTheme.pageBackground)
-    .alignItems(HorizontalAlign.Start)
   }
 }

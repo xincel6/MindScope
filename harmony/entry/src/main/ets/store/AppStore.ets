@@ -56,6 +56,15 @@ export class AppStore {
   /** 是否正在探活（刷新按钮的忙碌态） */
   @Trace healthChecking: boolean = false;
 
+  /**
+   * 是否**至少完成过一次**探活
+   *
+   * ★ 为什么需要它：`serverOnline` 的默认值是 false，若 UI 只看 `!serverOnline`，
+   *   冷启动那几十毫秒里会闪一条"无法连接服务器"的假告警。
+   *   加上这个位，工作台的离线提示只在"真的探活过、并且失败了"时才出现。
+   */
+  @Trace healthChecked: boolean = false;
+
   /** 全局提示（如「登录已过期，请重新登录」）· 消费后请调用 clearGlobalMessage() */
   @Trace globalMessage: string = '';
 
@@ -346,6 +355,8 @@ export class AppStore {
    * ★ 进度与分数**优先取该素材自己的会话**：镜像字段只在 `sync()` 时刷新，
    *   而会话是 `@Trace` 的，每来一帧都变 —— 工作台进度条因此真正"动起来"
    *   （旧实现只看镜像字段，进度会一直停在开始分析那一刻）。
+   * ★ 首帧照片、BDI 填充比例、档位色也在这里一起算好：卡片组件只负责画，
+   *   不再自己判断"该用会话还是镜像、该退到缩略图还是占位块"。
    */
   public currentTask(): CurrentTaskModel | null {
     if (this.currentTaskStatus === TaskStatus.none || this.currentTaskMediaId.length === 0) {
@@ -355,6 +366,7 @@ export class AppStore {
     const progress: number = session === null ? this.analysisProgress : session.progress;
     const score: number =
       session !== null ? session.score : (this.currentTaskStatus === TaskStatus.done ? this.currentTaskScore : this.analysisScore);
+    const level = BdiThreshold.levelOf(score);
     const task: CurrentTaskModel = {
       mediaId: this.currentTaskMediaId,
       mediaName: this.currentTaskMediaName,
@@ -362,9 +374,40 @@ export class AppStore {
       status: this.currentTaskStatus,
       progress: progress,
       bdiScore: score,
-      errorMsg: this.currentTaskError
+      errorMsg: this.currentTaskError,
+      firstFrameUrl: this.firstFrameUrlOf(session),
+      // 条长 = 分数 / 满分（口径与本轮「最近使用的素材」一致：越长越严重）
+      scoreRatio: score <= 0 ? 0 : (score >= BDI_MAX_SCORE ? 1 : score / BDI_MAX_SCORE),
+      // 没出分时不能说"正常"：给空标签 + 中性色，避免把"还没算"读成"结果正常"
+      severityLabel: score > 0 ? UiConstant.severityLabelOf(level) : '',
+      // ★ 中性色取 `UiConstant`（数据层常量）而不是 `UiTheme`：门面不该 import 表现层主题，
+      //   两者色值一致（#64748b），语义上这里只是"本档位无结论"的占位。
+      severityColor: score > 0 ? UiConstant.severityColorOf(level) : UiConstant.textSecondaryColor
     };
     return task;
+  }
+
+  /**
+   * 当前任务的首帧照片地址
+   *
+   * ① 会话里的**首帧对齐人脸**优先（图片=那唯一一帧，视频=采样出的第一帧）；
+   * ② 首帧还没到、但媒体库有缩略图（图片上传后后端会生成）→ 用缩略图顶上，
+   *    这样"刚上传、还在等第一帧"的卡片也能立刻有画面；
+   * ③ 视频没有缩略图，且帧还没到 → 空串，由组件画占位块（不拿 .mp4 直链喂 Image）。
+   *
+   * ★ 只在**图片**上退到缩略图：视频的 `thumbnailUrl` 会回落到 `item.url`（一个 .mp4 地址），
+   *   `Image` 组件吃它只会得到一片空白，反而掩盖了"帧还没到"这件事。
+   */
+  private firstFrameUrlOf(session: AnalysisSessionModel | null): string {
+    if (session !== null && session.firstFrameFace.length > 0) {
+      const raw: string = session.firstFrameFace;
+      return raw.startsWith('data:') ? raw : `data:image/jpeg;base64,${raw}`;
+    }
+    const media: MediaItemModel | null = this.domainMedia.findById(this.currentTaskMediaId);
+    if (media === null || media.type !== MediaType.image) {
+      return '';
+    }
+    return this.domainMedia.thumbnailUrl(media);
   }
 
   /** 清掉当前任务（工作台「清除」按钮 / 登出时调用） */
@@ -559,6 +602,7 @@ export class AppStore {
   private applyHealth(ok: boolean): void {
     this.serverOnline = ok;
     this.serverStatusLabel = ok ? '在线' : '未连接';
+    this.healthChecked = true;
   }
 
   // ══════════════════ 分析会话（转发到桥接器，并对齐门面状态）══════════════════

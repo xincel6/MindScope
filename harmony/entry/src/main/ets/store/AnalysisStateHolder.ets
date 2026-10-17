@@ -339,6 +339,7 @@ export class AnalysisStateHolder extends AnalysisListener {
       score: 0,
       frameCount: 0,
       frames: [],
+      firstFrameFace: '',
       scores: [],
       vlmText: '',
       errorMsg: '',
@@ -363,6 +364,8 @@ export class AnalysisStateHolder extends AnalysisListener {
       score: frame.bdiScore > 0 ? frame.bdiScore : prev.score,
       frameCount: frameCount,
       frames: frames,
+      // ★ 只认**第一次**写入：后续帧不覆盖，于是首帧图不会因为 frames 被裁剪而丢失
+      firstFrameFace: prev.firstFrameFace.length > 0 ? prev.firstFrameFace : frame.alignedFace,
       scores: scores,
       vlmText: prev.vlmText,
       // 帧能到达说明链路正常：清掉上一次的重连提示
@@ -382,6 +385,7 @@ export class AnalysisStateHolder extends AnalysisListener {
       score: prev.score,
       frameCount: prev.frameCount,
       frames: prev.frames,
+      firstFrameFace: prev.firstFrameFace,
       scores: prev.scores,
       vlmText: text,
       errorMsg: prev.errorMsg,
@@ -404,6 +408,8 @@ export class AnalysisStateHolder extends AnalysisListener {
       score: finalScore > 0 ? finalScore : prev.score,
       frameCount: prev.frameCount,
       frames: frames,
+      // ★ 首帧图与裁剪无关：`frames` 被从头部切掉后它仍然在
+      firstFrameFace: prev.firstFrameFace,
       scores: prev.scores,
       vlmText: prev.vlmText,
       errorMsg: '',
@@ -422,6 +428,7 @@ export class AnalysisStateHolder extends AnalysisListener {
       score: prev.score,
       frameCount: prev.frameCount,
       frames: prev.frames,
+      firstFrameFace: prev.firstFrameFace,
       scores: prev.scores,
       vlmText: prev.vlmText,
       errorMsg: message,

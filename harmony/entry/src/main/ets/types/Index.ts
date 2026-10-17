@@ -16,7 +16,9 @@
  */
 
 // ── 枚举 ──
-export { SeverityLevel, MediaType, SocketState, BootPhase, ApiStatus, TaskStatus } from './enums';
+export {
+  SeverityLevel, MediaType, SocketState, BootPhase, ApiStatus, TaskStatus, AuthFailKind
+} from './enums';
 
 // ── 常量与配置 ──
 export {

@@ -25,11 +25,13 @@
  *   工作台仍在栈底存活，所以从详情页返回后页签与滚动位置都还在。
  */
 
+import { bundleManager } from '@kit.AbilityKit';
 import { UiTheme } from '../common/UiTheme';
+import { CardTransit } from '../common/CardTransit';
 import { AppStore } from '../store/AppStore';
 import {
   ActionResultModel, CurrentTaskModel, MediaItemModel, MediaType, PickedMediaModel,
-  RecentMediaModel
+  RecentMediaModel, UserModel
 } from '../types/Index';
 import { UploadFileSpec } from '../network/HttpClient';
 import {
@@ -37,7 +39,8 @@ import {
   TabPageParam, WorkbenchPageParam
 } from '../types/PageParams';
 import {
-  ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabGlyph, mainTabLabel, MainTabMeta
+  ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabGlyph, mainTabIndexOf, mainTabLabel,
+  MainTabMeta
 } from './PageRoutes';
 import { MediaPicker, PickResult } from '../common/MediaPicker';
 import { WorkbenchPage } from './WorkbenchPage';
@@ -85,22 +88,88 @@ export struct MainPage {
   /** 素材选择页当前选中的素材（窗口层持有，页面只读投影字段） */
   private picked: PickedMediaModel | null = null;
 
+  /** 「我的」页展示的应用版本（只读一次，缓存）· 空串表示没取到 */
+  private versionLabel: string = '';
+
+  /** 转场进行中标志 · 挡住连点，避免两轮"离场→换页→入场"叠在一起 */
+  private transitBusy: boolean = false;
+
   // ══════════════════ 生命周期 ══════════════════
 
   aboutToAppear(): void {
     this.attachActions();
-    // 首帧就给第一个页签入栈，避免出现"白屏但底部栏已在"的中间态
-    this.pushTab(MainTab.workbench);
+    // 首帧就给第一个页签入栈，避免出现"白屏但底部栏已在"的中间态。
+    // ★ 这里不能走 `pushTab()`：首页签与 `selectedTab` 相同，会被"同页签忽略"的判据挡掉，
+    //   而且首屏不需要播转场动画。
+    this.navStack.replacePathByName(
+      MainTab.workbench as string, this.buildTabParam(MainTab.workbench)
+    );
     // 进主界面先探一次活：服务状态圆点必须是真实结果，不是默认值
     this.refreshHealth();
   }
 
   // ══════════════════ 页签切换 ══════════════════
 
-  /** 点页签：切换路由（栈深保持 1），并更新高亮 */
+  /**
+   * 点页签：发信号让**每个组件自己按序号**依次离场，等它们演完再换页；
+   * 新页的组件挂载后由各自的 `onAppear` 依次入场。
+   *
+   * ────────────── 为什么是"发信号 + 等待"，而不是页面统一驱动动画 ──────────────
+   * 每个卡片的动画都收在 `components/RevealCard.ets` 里（各自的 `@Local` 状态 + 各自的
+   * `delay`），页面只负责两件事：给方向、在动画播完之后换页。
+   * 这样每个组件想怎么动（平移 / 缩放 / 改内容）都自成一体，页面不参与。
+   *
+   * ────────────── 为什么必须等动画播完再换页（★ 实测结论）──────────────
+   * `replacePathByName` 会在换页那一帧就销毁旧页（证据 `_materials/_verify/s1.jpeg`），
+   * `customNavContentTransition` 也留不住它。所以"离场动画"只能发生在换页**之前**。
+   */
   private pushTab(tab: MainTab): void {
-    this.selectedTab = tab;
-    this.navStack.replacePathByName(tab as string, this.buildTabParam(tab));
+    // 同一页签连点、或上一轮转场还没播完 → 忽略，避免动画叠在一起
+    if (tab === this.selectedTab || this.transitBusy) {
+      return;
+    }
+
+    const fromIndex: number = mainTabIndexOf(this.selectedTab as string);
+    const toIndex: number = mainTabIndexOf(tab as string);
+    const transit: CardTransit = CardTransit.get();
+
+    // 往右边的页签切（下标变大）→ 组件向左离场；反之向右
+    transit.dir = toIndex >= fromIndex ? -1 : 1;
+    this.transitBusy = true;
+
+    // ① 发"开始离场"信号：在树上的每个组件收到后按自己的 order 延迟启动
+    transit.exitClock = transit.exitClock + 1;
+
+    // ② 等最后一个组件演完再换页（切早了会把旧页的离场动画砍断）
+    const leavingWait: number = CardTransit.sequenceMs(this.cardCountOf(this.selectedTab));
+    setTimeout(() => {
+      this.selectedTab = tab;
+      this.navStack.replacePathByName(tab as string, this.buildTabParam(tab));
+
+      // ③ 新页组件在 `onAppear` 里依次入场，这里只按同样的节奏解锁连点保护
+      setTimeout(() => {
+        this.transitBusy = false;
+        this.refreshUi();
+      }, CardTransit.sequenceMs(this.cardCountOf(tab)));
+    }, leavingWait);
+  }
+
+  /**
+   * 某个页签有多少个参与转场的组件
+   * ★ 必须与页面里 `RevealCard({ order: ... })` 的个数一致，
+   *   否则等待时间算短了会砍断最后一个组件的动画。
+   */
+  private cardCountOf(tab: MainTab): number {
+    if (tab === MainTab.workbench) {
+      return CardTransit.CARDS_WORKBENCH;
+    }
+    if (tab === MainTab.stats) {
+      return CardTransit.CARDS_STATS;
+    }
+    if (tab === MainTab.profile) {
+      return CardTransit.CARDS_PROFILE;
+    }
+    return CardTransit.CARDS_PLACEHOLDER;
   }
 
   /**
@@ -161,6 +230,34 @@ export struct MainPage {
     const profile: ProfilePageParam = param as ProfilePageParam;
     profile.userName = this.pageParam.userName;
     profile.serverLabel = this.pageParam.serverLabel;
+    // ★ 其余账户信息直接从门面的登录态镜像取（本文件是窗口层，允许碰 store）；
+    //   这些字段都必须在**页面入栈之前**写好 —— 参数类不是 @ObservedV2，
+    //   挂载后再改不会刷新（BUG-11 的教训）。
+    const user: UserModel | null = app.currentUser;
+    profile.email = user === null ? '' : user.email;
+    profile.accountId = user === null ? '' : `${user.id}`;
+    profile.registeredAt = user === null ? '' : user.createdAt;
+    profile.appVersion = this.readAppVersion();
+  }
+
+  /**
+   * 读一次应用版本号（形如 `1.0.0(1000000)`）
+   * ★ `bundleManager` 是系统能力，只在窗口层调用一次并缓存；
+   *   取不到就返回空串（「我的」页会把空值渲染成 `—`，不会出现半截文案）。
+   */
+  private readAppVersion(): string {
+    if (this.versionLabel.length > 0) {
+      return this.versionLabel;
+    }
+    try {
+      const info: bundleManager.BundleInfo = bundleManager.getBundleInfoForSelfSync(
+        bundleManager.BundleFlag.GET_BUNDLE_INFO_DEFAULT
+      );
+      this.versionLabel = `${info.versionName}(${info.versionCode})`;
+    } catch (err) {
+      this.versionLabel = '';
+    }
+    return this.versionLabel;
   }
 
   /**
@@ -215,6 +312,19 @@ export struct MainPage {
     };
     this.pickerParam.onUpload = async (): Promise<boolean> => {
       return await this.uploadPicked();
+    };
+
+    // ── 我的页 ──
+    /**
+     * 退出登录
+     *
+     * ★ 真正的登出动作放在 `Index`（见 `MainPageParam.onLogout` 的注释）：
+     *   它除了清登录态，还要把**登录流的栈**复位到登录页 ——
+     *   否则用户注册过（栈里压着注册页）时，退出后会落在注册页上。
+     *   本页只做转发，不自己调 `AuthStore.logout()`。
+     */
+    this.profileParam.onLogout = async (): Promise<void> => {
+      await this.pageParam.onLogout();
     };
 
     // ── 分析详情页 ──

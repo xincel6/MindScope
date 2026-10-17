@@ -73,9 +73,23 @@ export type AuthAction = (username: string, password: string, email: string) => 
  * param.authBusy = AppStore.get().auth().loading;
  * param.authError = AppStore.get().auth().errorMsg;
  * ```
+ *
+ * ══════════════════ ★★ 本轮（登录页重构）为什么加 `@ObservedV2` / `@Trace` ══════════════════
+ * 上一版这里有一个**假的假设**："登录页参数的字段都是 push 之前写一次、挂载后不再变"。
+ * 实际上窗口层是在**每次登录请求返回之后**才回填 `authBusy / authError` 等字段的，
+ * 那时登录页早就挂载好了。普通 class 的字段写入两耳不闻，于是：
+ *   · 输入框下方那行错误文案不会出现（要等别的原因触发整页重渲染才"忽然"冒出来）；
+ *   · 失败时按钮文案/禁用态也可能停在旧值。
+ * 这与 `BUG清单.md` 的 BUG-11 是**同一条根因**（参数对象不可观察 → 挂载后改字段等于没写）。
+ *
+ * 判定标准只有一条（BUG-11 立的规矩）：
+ * **给字段赋值的那一行，是在页面 `NavDestination` 挂载之后执行的吗？** 是 → 必须可观察。
+ * 所以这里把"挂载后会变"的字段全部标 `@Trace`；回调与一次性字段保持普通字段，
+ * 不给每次写入都白挂一层观察者。
  */
+@ObservedV2
 export class LoginPageParam extends PageParam {
-  // ── 动作回调 ──
+  // ── 动作回调（push 之前挂一次，挂载后不再变 → 普通字段）──
 
   /** 点「登录」· 窗口层负责调 `AuthStore.login` */
   public onLogin: AuthAction = (username: string, password: string, email: string): Promise<boolean> => {
@@ -92,27 +106,46 @@ export class LoginPageParam extends PageParam {
     return Promise.resolve('');
   };
 
-  // ── 忙碌态 ──
+  // ── 以下字段由窗口层在**页面已挂载之后**回填，必须 `@Trace` ──
 
   /** 是否正在鉴权（按钮禁用 + 文案变"登录中…"） */
-  public authBusy: boolean = false;
-
-  // ── 错误文案 ──
+  @Trace authBusy: boolean = false;
 
   /**
    * 鉴权失败文案 · 非空即展示（含"登录已过期，请重新登录"这类冷启动文案）
    * ★ 页面自行遵守一条显示规则：用户重新输入后，这条错误会被收起；
    *   窗口层不需要为此做任何事（详见 `docs/鸿蒙端页面框架与路由说明.md` 3.3 节）。
    */
-  public authError: string = '';
+  @Trace authError: string = '';
 
-  // ── 连接兜底 ──
+  /**
+   * 失败弹窗的**标题**（本轮新增）· 由窗口层按 `AuthFailKind` 给：
+   * "登录失败" / "无法连接服务端" / "账号已禁用" …
+   * ★ 页面不自己判断错误类型（页面纪律），只负责把它画进弹窗。
+   */
+  @Trace authErrorTitle: string = '登录失败';
+
+  /**
+   * 失败弹窗的**诊断行**（本轮新增）· 窗口层拼好的一行事实陈述，例如：
+   *   "服务端 100.122.178.113:8000 已回应 HTTP 401 —— 账号密码不匹配，可点「显示」核对密码"
+   *   "请求没有到达服务端（100.122.178.113:8000）—— 检查网络/服务端是否启动"
+   * ★ 作用：把「密码错」与「连不上服务端」在界面上彻底分开，
+   *   这是本轮修「一直点登录都提示密码错误」时最缺的一条信息。
+   */
+  @Trace authErrorHint: string = '';
 
   /** 非空时在底部显示"错误 + 重新连接服务端"（网络不可达 / 服务端未启动） */
-  public retryMessage: string = '';
+  @Trace retryMessage: string = '';
 
   /** 是否正在探活重连 */
-  public retrying: boolean = false;
+  @Trace retrying: boolean = false;
+
+  /**
+   * 当前服务端地址文案（本轮新增 · 形如 100.122.178.113:8000）
+   * ★ 登录页底部常驻一行小字：用户/开发者一眼能看到"这台手机连的是哪台服务器"。
+   *   账号在 A 服务器、App 连 B 服务器时，401 的唯一解释就是"账号不在这一台"。
+   */
+  @Trace serverLabel: string = '';
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -128,9 +161,12 @@ export class LoginPageParam extends PageParam {
  *   注册成功响应里**没有用户信息**，但后端是"注册即登录"（直接返回 token），
  *   `AuthStore.register()` 内部已经接着调了 `/api/auth/me` 把用户信息补齐，
  *   所以窗口层只要调用它，页面侧就表现为"注册完成后自动登录"。
+ *
+ * ★ 本轮加 `@ObservedV2`：理由与登录页完全相同（失败文案是在页面挂载之后才回填的）。
  */
+@ObservedV2
 export class RegisterPageParam extends PageParam {
-  // ── 动作回调 ──
+  // ── 动作回调（push 之前挂一次 → 普通字段）──
 
   /**
    * 点「注册」· 窗口层负责调 `AuthStore.register`（内部即自动登录）
@@ -143,23 +179,27 @@ export class RegisterPageParam extends PageParam {
   /** 点「已有账号？返回登录」· 窗口层负责出栈 */
   public onBackToLogin: () => void = () => {};
 
-  // ── 忙碌态 ──
-
-  /** 是否正在提交注册 */
-  public authBusy: boolean = false;
-
-  // ── 错误文案 ──
-
-  /** 注册失败文案 · 直接展示后端 detail（如"用户名已存在""邮箱已被注册"） */
-  public authError: string = '';
-
-  // ── 预填值（从登录页跳过来时带上，减少重复输入） ──
+  // ── 预填值（从登录页跳过来时带上，push 之前写一次 → 普通字段）──
 
   /** 预填用户名 */
   public presetUsername: string = '';
 
   /** 预填密码 */
   public presetPassword: string = '';
+
+  // ── 以下字段在页面挂载之后才会被回填 → 必须 `@Trace`（判定标准见 `LoginPageParam` 顶部）──
+
+  /** 是否正在提交注册 */
+  @Trace authBusy: boolean = false;
+
+  /** 注册失败文案 · 直接展示后端 detail（如"用户名已存在""邮箱已被注册"） */
+  @Trace authError: string = '';
+
+  /** 失败弹窗标题 · 与登录页同一套（见 `LoginPageParam.authErrorTitle`） */
+  @Trace authErrorTitle: string = '注册失败';
+
+  /** 失败弹窗诊断行 · 与登录页同一套（见 `LoginPageParam.authErrorHint`） */
+  @Trace authErrorHint: string = '';
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -184,6 +224,19 @@ export class MainPageParam extends PageParam {
 
   /** 服务端地址展示文案 · 形如 100.122.178.113:8000 */
   public serverLabel: string = '';
+
+  /**
+   * 登出回调 · 由 **`Index`（登录流窗口层）** 实现
+   *
+   * ★ 为什么放在这里而不是让 `MainPage` 自己调 `AuthStore.logout()`：
+   *   登出之后要把"登录流的栈"复位到登录页（否则用户注册过的话，
+   *   退出后会落在注册页上），而那个栈属于 `Index`。
+   *   由 `Index` 统一实现「清登录态 + 复位登录栈 + 刷新界面」三件事，
+   *   `MainPage` 只负责把「我的」页上的点击转过来。
+   */
+  public onLogout: () => Promise<void> = (): Promise<void> => {
+    return Promise.resolve();
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -219,17 +272,46 @@ export class TabPageParam extends PageParam {
 }
 
 /**
- * "我的"页参数（`pages/ProfilePage.ets`）· 在页签公共参数上追加只读展示文案
+ * "我的"页参数（`pages/ProfilePage.ets`）· 在页签公共参数上追加账户信息
+ *
+ * ══════════════════ 本轮（我的页搭建轮）契约变更 ══════════════════
+ * 上一版这里只有 `userName` / `serverLabel` 两个字段，且 `onLogout` 明确"本轮不赋值"。
+ * 本轮把"我的"页真正做出来，参数随之补齐：
+ *   · 展示类：账号 id / 邮箱 / 注册日期 / 服务端地址 / 版本号（全部由窗口层从 store 取好再传）；
+ *   · 动作类：`onLogout` 改为 **返回 Promise**，页面据此显示"正在退出…"并在完成后收尾。
+ *
+ * ★ 为什么展示字段不直接让页面读 store：页面纪律（不 import store）优先；
+ *   "我的"页的数据是"进页面时一次性拿到"的静态投影，走参数契约没有 BUG-10/11 的风险。
  */
 export class ProfilePageParam extends TabPageParam {
   /** 当前用户名 · 空串表示未取到（本页仍能正常渲染） */
   public userName: string = '';
 
+  /** 邮箱 · 后端 `email` 可为 null，窗口层统一转成空串表示"未填写" */
+  public email: string = '';
+
+  /** 账号 id 文案（数字已转成字符串）· 便于报障时对上服务端 `users.id` */
+  public accountId: string = '';
+
+  /** 注册日期 "YYYY-MM-DD" · 未取到为空串 */
+  public registeredAt: string = '';
+
   /** 服务端地址展示文案 · 形如 100.122.178.113:8000 */
   public serverLabel: string = '';
 
-  /** 登出回调 · 本轮不赋值（留空即不显示登出入口，用户已确认本轮不做登出） */
-  public onLogout: () => void = () => {};
+  /** 应用版本展示文案 · 形如 1.0.0(1000000) */
+  public appVersion: string = '';
+
+  /**
+   * 登出回调 · 由窗口层实现（后端**没有**登出接口，登出 = 客户端删令牌）
+   *
+   * ★ 为什么返回 Promise：页面要据此显示"正在退出…"并禁用按钮。
+   *   `AuthStore.logout()` 内部要做三件事（清令牌 / 清业务缓存 / 清内存），
+   *   期间重复点击会重复清理，所以必须让页面等它。
+   */
+  public onLogout: () => Promise<void> = (): Promise<void> => {
+    return Promise.resolve();
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════

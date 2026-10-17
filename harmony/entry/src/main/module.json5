@@ -46,7 +46,7 @@
         "icon": "$media:layered_image",
         "label": "$string:EntryAbility_label",
         "startWindowIcon": "$media:startIcon",
-        "startWindowBackground": "$color:page_background",
+        "startWindowBackground": "$color:start_window_background",
         "exported": true,
         "skills": [
           {

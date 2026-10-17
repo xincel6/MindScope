@@ -13,6 +13,7 @@ import { UiTheme } from '../common/UiTheme';
 import { TabPageParam } from '../types/PageParams';
 import { PageHeader } from '../components/PageHeader';
 import { PlaceholderView } from '../components/PlaceholderView';
+import { RevealCard } from '../components/RevealCard';
 
 @ComponentV2
 export struct MediaLibraryPage {
@@ -21,18 +22,28 @@ export struct MediaLibraryPage {
 
   build() {
     Column({ space: UiTheme.gapL }) {
-      PageHeader({ title: '素材库', subtitle: '已上传的图片与视频' })
-
-      PlaceholderView({
-        glyph: '库',
-        title: '素材库待实现',
-        description: '这里将放素材列表（缩略图 / 类型 / 时间）与上传入口。',
-        hint: '下一轮：接入 AppStore.mediaItems、MediaApi.uploadImage 与离线镜像数据',
-        actionLabel: '下一步操作',
-        onAction: () => {
-          this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现素材列表与上传' });
+      // 0 号位
+      RevealCard({ order: 0 }) {
+        Column() {
+          PageHeader({ title: '素材库', subtitle: '已上传的图片与视频' })
         }
-      })
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+      }
+
+      // 1 号位
+      RevealCard({ order: 1 }) {
+        PlaceholderView({
+          glyph: '库',
+          title: '素材库待实现',
+          description: '这里将放素材列表（缩略图 / 类型 / 时间）与上传入口。',
+          hint: '下一轮：接入 AppStore.mediaItems、MediaApi.uploadImage 与离线镜像数据',
+          actionLabel: '下一步操作',
+          onAction: () => {
+            this.getUIContext().getPromptAction().showToast({ message: '本页为占位页，下一轮实现素材列表与上传' });
+          }
+        })
+      }
     }
     .width('100%')
     .height('100%')

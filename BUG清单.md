@@ -766,3 +766,263 @@ WebSocket 收帧与 `done` 都不会触发它（文件头那句"WS 每来一帧�
 5. 打开本轮之前分析过的历史素材（本机无会话）→ 报告分数 + 「本机未保留逐帧数据」+
    「重新分析该素材」；点后页面应自动开始出帧；
 6. 分析完成后档位标签与「智能解读」**自行出现**（BUG-15 验证点，不需要切页签）。
+
+---
+
+# 工作台二次打磨轮 · 新增缺陷（BUG-19）
+
+> 本轮改动见 `docs/本轮交付说明-工作台二次打磨.md`。
+> 需求只有两条：① 在线提示删掉，只在离线时提示「无法连接服务器」；
+> ② 「当前任务」上移，并附首帧照片 + 表示 BDI 的进度条。
+> 实施中踩到 1 个**编译通过、截图才能发现**的响应式缺陷，记在这里。
+
+## BUG-19 · 当前任务卡片里"照片/档位标签/档位色/BDI 进度条"停在创建那一刻，只有分数在实时更新
+
+**现象**
+给「当前任务」卡片加首帧照片与 BDI 进度条后，真机截图显示一张**自相矛盾**的卡片：
+
+| 元素 | 显示结果 | 正确答案 |
+|---|---|---|
+| 素材名 / 状态「已完成」/ 状态圆点 | 正常 | ✔ |
+| BDI 分数 `11.7` | 正常（会随分析推进变化） | ✔ |
+| **档位标签「正常」** | **不显示** | 应该显示 |
+| **分数颜色** | **中性灰 `#64748b`** | 应该是档位绿 `#16a34a` |
+| **BDI 进度条填充** | **空的（0%）** | 应该约 18.6% |
+| **首帧照片** | 显示的是**媒体缩略图**（分值 0 时的回落图） | 应该是首帧对齐人脸 |
+
+同一张卡片里"一半新、一半旧"，且分数正确、其余全错 —— 极易误判成"数据没传到组件"。
+
+**根因（`@Builder` 参数是按值传递的）**
+最初的写法把整个任务对象交给 builder：
+
+```ts
+// ✘ 错误写法
+@Builder
+taskCard(task: CurrentTaskModel) { /* 全部用 task.xxx */ }
+
+build() {
+  if (this.task !== null) { this.taskCard(this.task) }   // 只在首次构建时求值
+}
+```
+
+`this.taskCard(this.task)` 里的 `this.task` 只在**首次构建**时被读一次，对象按值传进 builder。
+之后 `@Param task` 换成新对象时，ArkUI V2 只会重算**直接依赖响应式变量**的表达式：
+
+- `Text(this.scoreText)` —— `scoreText` 是组件上的 `@Computed`，依赖 `this.task` → **会更新**；
+- `if (task.severityLabel.length > 0)` / `.fontColor(task.severityColor)` /
+  `ProgressBar({ ratio: task.scoreRatio })` —— 读的是 builder 内部那个**局部参数** `task`，
+  不在任何响应式依赖链上 → **永远停在首次构建的值**。
+
+两个后果叠在一起：
+1. 首帧照片与档位色/标签/进度条 = 首次构建时的值（此时还没收到帧，分数 0 → 回落到缩略图、
+   空标签、中性色、空进度条）；
+2. 分数却跟着 `@Computed` 更新 → 看起来"数据只到了一半"。
+
+> 这与 BUG-10 / BUG-15 是**同一族**问题：都不是"数据没来"，而是**数据来了但没人通知 UI**。
+> 只是这次的断点在 `@Builder` 参数上，不在路由参数上。
+
+**修法**
+本组件的纪律：**`@Builder` 一律不带参数**，所有取值都从组件上的 `@Computed` getter 读。
+
+```ts
+// ✔ 正确写法（CurrentTaskCard 现行结构）
+@Computed get firstFrameUrl(): string { ... }
+@Computed get severityLabel(): string { ... }
+@Computed get severityColor(): string { ... }
+@Computed get severityRatio(): number { ... }
+
+@Builder
+firstFrame() { /* 只读 this.firstFrameUrl / this.mediaGlyph */ }
+
+@Builder
+taskCard() { /* 只读 this.*，ProgressBar({ ratio: this.severityRatio }) */ }
+
+build() {
+  if (this.hasTask) { this.taskCard() } else { this.emptyCard() }
+}
+```
+
+于是照片、档位、进度条、分数走**同一条响应式路径**，不会再出现"一半新一半旧"。
+（同一轮里「最近使用的素材」用的是 `ForEach` + builder 参数，但数组换引用时整段会被重建，
+所以那里不受影响 —— 判断标准是"这段子树会不会被重新创建"，而不是"有没有用参数"。）
+
+**涉及文件**
+`components/workbench/CurrentTaskCard.ets`（重写为无参 builder + `@Computed` 取值）
+
+**防复发规则**
+> **`@Builder` 不要接业务参数。** 需要随状态变化的值，一律先做成组件上的 `@Computed`，
+> builder 里只写 `this.xxx`。
+> 自查方法：如果 builder 的参数来自 `@State/@Local/@Param`，且值会**在页面挂载后变化**，
+> 就必须改成无参 + `@Computed`（或交给 `ForEach` 用新数组重建）。
+> 另外：这类问题 `CompileArkTS` 一定不报错，**只能靠真机截图**发现
+> —— 所以本轮的验收方式是"装机 → 截图 → 逐元素对色"，不是"编译通过就算完"。
+
+---
+
+## 本轮验证方式（真机/模拟器实测，不是推测）
+
+模拟器 1316×2832（API 23），装机后按下面三步走，并**逐元素比对像素颜色**
+（`#16a34a` 绿 = 档位色、`#EDF2F7` 灰 = 进度条轨道）：
+
+| # | 操作 | 期望 | 结果 |
+|---|---|---|---|
+| 1 | 冷启动进工作台（服务端在线） | **没有任何服务状态元素**、无服务器地址；「当前任务」在「开始新的辅助评估」上方 | ✅ 见 `_materials/_verify/v2_online.jpeg` |
+| 2 | 历史报告 → 某素材 → 「重新分析该素材」→ 返回工作台 | 卡片有**首帧照片**、`11.7`（绿）、「正常」、BDI 进度条填充约 18.6%、状态「已完成」 | ✅ 见 `_materials/_verify/v2_task.jpeg`（BUG-19 修复后的样子） |
+| 3 | 把 `ApiConfig.host` 临时改成不可达地址后冷启动 | 顶部出现**红点 +「无法连接服务器」+「重试」**，**不显示服务器地址**；本地缓存内容照常显示 | ✅ 见 `_materials/_verify/v2_offline2.jpeg`（验证后已改回 `100.122.178.113`） |
+
+> 第 3 步的地址改动是**临时**的，验证后已还原；`git status` 里 `ApiConfig.ets` 无改动。
+> 模拟器 non-root（`uid=2000(shell)`），`svc wifi/data` 与 `ifconfig eth0 down` 都无权执行，
+> 所以"断网"只能从**代码侧指向不可达地址**这条唯一途径造出来。
+
+---
+
+# 登录重构 / 开屏页 / 我的页 · 本轮新增（BUG-20 / 21 / 22）
+
+> 需求与交付：`我的页面搭建方案prompt.md`、`docs/本轮交付说明-登录重构与我的页.md`。
+> 本轮**不是**"照着需求画界面"就完事：三条缺陷全部是装机实测跑出来的，
+> 两条只有真机才看得见（BUG-20 的按钮卡死、BUG-22 的白屏）。
+
+## 先说结论：用户报的"一直提示密码错误"，不是 bug
+
+后端 `routers/auth.py:64` 对"用户不存在"和"密码错"返回**同一个** 401
+（`detail=用户名或密码错误`），所以界面上永远只能看到同一句话。经对服务端直接实测：
+
+| 用户名 | 密码 | 结果 |
+|---|---|---|
+| `xincell` | `712098opa` | 200（id=12） |
+| `xincell` | `712098op` | 401 |
+| `xincell1013` | `712098opa` | 200（id=8） |
+| `xincell1013` | `712098op` | 401 |
+
+**正确密码是 `712098opa`，少输末尾的 `a` 就必然 401。** 服务端匹配、JWT、`/me` 全链路正常。
+
+同类排查以后请直接用脚本（不必再猜）：
+
+```bash
+node harmony/scripts/check-login.mjs <用户名> <密码> [http://host:port]
+# 退出码：0 成功 / 1 账号密码不匹配 / 2 服务端不可达 / 3 其它
+```
+
+> 顺带确认：仓库里的 `dashboard/backend/depression.db`（8 用户 / 126 报告）与
+> 服务器上那份库（≥13 用户 / 140 报告）**不是同一份**。
+> 用本机 `启动-仅本机.bat` 起的后端注册的账号，拿到 Tailscale 服务器上登录必然 401 ——
+> 这是"密码绝对没错却一直报错"的第二种常见成因，所以本轮在登录页底部**常驻显示服务端地址**。
+
+**防复发规则**
+> 界面上说"用户名或密码错误"时，先回答"服务端到底有没有回应"。
+> 服务端**回应了** 401 → 查账号密码/账号归属（哪台服务器注册的）；
+> 请求**没到** → 查地址与网络。两者混在一起就会像这次一样反复试密码。
+> 本轮已把这条判据做进界面（`AuthFailKind` + 弹窗第三行诊断行）。
+
+---
+
+## BUG-20 · 登录失败后按钮永远停在「登录中…」、输入框全部禁用 ⭐⭐ 真机才看得见
+
+**现象**
+输错密码点「登录」，服务端返回 401 后：错误弹窗正常出现、错误文案也正常，
+但**主按钮文案一直停在「登录中…」**、两个输入框全部变灰不可输入。整个登录页等于卡死。
+
+**根因（`loading` 没有复位）**
+`AuthStore.login()` 的失败路径原本走 `handleFailure()`，而这一轮给 `handleFailure()` 加了
+"失败分类"之后，误把里面**唯一的 `endLoadErr(...)` 调用换成了只写 `errorMsg` 的 `markFail()`**：
+
+```ts
+// ✘ 改坏之后
+private handleFailure(err: Object) {
+  this.markFail(kind, apiErr.code, apiErr.message);   // 只写 errorMsg
+  ...
+}
+// ✔ 正确
+private handleFailure(err: Object) {
+  this.endLoadErr(apiErr.message);   // ★ 它才是把 loading 置回 false 的那一行
+  this.failKind = kind;
+  ...
+}
+```
+
+`endLoadErr()` 是 `BaseStore` 里唯一负责 `loading = false` 的地方。绕过它，
+`AuthStore.loading` 就永远是 true → 页面 `busy` 永远为 true → 按钮文案「登录中…」+ 全部禁用。
+
+**为什么编译和静态检查都发现不了**：状态机不报错、网络请求正常、hilog 里一切正常
+（确实打印了 `鉴权失败 · [credentials/401]`）。**只能靠真机截图看按钮文案**。
+
+**修法**
+失败路径统一先 `endLoadErr(message)`，再记 `failKind` / `failStatus`；
+本地校验失败（`markFail`）也走同一条，避免出现第二条"忘记复位 loading"的岔路。
+另外每次新尝试开始时 `clearFail()`，避免"旧标题配新文案"。
+
+**防复发规则**
+> **动 `BaseStore` 的那对 `beginLoad` / `endLoadOk|endLoadErr` 时，先确认 succeed 与 fail
+> 两条路都调到了"收尾"的那一个。** 只写 `errorMsg` 不算收尾，`loading` 会一直挂着。
+> 判据：任何一条 `beginLoad()` 之后，必定有且只有一次 `endLoadOk()` 或 `endLoadErr()`。
+
+---
+
+## BUG-21 · 登录页的错误文案不出现（挂载后回填的字段"等于没写"）⭐⭐ 与 BUG-11 同根
+
+**现象**
+登录失败后弹窗正常，但**输入框下方那行红色错误文案是空的**；
+切换页签 / 重新进页面之后它才"忽然"出现。
+
+**根因（参数类不可观察）**
+`LoginPageParam` / `RegisterPageParam` 是**普通 class**，而窗口层是在
+`await AuthStore.login(...)` **之后**才回填 `authBusy / authError / ...` 的 ——
+那时登录页早就挂载好了。ArkUI V2 的 `@Param` 只观察"父组件传下来一个新值"这件事，
+**对象内部字段的写入**必须靠 `@ObservedV2` + `@Trace` 才能被感知。
+
+上一版 `PageParams.ets` 的注释里写着一条**错误结论**：
+"登录/注册参数类的字段都是 push 之前写一次，所以不要给它们加装饰器"。
+这条注释本身就是 BUG-11 的复现条件。
+
+**修法**
+`LoginPageParam` / `RegisterPageParam` 改 `@ObservedV2`；
+**挂载后会被回填**的字段（`authBusy` / `authError` / `authErrorTitle` / `authErrorHint` /
+`retryMessage` / `retrying` / `serverLabel`）标 `@Trace`；
+回调与"push 前写一次"的字段保持普通字段（不给每次写入白挂观察者）。
+
+**防复发规则**
+> 判断标准只有一条（BUG-11 立的规矩，本轮再次被它咬到）：
+> **给字段赋值的那一行，是在页面 `NavDestination` 挂载之后执行的吗？** 是 → 必须可观察。
+> 推论：**"参数只在入栈前写一次"这种说法必须逐字段核对，不能整类打包下结论。**
+> 登录页是反例的典型：它的"入栈"发生在冷启动，而"填值"发生在之后每一次点登录。
+
+---
+
+## BUG-22 · 登录页按系统返回键 → 整屏纯白（像应用卡死）
+
+**现象**
+在登录页按返回键，界面变成**一整屏纯白**（只剩状态栏）。没有报错、进程也还活着。
+
+**根因**
+登录页是登录流（`Navigation(this.loginStack)`）里的**唯一页面**。返回键把它弹出后
+栈为空，`Navigation` 就露出自己的**根内容** —— 而 `Index.authStage()` 里的根内容
+只是一个占位的空 `Column`（当初是为了"栈意外为空"时不崩，本身就假设走不到）。
+
+**修法**
+1. 登录页的 `NavDestination.onBackPressed(() => true)`：登录页是登录流的根，
+   **消费**返回事件，不允许被弹掉（注册页不拦截，返回键照常回到登录页）。
+2. 根内容加"自愈"：`Column().onAppear(() => { if (this.loginStack.size() === 0) this.resetLoginStack(); })`
+   —— 万一将来还有别的路径把栈清空，这段一露出来就把登录页压回去，而不是留一块白屏。
+
+**防复发规则**
+> **"栈意外为空时的兜底画面"不能是空白页。** 兜底要么自愈（重新入栈），
+> 要么给用户一个明确的出口；纯色空 `Column` 在真机上与"应用死了"无法区分。
+> 另外：`Navigation.onBackPressed` 只存在于 `NavDestination` 上（`Navigation` 没有），
+> 拦截根页面返回键要写在分发器的 `NavDestination` 上。
+
+---
+
+## 本轮验证记录（模拟器 1316×2832 API 23，装机实测）
+
+| # | 操作 | 期望 | 结果 |
+|---|---|---|---|
+| 1 | 冷启动 | 系统启动窗口 → 开屏页（图标 + `MindScope`）→ 淡出到登录页 | ✅ `_materials/_verify/splash_new.jpeg` |
+| 2 | 错密码登录 | 弹窗从左侧弹入、撞在左屏、停在输入框之上；行内红字同时出现；按钮**回到「登录」**且可再点 | ✅ `alert_flying.jpeg` / `alert_fixed.jpeg`（BUG-20/21 验证点） |
+| 3 | 正确密码登录 | 进入工作台，媒体 15 条 / 报告 140 条 / 统计全部拉取成功 | ✅ `login_ok.jpeg` |
+| 4 | 我的页签 | 账户卡（头像首字 + 用户名 + 邮箱）+ 四行信息（账号 ID / 注册日期 / 服务端 / 版本）+ 退出登录 | ✅ `profile_new.jpeg` |
+| 5 | 点退出登录 → 确认 | 二次确认弹层 → 清令牌清缓存 → **回到登录页**（不是注册页） | ✅ `confirm_new2.jpeg` / `back_before.jpeg` |
+| 6 | 登录页按返回键 | 仍是登录页（不再白屏） | ✅ `back_after.jpeg`（BUG-22 验证点） |
+
+编译：`bash harmony/scripts/build.sh` → `BUILD SUCCESSFUL`（`CompileArkTS` 真跑）。
+
+

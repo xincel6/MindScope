@@ -5,6 +5,8 @@
  *  - `http`    服务端返回了非 2xx，`code` 是 HTTP 状态码，`message` 是后端 `detail` 文案
  *  - `network` 请求根本没到服务端（DNS/连接超时/明文被拦截/后端未启动）
  *  - `parse`   响应体不是合法 JSON（服务端返回了 HTML 错误页等）
+ *  - `app`     **端上自己判定的失败**，与服务端无关（例：拿到了令牌但 `/me` 拉不到用户信息）
+ *              ★ 单独一类是为了不把"端上逻辑失败"误算成"网络不可达"
  */
 
 import { ApiStatus } from '../types/Index';
@@ -13,7 +15,8 @@ import { ApiStatus } from '../types/Index';
 export enum ApiErrorKind {
   http = 'http',
   network = 'network',
-  parse = 'parse'
+  parse = 'parse',
+  app = 'app'
 }
 
 /** 网络层统一错误 */
@@ -48,6 +51,16 @@ export function networkError(reason: string): ApiError {
 /** 构造解析错误 */
 export function parseError(reason: string): ApiError {
   return new ApiError(ApiErrorKind.parse, 0, `服务端响应解析失败：${reason}`);
+}
+
+/**
+ * 构造"端上逻辑失败"（非 HTTP、非网络）
+ * ★ 典型场景：`AuthStore.applyToken()` 拿到令牌后再调 `/me` 拿不到用户信息。
+ *   这条失败既不是网络问题也不是服务端拒绝，必须归类为 `app`，
+ *   否则界面会显示"请确认服务端已启动"，把排查方向带偏（与 BUG-12 同类）。
+ */
+export function appError(message: string): ApiError {
+  return new ApiError(ApiErrorKind.app, 0, message);
 }
 
 /** 是否为「登录态失效」· 401 必须全局踢回登录页（JWT 7 天且无 refresh） */

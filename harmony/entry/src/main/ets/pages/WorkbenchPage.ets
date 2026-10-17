@@ -16,13 +16,36 @@
  *
  * ★ 这道口子只开给工作台：其它页签的数据是"进入页面时一次性拉取"的，
  *   没有这个痛点，继续走参数契约。
+ *
+ * ══════════════════ 本轮（工作台二次打磨）的页面结构 ══════════════════
+ * ```
+ * 工作台                                    ⟳（与背景重合的刷新按钮）
+ * 分析入口与今日概览
+ * ┌ 无法连接服务器（● 红点 + 重试）┐   ← **只在离线时出现**，在线时整块不存在
+ * └───────────────────────────────┘
+ * 当前任务                            ← 本轮上移到这里（原在「开始新的辅助评估」下方）
+ * ┌ 首帧照片 ｜ 素材名/状态 ｜ BDI + 档位 ┐
+ * │ ▓▓▓▓▓░░░░░░░░░░░░░░░░░（BDI 进度条）│
+ * └──────────────────────────────────────┘
+ * ┌ 开始新的辅助评估 ………… [选择素材] ┐
+ * └──────────────────────────────────┘
+ * 最近使用的素材                查看全部
+ * ┌ 缩略图 ｜ 文件名 ｜ 分数档位 ｜ 进度条 ┐
+ * └──────────────────────────────────────┘
+ * ```
+ * 两条改动都是用户本轮的明确要求：
+ *   ① **在线提示整块删掉**（原来的「● 在线 + 服务器地址」卡片），只在**离线**时弹出
+ *      一条「无法连接服务器」+ 红点；**不显示服务器地址**（原地址行一并去掉）。
+ *   ② **「当前任务」上移到「开始新的辅助评估」上方**，并给卡片补上首帧照片与 BDI 进度条
+ *      （照片与条都在 `CurrentTaskCard` 里画，数据在 `AppStore.currentTask()` 里备好）。
  */
 
 import { UiTheme } from '../common/UiTheme';
+import { RevealCard } from '../components/RevealCard';
 import { AppStore } from '../store/AppStore';
 import { CurrentTaskModel, RecentMediaModel } from '../types/Index';
 import { RippleCard } from '../components/RippleCard';
-import { ServiceStatusCard } from '../components/workbench/ServiceStatusCard';
+import { StatusDot } from '../components/workbench/StatusDot';
 import { StartAssessmentCard } from '../components/workbench/StartAssessmentCard';
 import { CurrentTaskCard } from '../components/workbench/CurrentTaskCard';
 import { RecentMediaSection } from '../components/workbench/RecentMediaSection';
@@ -49,6 +72,11 @@ export struct WorkbenchPage {
   /** 点某条最近素材 · 窗口层按该素材的报告快照打开分析详情页 */
   @Param onSelectRecent: (mediaId: string) => void = (mediaId: string) => {};
 
+  /**
+   * 卡片转场由 `components/RevealCard.ets` 里的包装组件负责（每个组件自己管自己），
+   * 本页不再需要持有共享的运动模型。
+   */
+
   // ══════════════════ 读数 · 直接订阅 store（响应式，见文件头说明）══════════════════
 
   /** store 门面 · 只读，不在这里调用任何写方法 */
@@ -63,16 +91,25 @@ export struct WorkbenchPage {
     return this.app.serverOnline;
   }
 
-  /** 是否正在探活 */
+  /** 是否正在探活（刷新/重试按钮的忙碌态） */
   @Computed
   get healthChecking(): boolean {
     return this.app.healthChecking;
   }
 
-  /** 服务端地址展示 · 形如 100.122.178.113:8000 */
+  /** 是否至少完成过一次探活（决定离线横幅能不能出现，见 offlineBanner 注释） */
   @Computed
-  get serverLabel(): string {
-    return `${this.app.serverHost}:${this.app.serverPort}`;
+  get healthChecked(): boolean {
+    return this.app.healthChecked;
+  }
+
+  /**
+   * 是否展示离线横幅
+   * ★ 三个条件缺一不可：探活过 + 未在线 + 不在探活中（探活中不闪、失败后才弹）。
+   */
+  @Computed
+  get showOfflineBanner(): boolean {
+    return this.healthChecked && !this.serverOnline;
   }
 
   /** 当前任务 · null 表示「暂无进行中的分析」 */
@@ -97,18 +134,6 @@ export struct WorkbenchPage {
   @Computed
   get recentError(): string {
     return this.recentItems.length === 0 ? this.app.reportError : '';
-  }
-
-  // ══════════════════ 派生文案 ══════════════════
-
-  /** 服务状态文案 */
-  @Computed
-  get resolvedServerLabel(): string {
-    const label: string = this.app.serverStatusLabel;
-    if (label.length > 0) {
-      return label;
-    }
-    return this.serverOnline ? '在线' : '未连接';
   }
 
   // ══════════════════ 页头（标题 + 右侧刷新） ══════════════════
@@ -159,10 +184,21 @@ export struct WorkbenchPage {
     .alignItems(HorizontalAlign.Start)
   }
 
-  // ══════════════════ 顶部横幅（离线提示） ══════════════════
+  // ══════════════════ 离线横幅（★ 只在离线时出现） ══════════════════
 
   /**
-   * 离线提示 · 只在"服务端不可达"时出现
+   * 离线提示 · **服务端不可达时才出现**
+   *
+   * 用户本轮的要求（逐条落地）：
+   *   ① 「在线提示」整块删掉 —— 原来的服务状态卡片（`ServiceStatusCard`）已删除，
+   *      在线时页面里**没有任何**服务状态相关的元素；
+   *   ② 离线时才弹出，文案固定「无法连接服务器」，左边一个**红点**；
+   *   ③ **不显示服务器地址**（原卡片的 `host:port` 行连同组件一起删掉）。
+   *
+   * ★ 判据是 `healthChecked && !serverOnline`（见 `showOfflineBanner`）：
+   *   `healthChecked` 挡住冷启动那一刻的假告警（`serverOnline` 默认 false，
+   *   不挡的话每次进页面都会先闪一条"连不上"）；点在探活中也不隐藏横幅，
+   *   只把按钮变成「重连中…」——否则横幅会"消失又出现"，看着像页面在抽搐。
    * ★ 不用整页错误态：工作台即使离线也应该能看历史素材与上一次的分数（本地有缓存），
    *   所以这里只加一条横幅，而不是用 `ErrorRetryView` 把整页盖掉。
    */
@@ -170,14 +206,18 @@ export struct WorkbenchPage {
   offlineBanner() {
     RippleCard({ _padding: UiTheme.gapM, _enabled: false, _clickable: false }) {
       Row({ space: UiTheme.gapS }) {
+        // 红点：只用颜色表达状态对色觉障碍用户不可读，所以紧跟着就是文字
+        StatusDot({ dotColor: UiTheme.statusOffline, dotSize: 8 })
+
         Column({ space: UiTheme.gapXs }) {
-          Text('服务端未连接')
+          Text('无法连接服务器')
             .fontSize(UiTheme.fontSizeBody)
+            .fontWeight(FontWeight.Medium)
             .fontColor(UiTheme.danger)
             .width('100%')
             .textAlign(TextAlign.Start)
 
-          Text('已显示本地缓存的数据；点右上角刷新可重试连接')
+          Text('已显示本地缓存的数据，点右侧重试或右上角刷新')
             .fontSize(UiTheme.fontSizeCaption)
             .fontColor(UiTheme.textSecondary)
             .width('100%')
@@ -209,53 +249,53 @@ export struct WorkbenchPage {
     Column({ space: UiTheme.gapL }) {
       Scroll() {
         Column({ space: UiTheme.gapL }) {
-          this.pageHeader()
+          // ── 页头（0 号位 · 转场由 RevealCard 内部负责）──
+          RevealCard({ order: 0 }) {
+            Column() {
+              this.pageHeader()
+            }
+            .width('100%')
+            .alignItems(HorizontalAlign.Start)
+          }
 
-          // ── ① 服务状态（圆点 + 文案 + 地址） ──
-          RippleCard({ _padding: UiTheme.gapM, _enabled: false, _clickable: false }) {
-            ServiceStatusCard({
-              online: this.serverOnline,
-              label: this.resolvedServerLabel,
-              checking: this.healthChecking,
-              serverLabel: this.serverLabel,
-              onRefresh: () => {
-                this.onRefresh();
+          // ── ① 离线横幅（只在探活失败后出现；在线时整块不存在） ──
+          if (this.showOfflineBanner) {
+            this.offlineBanner()
+          }
+
+          // ── ② 当前任务（1 号位 · ★ 上移到「开始新的辅助评估」上方：首帧照片 + BDI 进度条） ──
+          RevealCard({ order: 1 }) {
+            CurrentTaskCard({
+              task: this.currentTask,
+              onOpen: () => {
+                this.onOpenTask();
               }
             })
           }
 
-          // ── ② 离线横幅（只在不可达时出现） ──
-          if (!this.serverOnline && !this.healthChecking) {
-            this.offlineBanner()
+          // ── ③ 开始新的辅助评估（2 号位）──
+          RevealCard({ order: 2 }) {
+            StartAssessmentCard({
+              onPick: () => {
+                this.onSelectMedia();
+              }
+            })
           }
 
-          // ── ③ 开始新的辅助评估 ──
-          StartAssessmentCard({
-            onPick: () => {
-              this.onSelectMedia();
-            }
-          })
-
-          // ── ④ 当前任务 ──
-          CurrentTaskCard({
-            task: this.currentTask,
-            onOpen: () => {
-              this.onOpenTask();
-            }
-          })
-
-          // ── ⑤ 最近使用的素材 ──
-          RecentMediaSection({
-            items: this.recentItems,
-            loading: this.recentLoading,
-            errorMsg: this.recentError,
-            onViewAll: () => {
-              this.onViewAll();
-            },
-            onSelect: (mediaId: string) => {
-              this.onSelectRecent(mediaId);
-            }
-          })
+          // ── ④ 最近使用的素材（3 号位）──
+          RevealCard({ order: 3 }) {
+            RecentMediaSection({
+              items: this.recentItems,
+              loading: this.recentLoading,
+              errorMsg: this.recentError,
+              onViewAll: () => {
+                this.onViewAll();
+              },
+              onSelect: (mediaId: string) => {
+                this.onSelectRecent(mediaId);
+              }
+            })
+          }
         }
         .width('100%')
         .padding({ bottom: UiTheme.gapXl })
