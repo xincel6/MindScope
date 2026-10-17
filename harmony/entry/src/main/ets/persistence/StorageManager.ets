@@ -23,6 +23,7 @@ import { RDB_STORE_NAME, RDB_VERSION } from '../types/Index';
 import { ApiConfig } from '../common/ApiConfig';
 import { Logger } from '../common/Logger';
 import { DbSchema } from './DbSchema';
+import { AssessmentCacheDao } from './AssessmentCacheDao';
 import { MediaDao } from './MediaDao';
 import { ReportDao } from './ReportDao';
 import { StatsCacheDao } from './StatsCacheDao';
@@ -35,6 +36,7 @@ export class StorageManager {
   private static readonly daoMedia: MediaDao = new MediaDao();
   private static readonly daoReport: ReportDao = new ReportDao();
   private static readonly daoStats: StatsCacheDao = new StatsCacheDao();
+  private static readonly daoAssessment: AssessmentCacheDao = new AssessmentCacheDao();
   private static rdbStore: relationalStore.RdbStore | null = null;
   private static initialized: boolean = false;
   private static readonly log = Logger.scope('StorageManager');
@@ -86,6 +88,11 @@ export class StorageManager {
     return StorageManager.daoStats;
   }
 
+  /** 工作台当前评估快照 DAO */
+  public static assessmentDao(): AssessmentCacheDao {
+    return StorageManager.daoAssessment;
+  }
+
   /** 记录一次成功同步时间（冷启动展示「数据截止时间」用） */
   public static async markSynced(): Promise<void> {
     await StorageManager.prefStore.putNumber(PrefKey.lastSyncAt, Date.now());
@@ -101,6 +108,8 @@ export class StorageManager {
     await StorageManager.daoMedia.deleteAll();
     await StorageManager.daoReport.deleteAll();
     await StorageManager.daoStats.deleteAll();
+    // 评估里含人脸图/热力图，属于业务数据；换号必须清掉，避免看到上一个用户的评估
+    await StorageManager.daoAssessment.deleteAll();
     await StorageManager.prefStore.remove(PrefKey.lastSyncAt);
     StorageManager.log.i('业务缓存已清空');
   }
@@ -209,5 +218,6 @@ export class StorageManager {
     StorageManager.daoMedia.attach(store);
     StorageManager.daoReport.attach(store);
     StorageManager.daoStats.attach(store);
+    StorageManager.daoAssessment.attach(store);
   }
 }

@@ -12,17 +12,20 @@
  *  ① **一个 Navigation 一个栈**：主界面与登录流各有独立 `NavPathStack`，
  *     分支切换时旧栈自然销毁，所以不存在"返回键回到登录页"的问题。
  *  ② **页签用 `replacePathByName` 切换**：栈深恒定为 1，底部导航来回点也不会堆积历史；
- *     二级页面（素材选择 / 分析详情）用 `pushPathByName`，返回键即回到当前页签。
+ *     二级页面（本轮只剩素材选择）用 `pushPathByName`，返回键即回到当前页签。
  *  ③ **页面参数由这里注入**：每个页的 `*PageParam` 都带上 `pathStack`（二级页还带动作回调），
  *     于是子页面既能执行"返回/下一步"，又完全不需要碰 UI 上下文 API 或 store。
  *  ④ **本文件与 `Index.ets` 是仅有的两个"窗口层"**：只有它们允许 import store、
  *     发网络请求、操作路由栈；页面组件一律只吃参数。
+ *     ★ 唯一例外：工作台直接读 `AppStore` 的实时会话（探活/WS 逐帧是异步到达的，
+ *       经页面参数无法可靠刷新，BUG-10/11）；它仍然**只通过参数回调写动作**。
  *
  * ★ 参数对象全部**构造一次 + 只改字段**（`@Param` 按引用比对，
  *   每次 build 都 new 会把子树入参整体重置并触发冗余重建）。
  *
- * ★ 二级页面不随页签销毁：压入 `mediaPicker` / `analysisDetail` 时，
- *   工作台仍在栈底存活，所以从详情页返回后页签与滚动位置都还在。
+ * ★ 二级页面不随页签销毁：压入 `mediaPicker` 时工作台仍在栈底存活；
+ *   上传完成后选择页出栈，工作台 hero 直接显示新任务的实时进度。
+ *   ★ 本轮已删除独立分析详情页：分析内容全部内嵌在工作台主页里。
  */
 
 import { bundleManager } from '@kit.AbilityKit';
@@ -30,16 +33,15 @@ import { UiTheme } from '../common/UiTheme';
 import { CardTransit } from '../common/CardTransit';
 import { AppStore } from '../store/AppStore';
 import {
-  ActionResultModel, CurrentTaskModel, MediaItemModel, MediaType, PickedMediaModel,
-  RecentMediaModel, UserModel
+  ActionResultModel, MediaItemModel, MediaType, PickedMediaModel, UserModel
 } from '../types/Index';
 import { UploadFileSpec } from '../network/HttpClient';
 import {
-  AnalysisDetailPageParam, MainPageParam, MainTab, MediaPickerPageParam, ProfilePageParam,
+  MainPageParam, MainTab, MediaPickerPageParam, ProfilePageParam,
   TabPageParam, WorkbenchPageParam
 } from '../types/PageParams';
 import {
-  ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabIndexOf, mainTabLabel,
+  MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabIndexOf, mainTabLabel,
   MainTabMeta
 } from './PageRoutes';
 import { MediaPicker, PickResult } from '../common/MediaPicker';
@@ -49,10 +51,6 @@ import { ReportsPage } from './ReportsPage';
 import { StatsPage } from './StatsPage';
 import { ProfilePage } from './ProfilePage';
 import { MediaPickerPage } from './MediaPickerPage';
-import { AnalysisDetailPage } from './AnalysisDetailPage';
-
-/** 工作台「最近使用的素材」展示条数（用户指定两条） */
-const RECENT_MEDIA_LIMIT: number = 2;
 
 /**
  * 页签胶囊的高度与圆角
@@ -90,7 +88,6 @@ export struct MainPage {
   private statsParam: TabPageParam = new TabPageParam();
   private profileParam: ProfilePageParam = new ProfilePageParam();
   private pickerParam: MediaPickerPageParam = new MediaPickerPageParam();
-  private detailParam: AnalysisDetailPageParam = new AnalysisDetailPageParam();
 
   /** 动作回调是否已挂载（只挂一次，避免每次同步都新建闭包） */
   private actionsAttached: boolean = false;
@@ -276,14 +273,13 @@ export struct MainPage {
   /**
    * 工作台参数投影
    *
-   * ★ 工作台的**展示数据不再经参数传递** —— 它直接订阅 `AppStore`（响应式）。
-   *   原因见 `WorkbenchPage` 文件头：探活与 WS 进度都是异步到达的，
-   *   而经 `navDestination` 传参时，改字段不会让已挂载页面收到新值。
+   * ★ 工作台的**分析展示数据不再经参数传递** —— 它直接订阅 `AppStore` 的 `@Trace`
+   *   会话（原因见 `WorkbenchPage` 文件头：探活与 WS 逐帧都是异步到达的）。
    *   这里只剩下"注入路由栈引用"这一件事。
    *
-   * ★ 分析详情页也不再需要在这里同步：它的实时数据全部从
-   *   `AppStore.analysisSessionOf(mediaId)` 读（旧 `syncDetailParam()` 已删除，
-   *   那个方法只在切页签时被调用，WS 收帧不会触发，正是 BUG-15 的根因）。
+   * ★ scrollTopTick / refreshing 不在这里同步：它们是用户动作触发的（上传完成、点刷新），
+   *   由 `uploadPicked` / `refreshWorkbench` 直接写，页面经 @ObservedV2 + @Trace
+   *   收到变更，不依赖切页签时的参数投影。
    */
   private syncWorkbenchParam(param: WorkbenchPageParam): void {
     const stack: NavPathStack | null = this.navStack;
@@ -301,19 +297,18 @@ export struct MainPage {
 
     // ── 工作台 ──
     this.workbenchParam.onRefresh = () => {
-      this.refreshHealth();
+      this.refreshWorkbench();
     };
     this.workbenchParam.onSelectMedia = () => {
       this.openMediaPicker();
     };
-    this.workbenchParam.onOpenTask = () => {
-      this.openCurrentTask();
+    // 重新分析：先登记当前任务再起 WS；会话变 live 后工作台自动切到实时数据
+    this.workbenchParam.onReanalyze = (mediaId: string, mediaName: string, mediaType: MediaType) => {
+      this.reanalyzeMedia(mediaId, mediaName, mediaType);
     };
-    this.workbenchParam.onViewAll = () => {
-      this.pushTab(MainTab.reports);
-    };
-    this.workbenchParam.onSelectRecent = (mediaId: string) => {
-      this.openRecentDetail(mediaId);
+    this.workbenchParam.onCancelAnalysis = () => {
+      AppStore.get().cancelAnalysis();
+      this.refreshUi();
     };
 
     // ── 素材选择页 ──
@@ -339,38 +334,6 @@ export struct MainPage {
     this.profileParam.onLogout = async (): Promise<void> => {
       await this.pageParam.onLogout();
     };
-
-    // ── 分析详情页 ──
-    this.detailParam.onBack = () => {
-      // ★ 只出栈，**不停止分析**：分析会话挂在 AppStore 上继续跑，
-      //   用户回到工作台就能看到「当前任务」在推进。
-      this.navStack.pop();
-    };
-    this.detailParam.onCancelAnalysis = () => {
-      AppStore.get().cancelAnalysis();
-      this.refreshUi();
-    };
-    /**
-     * 重新分析当前页的素材
-     *
-     * ★ 适用场景：App 重启后打开历史素材（本机没有逐帧会话）、归档被淘汰、
-     *   或上一次分析失败。重新分析会**覆盖该素材自己那一条会话**，其它素材不受影响。
-     * ★ 页面不需要重新入栈：`analysisLiveMediaId === mediaId` 变真后，
-     *   页面的 `@Computed` 自动切到实时数据。
-     */
-    this.detailParam.onReanalyze = () => {
-      const param: AnalysisDetailPageParam = this.detailParam;
-      if (param.mediaId.length === 0) {
-        return;
-      }
-      const app: AppStore = AppStore.get();
-      // 先登记当前任务（工作台「当前任务」卡片要能看到它），再起 WS。
-      // ★ 失败也不回滚页面：`start()` 已经建好该素材的会话，
-      //   连接层的错误会通过会话的 errorMsg 显示在页面里（带「重新分析」可再试）。
-      app.setCurrentTask(param.mediaId, param.mediaName, param.mediaType);
-      app.startAnalysis(param.mediaId);
-      this.refreshUi();
-    };
   }
 
   /** 探活 · 写回服务状态并刷新界面 */
@@ -382,6 +345,57 @@ export struct MainPage {
       .catch(() => {
         this.refreshUi();
       });
+  }
+
+  /**
+   * 工作台刷新 · 探活 + 统计/报告/媒体全量刷新
+   *
+   * 工作台现在同时展示概览与最新评估（当前任务或报告回退），只探活会让页面数据陈旧；
+   * 所以按钮的语义升级为"刷新主页数据"。`refreshing` 写进页面参数，
+   * 页头按钮与离线横幅的「重试」共用同一个忙碌态。
+   * ★ 顺序：先探活（决定离线横幅），再并行拉数据；任一失败由各 store 自己兜底，
+   *   这里只负责在结束时把忙碌态复位。
+   */
+  private refreshWorkbench(): void {
+    const app: AppStore = AppStore.get();
+    this.workbenchParam.refreshing = true;
+    this.refreshUi();
+
+    app.checkHealth()
+      .then((): Promise<void[]> => {
+        const tasks: Promise<void>[] = [
+          app.refreshStats(),
+          app.refreshReports(),
+          app.refreshMedia()
+        ];
+        return Promise.all(tasks);
+      })
+      .then(() => {
+        this.workbenchParam.refreshing = false;
+        this.refreshUi();
+      })
+      .catch(() => {
+        this.workbenchParam.refreshing = false;
+        this.refreshUi();
+      });
+  }
+
+  /**
+   * 重新分析一条素材
+   *
+   * ★ 适用场景：App 重启后打开历史素材（本机没有逐帧会话）、归档被淘汰、
+   *   或上一次分析失败。重新分析会**覆盖该素材自己那一条会话**，其它素材不受影响。
+   * ★ 先登记当前任务再起 WS：工作台 hero 的「当前任务」与阶段轨要立刻看到它；
+   *   `start()` 成功后会建好该素材的会话，页面按会话自动切到实时数据。
+   */
+  private reanalyzeMedia(mediaId: string, mediaName: string, mediaType: MediaType): void {
+    if (mediaId.length === 0) {
+      return;
+    }
+    const app: AppStore = AppStore.get();
+    app.setCurrentTask(mediaId, mediaName, mediaType);
+    app.startAnalysis(mediaId);
+    this.refreshUi();
   }
 
   /**
@@ -423,14 +437,16 @@ export struct MainPage {
   }
 
   /**
-   * 上传已选素材 → 记录当前任务 → 启动 WS 分析 → 跳到分析详情页
+   * 上传已选素材 → 记录当前任务 → 启动 WS 分析 → **出栈回工作台**
    *
    * 顺序不能变：**先记当前任务再启动分析**，否则 WS 的第一帧可能在任务登记之前到达，
    * `syncCurrentTask()` 会因为"还没有任务"而直接返回，工作台就看不到进度。
    *
-   * ★ 跳转用 `replacePathByName`（不是 `pushPathByName`）：上传成功后选择页的使命就结束了，
-   *   把它**换成**详情页，栈深仍是 2 —— 用户从详情页按返回是回到工作台（计划 §3 的链路），
-   *   而不是回到选择页对着同一份素材再点一次「开始分析」（那会重复上传、重复起分析）。
+   * ★ 本轮（主页重构）不再跳转分析详情页：选择页的使命结束后直接 `pop()` 回工作台，
+   *   工作台 hero 立刻显示新任务的实时进度。这样"上传 → 看到分析"只隔一次出栈，
+   *   用户也不会落在一个需要再按返回的详情页上。
+   * ★ 出栈前先清空工作台 focus：否则上一次固定在历史素材上的查看目标会挡住新任务。
+   * ★ 栈深回到 1 时（用户已按返回）不再 pop，避免误弹工作台/别的页签。
    */
   private async uploadPicked(): Promise<boolean> {
     const media: PickedMediaModel | null = this.picked;
@@ -474,82 +490,27 @@ export struct MainPage {
     // ① 任务登记（先于 WS：否则第一帧可能在任务登记之前到达，工作台就看不到进度）
     app.setCurrentTask(uploaded.id, uploaded.name, uploaded.type);
 
-    // ② 启动分析（WS）。失败也不阻断跳转 —— 详情页会把错误显示出来
+    // ② 启动分析（WS）。失败也不阻断返回 —— 工作台 hero 会把错误显示出来
+    //    （带「重新分析该素材」出口）；选择页仍会先把错误写进参数。
     const started: ActionResultModel = app.startAnalysis(uploaded.id);
     if (!started.ok) {
       this.pickerParam.errorMsg = started.message;
     }
 
-    // ③ 详情页参数：只写"入栈那一刻就确定"的素材元信息。
-    //    ★ 实时数据（进度/分数/帧/档位/VLM）由页面自己从 AppStore 的会话读，
-    //      窗口层不再抄参数（旧的 syncDetailParam 已删除，见文件头）。
-    this.detailParam.mediaId = uploaded.id;
-    this.detailParam.mediaName = uploaded.name;
-    this.detailParam.mediaType = uploaded.type;
-    this.detailParam.reportScore = 0;
-    this.detailParam.reportTime = '';
+    // ③ 新任务的 hero 在页面顶部：递增回顶信号，出栈后工作台自动滚回顶部
+    this.workbenchParam.scrollTopTick = this.workbenchParam.scrollTopTick + 1;
     this.refreshUi();
 
-    // ④ 选择页 → 详情页（替换，不是压栈）；选中态清掉，避免残留素材被重复上传
+    // ④ 选择页使命结束：出栈回工作台（不再有独立分析详情页）
+    //    选中态清掉，避免残留素材被重复上传。
     this.picked = null;
     // ★ 上传是异步的：这段等待里用户可能已经按返回把选择页弹掉了（甚至切到别的页签）。
-    //   栈深回到 1 说明最上层已经不是选择页，此时再 replace 会把**工作台/别的页签**换掉，
-    //   所以只在"选择页仍压在上面"时才做替换。分析已经在跑，用户可以照常从
-    //   工作台「当前任务」卡片进入详情页 —— 不跳转也不会丢失这次分析。
+    //   栈深回到 1 说明最上层已经不是选择页，此时再 pop 会把**工作台/别的页签**弹掉，
+    //   所以只在"选择页仍压在上面"时才出栈。分析已经在跑，用户回到工作台照样能看到进度。
     if (this.navStack.size() > 1) {
-      this.navStack.replacePathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
+      this.navStack.pop();
     }
     return true;
-  }
-
-  /** 从工作台点「当前任务」回到分析详情页（实时数据由页面订阅 store 得到） */
-  private openCurrentTask(): void {
-    const task: CurrentTaskModel | null = AppStore.get().currentTask();
-    if (task === null) {
-      return;
-    }
-    this.detailParam.mediaId = task.mediaId;
-    this.detailParam.mediaName = task.mediaName;
-    this.detailParam.mediaType = task.mediaType;
-    this.detailParam.reportScore = task.bdiScore;
-    this.detailParam.reportTime = '';
-    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
-  }
-
-  /**
-   * 从「最近使用的素材」打开某条素材的分析详情
-   *
-   * ★ 参数里只放**报告侧**的冻结值（分数 / 时间）+ 素材元信息；
-   *   逐帧热力图与曲线由页面按 `mediaId` 去会话归档里取：
-   *     · 本机跑过这条素材（会话还在）→ 直接显示它自己的帧；
-   *     · 本机没有（App 重启过 / 归档被淘汰）→ 提示"本机未保留逐帧数据"，
-   *       并给「重新分析」按钮（`onReanalyze`）。
-   * ★ 绝不再用"当前任务"的数据顶替被点的素材 —— 那正是
-   *   「点开 A 却看到 B 的热力图」的根因（BUG-14）。
-   */
-  private openRecentDetail(mediaId: string): void {
-    const app: AppStore = AppStore.get();
-    const recent: RecentMediaModel[] = app.recentMedia(RECENT_MEDIA_LIMIT);
-    let hit: RecentMediaModel | null = null;
-    for (let i = 0; i < recent.length; i++) {
-      if (recent[i].mediaId === mediaId) {
-        hit = recent[i];
-        break;
-      }
-    }
-    if (hit === null) {
-      // 列表已变（例如刚被刷新掉）：退回工作台，不跳一个空页面
-      this.refreshUi();
-      return;
-    }
-
-    const param: AnalysisDetailPageParam = this.detailParam;
-    param.mediaId = hit.mediaId;
-    param.mediaName = hit.name;
-    param.mediaType = hit.type;
-    param.reportScore = hit.bdiScore;
-    param.reportTime = hit.detectedAt;
-    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, param);
   }
 
   /** 让界面与页面参数都跟上 store 的最新状态 */
@@ -564,7 +525,7 @@ export struct MainPage {
    * 分发器 · 按路由名渲染对应的 NavDestination
    *
    * ★ 页签分支**只按路由名判断**，不再看 `selectedTab`：
-   *   因为二级页面（素材选择/分析详情）入栈时 `selectedTab` 仍是当前页签，
+   *   因为二级页面（本轮只剩素材选择）入栈时 `selectedTab` 仍是当前页签，
    *   用页签做判据会把二级页渲染成页签页（这是个很容易埋进去的 bug）。
    * ★ `param` 的静态类型在官方签名里是 `unknown`，而 ArkTS 禁止 `unknown`/`any`
    *   （`arkts-no-any-unknown`），所以这里用 ArkTS 提供的动态类型 `ESObject` 承接；
@@ -578,23 +539,12 @@ export struct MainPage {
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)
-    } else if (name === ANALYSIS_DETAIL_ROUTE && param instanceof AnalysisDetailPageParam) {
-      NavDestination() {
-        AnalysisDetailPage({ pageParam: param as AnalysisDetailPageParam })
-      }
-      .hideTitleBar(true)
-      .backgroundColor(UiTheme.pageBackground)
     } else if (name === MainTab.workbench && param instanceof WorkbenchPageParam) {
       NavDestination() {
-        // ★ 工作台只接收**动作回调**：它的展示数据直接订阅 `AppStore`
-        //   （原因见 WorkbenchPage 文件头：异步到达的数据经 navDestination 传参不可靠）
-        WorkbenchPage({
-          onRefresh: param.onRefresh,
-          onSelectMedia: param.onSelectMedia,
-          onOpenTask: param.onOpenTask,
-          onViewAll: param.onViewAll,
-          onSelectRecent: param.onSelectRecent
-        })
+        // ★ 工作台接收**整个参数对象**：动作回调之外，参数里还承载 scrollTopTick/refreshing
+        //   这些"挂载后仍会变化"的字段（@ObservedV2 + @Trace，见 WorkbenchPageParam）。
+        //   展示数据仍由页面直接订阅 `AppStore`（异步逐帧到达，传参无法可靠刷新）。
+        WorkbenchPage({ pageParam: param as WorkbenchPageParam })
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)

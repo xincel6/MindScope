@@ -494,8 +494,11 @@ export class Mapper {
     return notes;
   }
 
-  /** 统计快照行 → payload 字符串（由调用方再 JSON.parse 成 StatsModel） */
-  public static statsPayloadFromRow(row: DbRow): string {
+  /**
+   * 单行快照表的 payload 列 → 字符串
+   * 统计快照与工作台评估快照都使用 `payload` 列；由调用方再 JSON.parse。
+   */
+  public static payloadFromRow(row: DbRow): string {
     return toText(row['payload'] as string | null, '');
   }
 }

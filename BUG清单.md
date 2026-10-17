@@ -1025,4 +1025,81 @@ private handleFailure(err: Object) {
 
 编译：`bash harmony/scripts/build.sh` → `BUILD SUCCESSFUL`（`CompileArkTS` 真跑）。
 
+---
+
+# 工作台主页重构 / 评估持久化轮 · 新增缺陷（BUG-23）
+
+> 本轮改动：拆掉独立分析详情页，把 hero/热力图/曲线/分布/智能解读内嵌工作台；
+> 随后按用户要求删除「最近使用的素材」区块，并把当前评估（当前任务 + 最终会话）
+> 持久化到 RDB，启动/登录后自动恢复。
+> 交付说明：`docs/本轮交付说明-工作台主页重构.md`。
+
+## BUG-23 · 分析完成后工作台热力图 / 帧数 / 智能解读不刷新 ⭐⭐
+
+**现象（模拟器实测）**
+点「重新分析该素材」后，hero 的状态胶囊与阶段轨从 `当前任务` 推进到 `已完成`，
+但右栏一直显示「单次推理 · 无逐帧数据」、仍挂着「重新分析该素材」；
+向下滚到热力图卡仍是空态，曲线/分布只按报告分数画。日志里服务端其实已经
+`分析完成 · 最终分数 11.74`，会话有帧。切页签重建页面后才会恢复。
+
+**根因**
+`AppStore.analysisSessionOf()` 在桥接器（`analysisHolder`）为 `null` 时**提前 return null**。
+工作台主页在"本次启动还没开始过分析"时就会求值 `@Computed session`：
+它读到的是 `null`，**没有读到 `AnalysisState.sessions` 这个 @Trace 数组**，
+所以这个 Computed 没有建立依赖。等用户点重新分析、桥接器建好并写入会话时，
+没有任何被观察的字段变化，页面不会重算 —— 状态胶囊能推进是因为它读的是
+`@Trace currentTaskStatus`（`sync()` 写的），两套数据的刷新路径被拆开了。
+
+这与 BUG-10/11/15 是同一类：**异步数据必须让 Computed 在首次求值时就读到 @Trace 源**；
+"因为当前没有数据所以提前返回"会把依赖一起跳过。
+
+**修法**
+`AppStore` 构造函数里**提前创建分析桥接器**（`this.analysis()`）：
+`AnalysisSocket` 构造函数只保存 listener，`start()` 才建立连接，所以未登录也不会发起网络；
+之后页面第一次读会话归档时读到的是空 `sessions` 数组（@Trace），依赖就建立起来了。
+登出仍由 `clearAll()` stop + 清会话，行为不变。
+
+**验证**
+- 日志：`分析完成 · 最终分数 11.74` 后紧接着 `评估已持久化 · mediaId=63 会话=有 ok=true`；
+- 截图：`_materials/_verify/task-live.jpeg`（分析中阶段轨）、`task-done2.jpeg`（完成后 1 帧/热力图）；
+- 冷启动恢复：`persist-restored.jpeg` / `persist-restored2.jpeg` / `persist-restored3.jpeg`。
+
+**防复发规则**
+> **"没有数据"也要让 Computed 读一次 @Trace 源。**
+> 写法上避免 `if (holder === null) return null;` 这种在观察范围外提前返回；
+> 要么保证 holder 在页面挂载前就存在（本轮做法），要么显式读一个 `@Trace` 的版本号。
+> 判据：这段数据在页面挂载后还会不会变？会 → 首次读值必须能看见它。
+
+---
+
+## 同轮顺手修掉的界面细节（非独立缺陷）
+
+| # | 位置 | 问题 | 修法 |
+|---|---|---|---|
+| 1 | 工作台页头刷新按钮 | `Button` 默认左右 padding 把 `⟳` / 「刷新」挤成半个括号/省略号 | 改用文字「刷新」并显式 `padding: 4`；图标待定 |
+| 2 | 热力图卡空态 | 无会话时画 300vp 灰块，且 `isSample` 在"没有演示帧"时也标「演示数据」 | 紧凑空态（图标 + 原因 + 演示入口）；`isSample` 要求 `frames.length > 0` |
+| 3 | 热力图卡图片文案 | 图片也套视频的「左右滑动可回看任意一帧」，与下方"没有可横滑的其它帧"矛盾 | 图片单独文案「单帧图片的推理结果 · BDI x」 |
+| 4 | 单帧情绪曲线 | 绘图区 180vp 留白过大 | 120vp |
+| 5 | hero 阶段轨/取消提示 | 图片也写「逐帧推理」「视频分析很快」 | 中间段按类型显示「单次推理」；取消提示按类型分叉 |
+| 6 | hero 帧数文案 | 「单次推理（本机无逐帧数据）」在窄列被截断 | 缩短为「单次推理 · 无逐帧数据」 |
+
+---
+
+## 本轮验证记录（模拟器 1316×2832 API 23，装机实测）
+
+| # | 操作 | 期望 | 结果 |
+|---|---|---|---|
+| 1 | 覆盖安装（RDB v1 → v2） | 自动建 `workbench_assessment` 表并启动，不崩 | ✅ 日志 `RDB 迁移 1 → 2` |
+| 2 | 冷启动（无持久化评估） | hero 用最新报告兜底；**没有「最近使用的素材」区块**；页面以智能解读收尾 | ✅ `norecent1.jpeg` |
+| 3 | 重新分析一张图片 | hero 阶段轨「上传 → 单次推理 → 汇总评分」，取消提示为图片文案 | ✅ `task-live.jpeg` |
+| 4 | 分析完成 | 分数 11.7 / 1 帧 / 推理耗时；热力图/曲线/刻度尺全部出现 | ✅ `task-done2.jpeg` / `persist-before.jpeg` |
+| 5 | 收尾日志 | `评估已持久化 · mediaId=63 会话=有 ok=true` | ✅ 日志 |
+| 6 | `aa force-stop` 后冷启动 | hero 显示「最近一次评估 / 上次分析 · 21:47」；热力图/曲线/分布/解读全部恢复；无最近素材 | ✅ `persist-restored.jpeg` / `persist-restored2.jpeg` / `persist-restored3.jpeg` |
+| 7 | 离线测试 | `test-analysis-detail.mjs` / `test-heatmap-strip.mjs` / `test-workbench-layout.mjs` 全 PASS | ✅ |
+| 8 | 编译 | `bash harmony/scripts/build.sh` → `BUILD SUCCESSFUL` | ✅ |
+
+**已知边界**：只持久化 **done** 的评估（running/failed 不落盘，避免重启后出现幽灵任务）；
+载荷含最多 30 帧人脸 base64 + 热度矩阵，约 0.5MB；登出会清空评估表；
+历史报告页签仍是占位页，删除最近素材后没有历史列表入口（用户本轮明确取舍）。
+
 

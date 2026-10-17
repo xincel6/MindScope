@@ -39,7 +39,8 @@ export {
   UserModel, SessionModel, MediaItemModel, DiagnosisReportModel, ReportListItemModel,
   ReportPageModel, ReportFilterModel, BdiTrendPointModel, StatsModel, SeverityBucketModel,
   AnalysisFrameModel, AnalysisSessionModel, FaceAnalyzeModel, HealthModel, ActionResultModel,
-  MediaOptionModel, DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel
+  MediaOptionModel, DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel,
+  AnalysisFocusModel, WorkbenchHeroModel, emptyWorkbenchHeroModel, WorkbenchAssessmentModel
 } from './model';
 
 // ── 映射器 ──
