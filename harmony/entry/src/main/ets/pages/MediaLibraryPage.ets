@@ -2,10 +2,8 @@
  * MediaLibraryPage · 素材库（一级页签）
  *
  * 页面契约：`@Param pageParam: MediaLibraryPageParam`
- *   - 数据（`videos` / `images` / `patients` / `selectedPatient` / `selectedMediaId` / `analyzing`）
- *     由窗口层注入；
- *   - 动作（`onUpload` / `onOpenMedia` / `onDelete` / `onRetry` / `onSelectPatient` / `onRename`）
- *     通过回调交回窗口层；
+ *   - 数据（`videos` / `images` / `selectedMediaId` / `analyzing`）由窗口层注入；
+ *   - 动作（`onUpload` / `onOpenMedia` / `onDelete` / `onRetry`）通过回调交回窗口层；
  *   - `busy` / `errorMsg` 驱动骨架屏与「加载失败 + 重试」。
  *
  * ★ 页面纪律：不 import 任何 store、不发请求、不碰路由栈。
@@ -15,7 +13,6 @@ import { UiTheme } from '../common/UiTheme';
 import { MediaLibraryPageParam } from '../types/PageParams';
 import { MediaItemModel, MediaType } from '../types/Index';
 import { PageHeader } from '../components/PageHeader';
-import { RevealCard } from '../components/RevealCard';
 import { SkeletonBlock } from '../components/SkeletonView';
 import { ErrorRetryView } from '../components/ErrorRetryView';
 
@@ -38,44 +35,25 @@ export struct MediaLibraryPage {
 
   build() {
     Column({ space: UiTheme.gapL }) {
-      // 0 号位 · 页头 + 上传按钮（转场由 RevealCard 内部负责）
-      RevealCard({ order: 0 }) {
-        Column({ space: UiTheme.gapS }) {
-          PageHeader({ title: '素材库', subtitle: '评估用的图片与视频素材' })
-          this.uploadBar()
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-      }
+      PageHeader({ title: '素材库', subtitle: '评估用的图片与视频素材' })
 
-      // 1 号位 · 患者筛选 + 类型 Tab
-      RevealCard({ order: 1 }) {
-        Column({ space: UiTheme.gapS }) {
-          this.patientFilterBar()
-          this.tabBar()
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-      }
+      this.uploadBar()
 
-      // 内容区三态（Grid 自己滚动，不参与转场）：加载 / 错误 / 列表
-      Column() {
-        if (this.pageParam.busy) {
-          this.loadingView()
-        } else if (this.pageParam.errorMsg.length > 0) {
-          ErrorRetryView({
-            message: this.pageParam.errorMsg,
-            onRetry: (): void => {
-              this.pageParam.onRetry();
-            }
-          })
-        } else {
-          this.contentView()
-        }
+      // 内容区三态：加载 / 错误 / 列表
+      if (this.pageParam.busy) {
+        this.loadingView()
+      } else if (this.pageParam.errorMsg.length > 0) {
+        ErrorRetryView({
+          message: this.pageParam.errorMsg,
+          onRetry: (): void => {
+            this.pageParam.onRetry();
+          }
+        })
+      } else {
+        this.patientFilterBar()
+        this.tabBar()
+        this.contentView()
       }
-      .width('100%')
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .height('100%')
@@ -246,8 +224,6 @@ export struct MediaLibraryPage {
       .rowsGap(UiTheme.gapS)
       .width('100%')
       .layoutWeight(1)
-      .scrollBar(BarState.Off)
-      .padding({ bottom: UiTheme.gapXl })
     }
   }
 

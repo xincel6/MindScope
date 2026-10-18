@@ -4,14 +4,14 @@
  * 用于：① 上传素材时给素材命名患者；② 事后重命名素材所属患者。
  * 用法（窗口层）：
  * ```ts
- * const ctrl = new CustomDialogController({
+ * this.dialogCtrl = new CustomDialogController({
  *   builder: PatientNameDialog({
  *     title: '为素材命名所属患者',
  *     initial: '',
  *     onConfirm: (name) => { ... }
  *   })
  * });
- * ctrl.open();
+ * this.dialogCtrl.open();
  * ```
  */
 
@@ -19,7 +19,7 @@ import { UiTheme } from '../common/UiTheme';
 
 @CustomDialog
 export struct PatientNameDialog {
-  /** 对话框控制器 · 由 CustomDialog 框架注入 */
+  /** 对话框控制器 · 由调用方注入，用于确认后关闭 */
   controller: CustomDialogController = new CustomDialogController({ builder: PatientNameDialog() });
 
   /** 标题 */

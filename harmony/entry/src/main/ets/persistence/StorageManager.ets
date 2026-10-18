@@ -193,9 +193,9 @@ export class StorageManager {
 
   /**
    * 版本迁移
-   * 现在只有 v1，暂无迁移动作；后续加列时按 `fromVersion` 追加分支：
+   * 按 `fromVersion` 追加分支：
    *   ```
-   *   if (fromVersion < 2) { await store.executeSql('ALTER TABLE media_asset ADD COLUMN x TEXT'); }
+   *   if (fromVersion < 2) { await store.executeSql('ALTER TABLE media_asset ADD COLUMN patient TEXT'); }
    *   ```
    */
   private static async migrate(
@@ -205,7 +205,9 @@ export class StorageManager {
     // v1 → v2：media_asset 新增 patient 列（患者命名）
     if (fromVersion < 2) {
       try {
-        await store.executeSql(`ALTER TABLE ${MediaTable.tableName} ADD COLUMN ${MediaTable.colPatient} TEXT NOT NULL DEFAULT ''`);
+        await store.executeSql(
+          `ALTER TABLE ${MediaTable.tableName} ADD COLUMN ${MediaTable.colPatient} TEXT NOT NULL DEFAULT ''`
+        );
         StorageManager.log.i('迁移：media_asset 新增 patient 列');
       } catch (err) {
         // 列已存在（极端幂等场景）时忽略

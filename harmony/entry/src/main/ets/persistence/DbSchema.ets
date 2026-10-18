@@ -29,6 +29,7 @@ export class MediaTable {
   public static readonly colThumbnailUrl: string = 'thumbnail_url';
   public static readonly colDuration: string = 'duration';
   public static readonly colCreatedAt: string = 'created_at';
+  /** 所属患者名（空串 = 未命名）· 素材库患者筛选/命名的本地镜像列 */
   public static readonly colPatient: string = 'patient';
 
   /** 建表语句 · 列顺序与 DbSchema.createTables 的数组一致 */

@@ -25,10 +25,10 @@
  *   工作台仍在栈底存活，所以从详情页返回后页签与滚动位置都还在。
  */
 
-import { bundleManager } from '@kit.AbilityKit';
-import { UiTheme } from '../common/UiTheme';
+import { bundleManager, common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import { UiTheme } from '../common/UiTheme';
 import { CardTransit } from '../common/CardTransit';
 import { ApiConfig } from '../common/ApiConfig';
 import { Logger } from '../common/Logger';
@@ -103,14 +103,14 @@ export struct MainPage {
   /** 素材库动作回调是否已挂载（只挂一次） */
   private mediaActionsAttached: boolean = false;
 
-  /** 素材库当前选中的素材 id（空串 = 未选中） */
-  @Local selectedMediaId: string = '';
-
-  /** 素材库删除进行中的素材 id（空串 = 无） */
-  @Local deletingMediaId: string = '';
-
   /** 素材选择页当前选中的素材（窗口层持有，页面只读投影字段） */
   private picked: PickedMediaModel | null = null;
+
+  /** 素材库当前选中的素材 id（空串 = 未选中）· 仅用于卡片高亮与去重 */
+  @Local selectedMediaId: string = '';
+
+  /** 素材库删除进行中的素材 id（空串 = 无）· 防连点 */
+  private deletingMediaId: string = '';
 
   private readonly log = Logger.scope('MainPage');
 
@@ -184,9 +184,11 @@ export struct MainPage {
   }
 
   /**
-   * 某个页签有多少个参与转场的组件
-   * ★ 必须与页面里 `RevealCard({ order: ... })` 的个数一致，
+   * 某个页签有多少个**参与离场**的组件
+   * ★ 必须与页面里跟随 `exitClock` 的 `RevealCard` 个数一致，
    *   否则等待时间算短了会砍断最后一个组件的动画。
+   * ★ 列表里的卡片（历史报告卡等）传了 `_playExit: false`，只播入场、不参与离场，
+   *   不能算进这里 —— 否则几十张卡会把等待时间撑到几秒，切页签明显卡顿。
    */
   private cardCountOf(tab: MainTab): number {
     if (tab === MainTab.workbench) {
@@ -195,11 +197,11 @@ export struct MainPage {
     if (tab === MainTab.stats) {
       return CardTransit.CARDS_STATS;
     }
-    if (tab === MainTab.media) {
-      return CardTransit.CARDS_MEDIA;
-    }
     if (tab === MainTab.profile) {
       return CardTransit.CARDS_PROFILE;
+    }
+    if (tab === MainTab.reports) {
+      return CardTransit.CARDS_REPORTS;
     }
     return CardTransit.CARDS_PLACEHOLDER;
   }
@@ -245,6 +247,7 @@ export struct MainPage {
       return;
     }
     if (tab === MainTab.media) {
+      // 素材库的数据 + 动作全部走专用投影（阵型：videos/images/patients/动作回调）
       this.syncMediaParam();
       return;
     }
@@ -380,10 +383,13 @@ export struct MainPage {
   /** 切换患者筛选 */
   private selectPatient(patient: string): void {
     AppStore.get().setPatientFilter(patient);
-    this.refreshMediaUi();
+    this.refreshAfterAction();
   }
 
-  /** 上传流程：先弹患者命名输入框（可跳过），再调起相册选择器 */
+  /**
+   * 上传流程：先弹患者命名输入框（可跳过），再调起相册选择器。
+   * 选完文件后带上患者名一起上传。
+   */
   private startUploadFlow(): void {
     this.promptPatientName('', '为素材命名所属患者', (patient: string) => {
       this.pickAndUpload(patient);
@@ -396,7 +402,7 @@ export struct MainPage {
     const current: string = item === null ? '' : item.patient;
     this.promptPatientName(current, '修改素材所属患者', async (patient: string) => {
       const res: ActionResultModel = await AppStore.get().renamePatient(mediaId, patient);
-      this.refreshMediaUi();
+      this.refreshAfterAction();
       this.toast(res.message);
     });
   }
@@ -429,14 +435,16 @@ export struct MainPage {
       }
       const uri: string = uris[0];
       const file: UploadFileSpec = this.buildUploadSpec(uri);
+      const app: AppStore = AppStore.get();
       const res: ActionResultModel = patient.length > 0
-        ? await AppStore.get().media().uploadImageWithPatient(file, patient)
-        : await AppStore.get().media().uploadImage(file);
-      this.refreshMediaUi();
+        ? await app.media().uploadImageWithPatient(file, patient)
+        : await app.media().uploadImage(file);
+      app.sync();
+      this.refreshAfterAction();
       this.toast(res.message);
     } catch (err) {
       this.log.e('选择或上传素材失败', err as Object);
-      this.refreshMediaUi();
+      this.refreshAfterAction();
       this.toast('上传失败，请重试');
     }
   }
@@ -452,7 +460,7 @@ export struct MainPage {
       const namePart: string = this.extractName(uri);
       fileName = namePart.length > 0 ? namePart : 'upload.jpg';
       mimeType = this.inferMime(namePart);
-      const destPath: string = `${context.cacheDir}/${fileName}`;
+      const destPath: string = `${(context as common.UIAbilityContext).cacheDir}/${fileName}`;
       const dest: fileIo.File = fileIo.openSync(
         destPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
       );
@@ -499,11 +507,33 @@ export struct MainPage {
     return 'image/jpeg';
   }
 
-  /** 打开素材 · 触发分析（跳转目标后续再接） */
+  /**
+   * 打开素材：登记当前任务 → 起 WS 分析 → 进入分析详情页
+   *
+   * ★ 当前代码是 059f3a4 之后的"独立分析详情页"架构，分析内容不在工作台内联，
+   *   所以点素材后直接压入详情页看逐帧结果；返回键回到素材库。
+   * ★ 先 `setCurrentTask` 再 `startAnalysis`：否则 WS 首帧可能早于任务登记，
+   *   工作台的「当前任务」卡片就看不到这次分析（与上传链路同一个顺序约束）。
+   */
   private openMedia(mediaId: string): void {
-    this.selectedMediaId = mediaId;
-    AppStore.get().startAnalysis(mediaId);
-    this.refreshMediaUi();
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    if (item === null) {
+      this.refreshAfterAction();
+      return;
+    }
+    this.selectedMediaId = item.id;
+    const app: AppStore = AppStore.get();
+    app.setCurrentTask(item.id, item.name, item.type);
+    app.startAnalysis(item.id);
+
+    const param: AnalysisDetailPageParam = this.detailParam;
+    param.mediaId = item.id;
+    param.mediaName = item.name;
+    param.mediaType = item.type;
+    param.reportScore = 0;
+    param.reportTime = '';
+    this.refreshAfterAction();
+    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, param);
   }
 
   /** 删除素材 · 二次确认后调 MediaStore.deleteMedia */
@@ -535,11 +565,12 @@ export struct MainPage {
     this.deletingMediaId = mediaId;
     try {
       const res: ActionResultModel = await AppStore.get().media().deleteMedia(mediaId);
-      this.refreshMediaUi();
+      AppStore.get().sync();
+      this.refreshAfterAction();
       this.toast(res.message);
     } catch (err) {
       this.log.e('删除素材失败', err as Object);
-      this.refreshMediaUi();
+      this.refreshAfterAction();
       this.toast('删除失败，请重试');
     } finally {
       this.deletingMediaId = '';
@@ -549,11 +580,12 @@ export struct MainPage {
   /** 重试加载素材 */
   private async retryLoadMedia(): Promise<void> {
     await AppStore.get().refreshMedia();
-    this.refreshMediaUi();
+    AppStore.get().sync();
+    this.refreshAfterAction();
   }
 
   /** 素材库动作收尾统一：tick + 同步素材库参数 */
-  private refreshMediaUi(): void {
+  private refreshAfterAction(): void {
     this.tick = this.tick + 1;
     this.syncMediaParam();
   }

@@ -7,7 +7,9 @@
  *   3. 列表接口**没有分页参数**，一次全量返回。
  */
 
-import { MediaListOutDto, MediaItemOutDto, UpdatePatientReqDto, UploadImageOutDto } from '../types/Index';
+import {
+  MediaListOutDto, MediaItemOutDto, UpdatePatientReqDto, UploadImageOutDto
+} from '../types/Index';
 import { HttpClient, UploadFileSpec } from './HttpClient';
 
 /** 删除结果 */

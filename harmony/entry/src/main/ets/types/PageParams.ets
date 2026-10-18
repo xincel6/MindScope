@@ -277,33 +277,38 @@ export class TabPageParam extends PageParam {
  * ★ 数据与动作全部由窗口层（`pages/MainPage.ets`）从 `AppStore` 取好后注入，
  *   页面**不 import 任何 store**，只读参数 + 调回调。
  */
+@ObservedV2
 export class MediaLibraryPageParam extends TabPageParam {
   // ── 数据（只读展示）──
+  //
+  // ★ 这些字段会在页面**挂载之后**被窗口层改写（上传/删除/重命名/切患者筛选都会刷新列表），
+  //   而 `@Param` 只按引用感知对象、不跟踪普通字段，所以数据字段必须 `@Trace`
+  //   —— 与 `MediaPickerPageParam` / 工作台参数同一条 BUG-10/11 判据。
 
   /** 视频素材列表（已按「患者 + 类型」筛好，页面直接 ForEach） */
-  public videos: MediaItemModel[] = [];
+  @Trace public videos: MediaItemModel[] = [];
 
   /** 图片素材列表（已按「患者 + 类型」筛好） */
-  public images: MediaItemModel[] = [];
+  @Trace public images: MediaItemModel[] = [];
 
   /** 去重后的患者名列表（含「未命名」占位）· 顶部筛选器用 */
-  public patients: string[] = [];
+  @Trace public patients: string[] = [];
 
   /** 当前选中的患者名（空串 = 全部患者） */
-  public selectedPatient: string = '';
+  @Trace public selectedPatient: string = '';
 
   /** 当前选中的素材 id（空串 = 未选中） */
-  public selectedMediaId: string = '';
+  @Trace public selectedMediaId: string = '';
 
   /** 是否正在分析中 */
-  public analyzing: boolean = false;
+  @Trace public analyzing: boolean = false;
 
   // ── 动作回调 ──
 
   /** 点「上传」· 窗口层负责调起相册选择器并上传（内部弹患者命名输入框） */
   public onUpload: () => void = () => {};
 
-  /** 点某个素材 · 窗口层负责触发分析（跳转目标后续再接） */
+  /** 点某个素材 · 窗口层负责触发分析并打开分析详情 */
   public onOpenMedia: (mediaId: string) => void = (mediaId: string) => {};
 
   /** 点删除 · 窗口层负责二次确认 + 调删除接口 */

@@ -33,6 +33,16 @@
  * 所以离场必须由页面**提前**发信号（`CardTransit.exitClock`），
  * 各组件收到信号后自己播完，页面再等 `CardTransit.sequenceMs(n)` 之后才真正换页。
  *
+ * ────────────────── 列表类页面为什么需要 `_playEnter` / `_playExit` ──────────────────
+ * 一级页签页面里的「固定块」（页头、筛选栏、统计卡）天然可以整块参与入场 + 离场；
+ * 但**动态列表**不行：
+ *   · 列表容器（骨架 / 空态 / 卡片列表都在里面）如果也播入场，会先整体滑一次，
+ *     里面的每张卡片再各自错峰滑一次 → 两层位移与透明度叠加，观感是"抖一下再变淡"。
+ *     所以容器 `_playEnter: false`，以终态出现，错峰完全交给卡片自己。
+ *   · 列表里的卡如果也跟随 `exitClock` 逐张离场，几十张卡的启动时间会排到几秒之后，
+ *     而窗口层只等 `sequenceMs(该页离场块数)` 就换页 —— 绝大多数卡还没动就被销毁。
+ *     所以卡片 `_playExit: false`，离场由外层列表容器整块滑出（与"整页同速滑出"的既有设计一致）。
+ *
  * ★ `@BuilderParam content` 必须给默认实现，否则不传尾随闭包时编译失败（同 AppCard）。
  */
 
@@ -55,6 +65,25 @@ export struct RevealCard {
    * ★ 名字带 `_`：本工程约定，与系统属性方法可能重名的入参一律加前缀。
    */
   @Param _weight: number = 0;
+
+  /**
+   * 是否播放**入场**动画 · 默认 true（等价于加这两个参数之前的行为）
+   *
+   * ★ 谁需要传 false：**动态列表的外层容器**。它只负责离场（整块滑出），
+   *   入场交给里面每张卡片自己错峰；若容器也播入场，会和卡片的动画叠成两层。
+   * ★ 传 false 时字段初始化为终态（位移 0 / 缩放 1 / 不透明 1），首帧就是"已在位"。
+   */
+  @Param _playEnter: boolean = true;
+
+  /**
+   * 是否跟随页面的「开始离场」信号 · 默认 true
+   *
+   * ★ 谁需要传 false：**动态列表里的每一张卡**（历史报告卡、素材卡）。
+   *   它们只在入场时按列表下标错峰；离场若也逐张延迟，启动时间会排到几秒后，
+   *   窗口层的等待只有 `sequenceMs(卡片块数)`，来不及演完就换页，反而更乱。
+   *   离场统一交给外层列表容器（`_playEnter: false` 的那一层）整体滑出。
+   */
+  @Param _playExit: boolean = true;
 
   /**
    * 本组件独占的动画模型引用
@@ -84,6 +113,14 @@ export struct RevealCard {
 
   /** 起始态：首帧就渲染成"还没进来"的样子（此时节点还没上树，不能在这里播动画） */
   aboutToAppear(): void {
+    // 容器（列表外层）不参与入场：直接以终态出现，错峰交给里面每张卡自己
+    if (!this._playEnter) {
+      this.shift = 0;
+      this.shiftY = 0;
+      this.scaleVal = 1;
+      this.alpha = 1;
+      return;
+    }
     this.shift = -CardTransit.get().dir * CardTransit.travelOf(this.order);
     this.shiftY = CardTransit.riseY;
     this.scaleVal = CardTransit.scaleIn;
@@ -167,6 +204,10 @@ export struct RevealCard {
    */
   @Monitor('transit.exitClock')
   onExitSignal(): void {
+    // 列表项不跟页面离场：它们的离场由外层容器整块负责（理由见 `_playExit` 注释）
+    if (!this._playExit) {
+      return;
+    }
     setTimeout(() => {
       this.playOut();
     }, 16);
@@ -183,7 +224,9 @@ export struct RevealCard {
     // 权重透传给外层 Column：0 是合法值（不参与均分），不必写条件分支
     .layoutWeight(this._weight)
     .onAppear(() => {
-      this.playIn();
+      if (this._playEnter) {
+        this.playIn();
+      }
     })
   }
 }

@@ -38,11 +38,11 @@ export class MediaStore extends BaseStore {
   /** 媒体库筛选（null = 全部） */
   @Trace typeFilter: MediaType | null = null;
 
-  /** 当前患者名筛选（空串 = 全部患者） */
-  @Trace patientFilter: string = '';
-
   /** 最近一次成功上传的素材 · 供窗口层拿到 id 去开分析会话 */
   @Trace lastUploaded: MediaItemModel | null = null;
+
+  /** 当前患者名筛选（空串 = 全部患者） */
+  @Trace patientFilter: string = '';
 
   // ────────────────── 单例 ──────────────────
 
@@ -80,11 +80,6 @@ export class MediaStore extends BaseStore {
   /** 图片数量 */
   public imageCount(): number {
     return this.countByType(MediaType.image);
-  }
-
-  /** 视频数量 */
-  public videoCount(): number {
-    return this.countByType(MediaType.video);
   }
 
   /**
@@ -137,6 +132,11 @@ export class MediaStore extends BaseStore {
   /** 是否已筛选患者（用于顶部显示「清除筛选」） */
   public hasPatientFilter(): boolean {
     return this.patientFilter.length > 0;
+  }
+
+  /** 视频数量 */
+  public videoCount(): number {
+    return this.countByType(MediaType.video);
   }
 
   /** 按 id 查找（★ 入参可能是数字形态，内部会归一化成字符串再比） */
@@ -257,26 +257,17 @@ export class MediaStore extends BaseStore {
    *   所以这里不按类型分流；类型由响应里的 `type` 字段决定（服务端按扩展名判定）。
    */
   public async uploadMedia(file: UploadFileSpec): Promise<MediaItemModel | null> {
-    this.beginLoad();
-    try {
-      const dto: UploadImageOutDto = await MediaApi.uploadMedia(file);
-      const item: MediaItemModel = Mapper.toUploadedMedia(dto, new Date());
-      this.prependLocal(item);
-      await StorageManager.mediaDao().save(item);
-      this.endLoadOk();
-      this.log().i(`素材已上传 · id=${item.id} type=${item.type as string}`);
-      // ★ 返回整条模型而不是 ActionResultModel：窗口层要拿 id 去开分析会话
-      this.lastUploaded = item;
-      return item;
-    } catch (err) {
-      const apiErr = toApiError(err as Object);
-      this.endLoadErr(apiErr.message);
-      this.log().e('素材上传失败', err as Object);
-      return null;
-    }
+    const dto: UploadImageOutDto = await MediaApi.uploadMedia(file);
+    return this.commitUpload(dto, '');
   }
 
-  /** 保留旧名字（上一轮的调用方/文档都用它），语义等价于 `uploadMedia` 的图片场景 */
+  /** 上传素材并附带患者名（供素材库患者命名用）· 返回整条模型便于窗口层拿 id */
+  public async uploadMediaWithPatient(file: UploadFileSpec, patient: string): Promise<MediaItemModel | null> {
+    const dto: UploadImageOutDto = await MediaApi.uploadImageWithPatient(file, patient);
+    return this.commitUpload(dto, patient);
+  }
+
+  /** 上传图片（旧签名兼容）· 语义等价于 `uploadMedia` 的图片场景 */
   public async uploadImage(file: UploadFileSpec): Promise<ActionResultModel> {
     const item: MediaItemModel | null = await this.uploadMedia(file);
     if (item === null) {
@@ -287,24 +278,36 @@ export class MediaStore extends BaseStore {
 
   /** 上传图片并附带患者名（供素材库患者命名用） */
   public async uploadImageWithPatient(file: UploadFileSpec, patient: string): Promise<ActionResultModel> {
+    const item: MediaItemModel | null = await this.uploadMediaWithPatient(file, patient);
+    if (item === null) {
+      return MediaStore.fail(this.errorMsg.length > 0 ? this.errorMsg : '上传失败');
+    }
+    return MediaStore.ok('上传成功');
+  }
+
+  /**
+   * 上传收尾的公共实现：拿到 dto → 补字段 → 入 store + 镜像表 → 返回整条模型
+   * ★ `patient` 为空串表示不命名；后端若未回显 patient 则用入参补齐。
+   */
+  private async commitUpload(dto: UploadImageOutDto, patient: string): Promise<MediaItemModel | null> {
     this.beginLoad();
     try {
-      const dto: UploadImageOutDto = await MediaApi.uploadImageWithPatient(file, patient);
       const item: MediaItemModel = Mapper.toUploadedMedia(dto, new Date());
-      // 后端若未回显 patient，用入参补齐，保证本地一致
       if (item.patient.length === 0) {
         item.patient = patient;
       }
       this.prependLocal(item);
       await StorageManager.mediaDao().save(item);
       this.endLoadOk();
-      this.log().i(`图片已上传 · id=${item.id} · patient=${item.patient}`);
-      return MediaStore.ok('上传成功');
+      this.log().i(`素材已上传 · id=${item.id} type=${item.type as string} · patient=${item.patient}`);
+      // ★ 返回整条模型而不是 ActionResultModel：窗口层要拿 id 去开分析会话
+      this.lastUploaded = item;
+      return item;
     } catch (err) {
       const apiErr = toApiError(err as Object);
       this.endLoadErr(apiErr.message);
-      this.log().e('图片上传失败', err as Object);
-      return MediaStore.fail(apiErr.message);
+      this.log().e('素材上传失败', err as Object);
+      return null;
     }
   }
 
@@ -385,6 +388,7 @@ export class MediaStore extends BaseStore {
       }
     }
     this.items = next;
+    // 同步当前选中详情（若有）
     const current: MediaItemModel | null = this.current;
     if (current !== null && current.id === mediaId) {
       const updatedCurrent: MediaItemModel = {
