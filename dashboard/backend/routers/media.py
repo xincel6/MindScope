@@ -1,5 +1,4 @@
 import base64
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import FRAMES_PER_BATCH
 from database import get_db
 from deps import get_current_user
+from media_paths import media_file_name, resolve_media_path
 from models import DiagnosisReport, MediaAsset, User
 from schemas import (
     AnalysisRequest,
@@ -18,8 +18,9 @@ from schemas import (
     FaceB64Request,
     MediaItemOut,
     MediaListOut,
+    PatientUpdateIn,
 )
-from services.inference import lmtformer_inference
+from services.inference import average_heatmaps, lmtformer_inference
 
 router = APIRouter(prefix="/api")
 
@@ -34,8 +35,9 @@ async def list_media(
 
     items: list[MediaItemOut] = []
     for a in assets:
-        # Windows 路径为反斜杠，不能用 split('/')；统一取文件名用于 /media/<name>
-        fname = Path(a.file_path).name if a.file_path else ""
+        # DB 里可能是 Windows 反斜杠路径 / 别的机器上的绝对路径；
+        # 统一交给 media_file_name（POSIX 的 Path.name 不认反斜杠，会返回整条字符串）
+        fname = media_file_name(a.file_path)
         items.append(MediaItemOut(
             id=str(a.id),
             name=a.name,
@@ -43,6 +45,7 @@ async def list_media(
             thumbnail_url=a.thumbnail_url or "",
             url=f"/media/{fname}" if fname else "",
             duration=a.duration,
+            patient=a.patient,
             created_at=a.created_at.strftime("%Y-%m-%d"),
         ))
 
@@ -65,18 +68,46 @@ async def delete_media(
     if not asset:
         raise HTTPException(status_code=404, detail="资源不存在")
 
-    file_path = Path(asset.file_path)
+    # 记录里的路径可能来自别的机器；按文件名回到本机 MEDIA_DIR 找真实文件
+    file_path = resolve_media_path(asset.file_path)
     await db.execute(delete(DiagnosisReport).where(DiagnosisReport.media_id == pk))
     await db.execute(delete(MediaAsset).where(MediaAsset.id == pk))
     await db.commit()
 
-    if file_path.is_file():
+    if file_path is not None:
         try:
             file_path.unlink()
         except OSError:
             pass
 
     return {"ok": True}
+
+
+@router.put("/media/{media_id}/patient")
+async def update_media_patient(
+    media_id: str,
+    req: PatientUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """给素材命名 / 改所属患者；空串或 null 表示清除。"""
+    try:
+        pk = int(media_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的资源 ID")
+
+    patient = (req.patient or "").strip()
+    if len(patient) > 64:
+        raise HTTPException(status_code=400, detail="患者名最长 64 个字符")
+
+    result = await db.execute(select(MediaAsset).where(MediaAsset.id == pk))
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="资源不存在")
+
+    asset.patient = patient or None
+    await db.commit()
+    return {"ok": True, "patient": asset.patient or ""}
 
 
 @router.post("/analyze", response_model=AnalysisResponse)
@@ -128,9 +159,10 @@ async def analyze_single_face(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     faces = [face] * FRAMES_PER_BATCH
-    scores, ms, heatmap = await lmtformer_inference(faces)
+    scores, ms, heatmaps = await lmtformer_inference(faces)
     return FaceAnalyzeOut(
         bdi_score=float(scores[0]),
         inference_time_ms=float(ms),
-        heatmap_data=heatmap,
+        # 单张脸没有"时间"可言：把 12 个时间 token 平均回一张，口径与旧版一致
+        heatmap_data=average_heatmaps(heatmaps),
     )

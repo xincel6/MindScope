@@ -58,8 +58,41 @@ export const MAX_FRAME_HISTORY: number = 90;
  * `components/charts/HeatmapViewModel.ets` 的 `MAX_STRIP_TILES`），
  * 保留 30 帧既足够回看，又把"多素材并存"的内存从 ~6MB 压到 ~2MB 量级。
  * 曲线不受影响：分数序列单独存在 `scores` 里，最多 120 点。
+ *
+ * ★ 裁剪方式是**按时间均匀抽到 30 帧**（保留首尾），不是"从头部切掉、只留最后 30"：
+ *   服务端每 24 帧才推理一次，只留尾部 = 列表里全是同一批的同一张图。
+ *   均匀抽样后，30 帧仍覆盖整段视频（live 侧上限 90 帧），逐帧列表才有"切分视图"的意义。
  */
 export const MAX_ARCHIVE_FRAMES: number = 30;
+
+/**
+ * 等距抽样（保留首尾）· 与 `HeatmapViewModel.sampleEvenly` 同一口径
+ *
+ * 这里不能直接 import 组件层：store 是数据层，不应该依赖 UI 组件目录。
+ * 两处实现都很短（十行），保持一致即可；口径一致性由 `test-heatmap-strip.mjs` 的镜像断言守着。
+ */
+function sampleEvenly(frames: AnalysisFrameModel[], maxCount: number): AnalysisFrameModel[] {
+  if (maxCount <= 0) {
+    return [];
+  }
+  if (frames.length <= maxCount) {
+    return frames;
+  }
+  const out: AnalysisFrameModel[] = [];
+  const lastIndex: number = frames.length - 1;
+  const step: number = lastIndex / (maxCount - 1);
+  for (let i = 0; i < maxCount; i++) {
+    let index: number = Math.round(i * step);
+    if (index < 0) {
+      index = 0;
+    }
+    if (index > lastIndex) {
+      index = lastIndex;
+    }
+    out.push(frames[index]);
+  }
+  return out;
+}
 
 /**
  * 同时保留多少个素材的归档会话
@@ -115,7 +148,7 @@ export class AnalysisStateHolder extends AnalysisListener {
 
   /**
    * 主动停止并释放连接（登出 / 换账号时必须调用）
-   * ★ **不清结果**：用户离开详情页后回来仍能看到那个素材的分数与热力图。
+   * ★ **不清结果**：用户切走页签再回来，仍能看到那个素材的分数与热力图。
    * ★ 会话状态不动：真在跑的任务会在 `onDone` / `onError` 里收尾。
    */
   public stop(): void {
@@ -145,7 +178,38 @@ export class AnalysisStateHolder extends AnalysisListener {
   }
 
   /**
-   * **按素材归档的全部会话**（详情页 / 工作台的唯一帧数据入口）
+   * 恢复一次**已收尾**的评估会话（工作台持久化恢复的唯一入口）
+   *
+   * ★ 只在 App 启动/登录后由 `AppStore.restoreAssessment()` 调用一次。
+   * ★ 恢复出来的不是 live 会话：`mediaId` 置空、`running=false`，
+   *   于是工作台会按"归档"展示（无取消按钮、无实时进度），文案由页面负责。
+   * ★ 同步把 live 指针/镜像字段写成该会话的快照，避免 `currentTask()` 与
+   *   `analysisErrorOf()` 之类访问器读到半截状态。
+   */
+  public restoreSession(session: AnalysisSessionModel): void {
+    const frames: AnalysisFrameModel[] = session.frames;
+    const lastFrame: AnalysisFrameModel | null =
+      frames.length === 0 ? null : frames[frames.length - 1];
+
+    this.state.sessions = [session];
+    this.state.mediaId = '';
+    this.state.running = false;
+    this.state.socketState = SocketState.idle;
+    this.state.progress = session.progress;
+    this.state.bdiScore = session.score;
+    this.state.frameCount = session.frameCount;
+    this.state.lastFrame = lastFrame;
+    this.state.vlmText = session.vlmText;
+    this.state.finalScore = session.score;
+    this.state.errorMsg = session.errorMsg;
+
+    this.log.i(
+      `恢复上一次评估 · mediaId=${session.mediaId} status=${session.status as number}`
+    );
+  }
+
+  /**
+   * **按素材归档的全部会话**（工作台分析区的唯一帧数据入口）
    * ★ 返回的就是 `@Trace` 的那个数组本身：页面在 `@Computed` 里读它，
    *   每帧整体替换引用时会自动失效重算，不依赖窗口层的同步时机。
    */
@@ -394,12 +458,10 @@ export class AnalysisStateHolder extends AnalysisListener {
     return session;
   }
 
-  /** 收尾（done）后的会话 · 帧数组裁剪 + 状态置 done */
+  /** 收尾（done）后的会话 · 帧数组按时间均匀抽稀 + 状态置 done */
   private withDone(prev: AnalysisSessionModel, finalScore: number): AnalysisSessionModel {
-    let frames: AnalysisFrameModel[] = prev.frames;
-    if (frames.length > MAX_ARCHIVE_FRAMES) {
-      frames = frames.slice(frames.length - MAX_ARCHIVE_FRAMES);
-    }
+    // ★ 抽稀而不是"砍掉前段"：只留最后 30 帧会让逐帧列表退化成"同一批的同一张图"
+    const frames: AnalysisFrameModel[] = sampleEvenly(prev.frames, MAX_ARCHIVE_FRAMES);
     const session: AnalysisSessionModel = {
       mediaId: prev.mediaId,
       mediaType: prev.mediaType,

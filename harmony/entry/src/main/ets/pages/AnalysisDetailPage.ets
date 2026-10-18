@@ -432,7 +432,9 @@ export struct AnalysisDetailPage {
     if (count === 0) {
       return '逐帧热力图（视频切分视图）';
     }
-    return `逐帧热力图（视频切分视图）· 共 ${count} 帧`;
+    // ★ 列表是"按时间均匀抽取"的渲染窗口，不是"最后 N 帧"：说清它覆盖整段，
+    //   否则用户会以为视频只有这 24 帧（服务端一批就是 24 帧，正好全同）。
+    return `逐帧热力图（视频切分视图）· 均匀抽取 ${count} 格`;
   }
 
   // ══════════════════ 交互 ══════════════════
@@ -717,7 +719,7 @@ export struct AnalysisDetailPage {
       Text(
         this.isImage
           ? '图片素材只有 1 帧推理结果，没有可横滑的其它帧'
-          : '← 左右滑动查看每一帧的热力图，点一格可固定主图 →'
+          : '← 左右滑动查看；热力图每 2 帧一张，BDI 每 24 帧推理一次 →'
       )
         .fontSize(UiTheme.fontSizeCaption)
         .fontColor(UiTheme.textSecondary)

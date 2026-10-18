@@ -1,15 +1,20 @@
 /**
- * test-analysis-detail.mjs · 分析详情页**取数逻辑**离线测试
+ * test-analysis-detail.mjs · 工作台分析区**取数逻辑**离线测试
  *
  * ────────────────── 为什么需要它 ──────────────────
- * 本轮把分析页的两个空组件换成了真实图表，而"图片 / 视频"、"有会话 / 只有报告分数"、
- * "1 帧 / N 帧"、"跨素材取错帧"这些组合共有十余种分支，全部靠真机点一遍不现实
- * （本工程暂无签名，跑不了 HAP）。所以沿用本仓库既有做法：
+ * 分析内容已从独立详情页搬进工作台主页：hero / 热力图 / 情绪曲线 / 严重度分布 / VLM
+ * 都在 `WorkbenchPage` 与 `components/analysis/**` 里。而"图片 / 视频"、
+ * "有会话 / 只有报告分数"、"1 帧 / N 帧"、"跨素材取错帧"这些组合共有十余种分支，
+ * 全部靠真机点一遍不现实（本工程暂无签名，跑不了 HAP）。所以沿用本仓库既有做法：
  *
  *   · 下面把 `components/charts/AnalysisChartModel.ets` 的判定**逐行镜像**到 Node；
- *   · 用例覆盖用户本轮亲自报过的三个现象（图片十帧 / 回来只剩一帧 / 素材串台）；
+ *   · 用例覆盖用户亲自报过的三个现象（图片十帧 / 回来只剩一帧 / 素材串台）；
  *   · 再做**源码文本级检查**，确认真正生效的 `.ets` / `.py` / `.vue` 里仍是同一套逻辑，
  *     避免"测试里的镜像改了、产品代码没改"这种假绿。
+ *
+ * ★ 本轮（工作台主页重构）页面路径从 `pages/AnalysisDetailPage.ets` 改为
+ *   `pages/WorkbenchPage.ets` + `components/workbench/AnalysisHeroCard.ets`。
+ *   断言口径不变：图片=1 帧、箭头/刻度尺分流、图表已接线、绝不跨素材兜底。
  *
  * 用法：node harmony/scripts/test-analysis-detail.mjs
  */
@@ -21,7 +26,12 @@ import { dirname, join } from 'node:path';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ETS = join(HERE, '..', 'entry', 'src', 'main', 'ets');
 const MODEL_PATH = join(ETS, 'components', 'charts', 'AnalysisChartModel.ets');
-const PAGE_PATH = join(ETS, 'pages', 'AnalysisDetailPage.ets');
+/** 分析内容现在的主页面 */
+const PAGE_PATH = join(ETS, 'pages', 'WorkbenchPage.ets');
+/** hero 里的类型徽标 / 分数装配 */
+const HERO_PATH = join(ETS, 'components', 'workbench', 'AnalysisHeroCard.ets');
+/** 从详情页搬入的热力图卡 */
+const HEATMAP_PATH = join(ETS, 'components', 'analysis', 'AnalysisHeatmapCard.ets');
 const HOLDER_PATH = join(ETS, 'store', 'AnalysisStateHolder.ets');
 const STORE_PATH = join(ETS, 'store', 'AppStore.ets');
 const BACKEND_PATH = join(HERE, '..', '..', 'dashboard', 'backend', 'services', 'frame_processor.py');
@@ -341,6 +351,8 @@ console.log('\n6) 判档边界与刻度尺权重');
 console.log('\n7) 源码文本级检查');
 const modelSrc = readFileSync(MODEL_PATH, 'utf8');
 const pageSrc = readFileSync(PAGE_PATH, 'utf8');
+const heroSrc = readFileSync(HERO_PATH, 'utf8');
+const heatmapSrc = readFileSync(HEATMAP_PATH, 'utf8');
 const holderSrc = readFileSync(HOLDER_PATH, 'utf8');
 const storeSrc = readFileSync(STORE_PATH, 'utf8');
 
@@ -351,11 +363,14 @@ const required = [
   [modelSrc, 'AnalysisChartModel 曲线抽稀上限 60', /MAX_CURVE_POINTS: number = 60/],
   [modelSrc, 'AnalysisChartModel 视频才画饼图', /if \(!isImage && scores\.length >= 2\)/],
   [modelSrc, 'AnalysisChartModel 复用 mapper 摊平四档', /Mapper\.toSeverityBuckets\(distribution, scores\.length\)/],
-  [pageSrc, '详情页用 buildCurveView', /buildCurveView\(this\.session/],
-  [pageSrc, '详情页用 buildSeverityView', /buildSeverityView\(this\.session/],
-  [pageSrc, '详情页按 mediaId 取会话', /analysisSessionOf\(this\.pageParam\.mediaId\)/],
-  [pageSrc, '详情页有类型徽标', /MediaTypeBadge\(\{ mediaType: this\.pageParam\.mediaType \}\)/],
-  [pageSrc, '详情页两图表卡片已挂载', /EmotionCurveCard\(\{ view: this\.curveView \}\)[\s\S]*SeverityDistributionCard\(\{ view: this\.severityView \}\)/],
+  [pageSrc, '工作台用 buildCurveView', /buildCurveView\(\s*this\.session/],
+  [pageSrc, '工作台用 buildSeverityView', /buildSeverityView\(\s*this\.session/],
+  [pageSrc, '工作台按 mediaId 取会话', /analysisSessionOf\(current\.mediaId\)/],
+  [pageSrc, '工作台挂载情绪曲线卡', /EmotionCurveCard\(\{ view: this\.curveView \}\)/],
+  [pageSrc, '工作台挂载严重度分布卡', /SeverityDistributionCard\(\{ view: this\.severityView \}\)/],
+  [pageSrc, '工作台挂载热力图卡', /AnalysisHeatmapCard\(\{/],
+  [heroSrc, 'hero 有类型徽标', /MediaTypeBadge\(\{ mediaType: this\.model\.mediaType \}\)/],
+  [heatmapSrc, '热力图卡按传入 frames 取数', /buildHeatmapView\(this\.frames/],
   [holderSrc, '桥接器按素材取会话', /public sessionOf\(mediaId: string\)/],
   [holderSrc, '桥接器归档上限 6 条会话', /MAX_ARCHIVE_SESSIONS: number = 6/],
   [holderSrc, '桥接器收尾裁剪 30 帧', /MAX_ARCHIVE_FRAMES: number = 30/],
@@ -366,10 +381,22 @@ for (const [src, name, re] of required) {
   check(`源码含「${name}」`, re.test(src), `未匹配 ${re}`);
 }
 
+const analysisSources = [
+  [pageSrc, '工作台'],
+  [heroSrc, 'hero'],
+  [heatmapSrc, '热力图卡']
+];
+const forbiddenAnalysis = [
+  ['图表占位块 chartPlaceholder', /chartPlaceholder/],
+  ['全局最后一帧兜底 analysisLastFrame', /analysisLastFrame/],
+  ['followLiveTask 开关', /followLiveTask/]
+];
+for (const [src, label] of analysisSources) {
+  for (const [name, re] of forbiddenAnalysis) {
+    check(`${label} 已无「${name}」（已剥注释）`, !re.test(stripComments(src)), `仍匹配 ${re}`);
+  }
+}
 const forbidden = [
-  [pageSrc, '详情页已无图表占位块 chartPlaceholder', /chartPlaceholder/],
-  [pageSrc, '详情页已无全局最后一帧兜底', /analysisLastFrame/],
-  [pageSrc, '详情页已无 followLiveTask 开关', /followLiveTask/],
   [holderSrc, '桥接器已无全局 frameHistory', /frameHistory/],
   [holderSrc, '桥接器已无全局 scoreHistory', /scoreHistory/],
   [storeSrc, '门面已无 analysisFrameHistory', /analysisFrameHistory/]
@@ -394,7 +421,7 @@ check('网页端曲线处理"只有一个分数"（单点补成直线）', /isSi
 // ═══════════════ 汇总 ═══════════════
 console.log('');
 if (failures === 0) {
-  console.log('PASS 全部通过：图片=单帧/直线/刻度尺，视频=逐帧/折线/帧级分布，且素材之间不串台。');
+  console.log('PASS 全部通过：工作台分析区保持「图片=单帧/直线/刻度尺，视频=逐帧/折线/帧级分布」，且素材之间不串台。');
   process.exit(0);
 }
 console.log(`FAIL 存在 ${failures} 处失败。`);

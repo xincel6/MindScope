@@ -1,5 +1,5 @@
 /**
- * EmotionCurveCard · 分析详情页「情绪曲线」卡片（原占位块 ①）
+ * EmotionCurveCard · 工作台分析区「情绪曲线」卡片（原分析详情页搬入）
  *
  * ────────────────── 三种形态（由 `CurveView.mode` 决定）──────────────────
  *   ① `series`  → 逐帧 BDI 折线：**直接复用**工作台/统计页那套
@@ -22,8 +22,12 @@ import { ScoreTrendChart } from './ScoreTrendChart';
 import { UiTheme } from '../../common/UiTheme';
 import { SeverityLevel, SeverityMeta, UiConstant } from '../../types/Index';
 
-/** 直线形态的绘图区高度（与折线图同高，切换素材类型时卡片不跳变） */
-const FLAT_AREA_HEIGHT: number = 180;
+/**
+ * 直线形态的绘图区高度
+ * ★ 主页面（工作台）上这张卡下面还有严重度分布，180 会让单帧图片留出大片空白；
+ *   120 足够放下「水平线 + 分数 + 档位」，卡片更紧凑，且与视频折线图切换时不至于跳变太大。
+ */
+const FLAT_AREA_HEIGHT: number = 120;
 
 @ComponentV2
 export struct EmotionCurveCard {

@@ -20,7 +20,8 @@ import { StorageManager } from '../persistence/StorageManager';
 import {
   ActionResultModel, AnalysisFrameModel, AnalysisSessionModel, BootPhase, BdiThreshold, CurrentTaskModel,
   BDI_MAX_SCORE, MediaItemModel, MediaType, normalizeMediaId, RecentMediaModel, ReportListItemModel,
-  SeverityBucketModel, SocketState, StatsModel, TaskStatus, UiConstant, UserModel
+  SeverityBucketModel, SocketState, StatsModel, TaskStatus, UiConstant, UserModel,
+  WorkbenchAssessmentModel
 } from '../types/Index';
 import { AnalysisState, AppState, AuthState, MediaState, ReportState, StatsState } from '../types/storeState';
 import { AnalysisStateHolder } from './AnalysisStateHolder';
@@ -131,6 +132,13 @@ export class AppStore {
   /** 当前任务失败文案（status = failed 时非空） */
   @Trace currentTaskError: string = '';
 
+  /**
+   * 当前任务是否来自「重启后恢复的上一次评估」
+   * ★ 只影响展示文案与阶段轨：恢复的评估显示「最近一次评估 / 上次分析 · 时间」，
+   *   不画实时阶段轨；一旦开始新的分析就置回 false。
+   */
+  @Trace currentTaskRestored: boolean = false;
+
   // ══════════════════ 单例 ══════════════════
 
   private static instance: AppStore | null = null;
@@ -161,6 +169,19 @@ export class AppStore {
     HttpClient.onUnauthorized((message: string): void => {
       this.handleUnauthorized(message);
     });
+
+    // ★★ 提前建好分析桥接器（BUG-23 的修复 · 不建立任何网络连接）
+    //
+    // 工作台主页在"本次启动还没有开始过分析"时就会读会话归档。旧实现里
+    // `analysisHolder` 是懒建的，此时 `analysisSessionOf()` 会**提前 return null**，
+    // 页面的 `@Computed session` 首次求值因此**没有读到** `AnalysisState.sessions`
+    // 这个 @Trace 数组。等用户点「重新分析」写入会话时，这个 Computed 不会失效，
+    // 页面就一直显示"本机无逐帧数据 / 等待推理数据"，而日志里分析其实已经跑完。
+    // （真机复现：hero 停在"分析中 0%"，完成后热力图也不出现；切页签重建页面才恢复。）
+    //
+    // `AnalysisSocket` 的构造函数只保存 listener，`start()` 才会 openSocket，
+    // 所以提前建桥接器不会在未登录时发起任何连接；登出时 `clearAll()` 仍会 stop + 清会话。
+    this.analysis();
   }
 
   // ══════════════════ 领域 store 访问器（需要调用方法时用）══════════════════
@@ -185,7 +206,12 @@ export class AppStore {
     return this.domainStats;
   }
 
-  /** 分析桥接器（懒建，避免未登录时就建 WS 相关对象） */
+  /**
+   * 分析桥接器
+   * ★ 在 `AppStore` 构造函数里就已经建好（见 constructor 的 BUG-23 说明）：
+   *   构造本身不建立网络连接，只保证页面第一次读会话归档时能读到 @Trace 的
+   *   `sessions` 数组，后续写入才会触发重算。
+   */
   public analysis(): AnalysisStateHolder {
     if (this.analysisHolder === null) {
       const state: AnalysisState = new AnalysisState();
@@ -251,6 +277,8 @@ export class AppStore {
     ]);
     this.offline = this.detectOffline();
     this.sync();
+    // ★ 引导完成/登录成功后恢复上一次评估（工作台 hero + 分析区原样还原）
+    await this.restoreAssessment();
   }
 
   /** 主动刷新单个领域（下拉刷新按页调用，比全量刷新省流量） */
@@ -293,8 +321,16 @@ export class AppStore {
     this.sync();
   }
 
-  /** 分析收尾后刷新统计与报告（服务端此刻已写入 diagnosis_report） */
+  /**
+   * 分析收尾：**先持久化评估**，再刷新统计/报告/媒体
+   *
+   * ★ 持久化放在刷新之前：刷新要走网络，离线或慢网时可能拖很久；
+   *   评估一旦收尾就应该立刻落盘，避免用户在等待刷新时杀掉 App 丢结果。
+   */
   public async onAnalysisFinished(): Promise<void> {
+    // 先把 holder 的 done/finalScore 折进 currentTask 镜像，落盘时才是 done + 最终分
+    this.sync();
+    await this.persistAssessment();
     await this.domainStats.refresh();
     await this.domainReport.refresh();
     await this.domainMedia.refresh();
@@ -365,7 +401,7 @@ export class AppStore {
 
   /**
    * 记录"开始一次新分析"· 由窗口层在**上传成功后、启动 WS 之前**调用
-   * 此后工作台的「当前任务」卡片就能显示它，即使页面并不在分析详情页上。
+   * 此后工作台的 hero 就能显示它，即使用户不在分析区所在的位置。
    */
   public setCurrentTask(mediaId: string, mediaName: string, mediaType: MediaType): void {
     this.currentTaskMediaId = normalizeMediaId(mediaId);
@@ -374,6 +410,8 @@ export class AppStore {
     this.currentTaskStatus = TaskStatus.running;
     this.currentTaskScore = 0;
     this.currentTaskError = '';
+    // 新任务开始：不再处于"上次评估"的展示态；完成后再由持久化覆盖旧记录
+    this.currentTaskRestored = false;
     this.sync();
   }
 
@@ -403,8 +441,9 @@ export class AppStore {
       progress: progress,
       bdiScore: score,
       errorMsg: this.currentTaskError,
-      firstFrameUrl: this.firstFrameUrlOf(session),
-      // 条长 = 分数 / 满分（口径与本轮「最近使用的素材」一致：越长越严重）
+      // ★ 首帧取数与「查看历史素材」共用同一套逻辑（公开入口见 firstFrameUrlOfMedia）
+      firstFrameUrl: this.firstFrameUrlOf(this.currentTaskMediaId, session),
+      // 条长 = 分数 / 满分（工作台统一的严重度口径：越长越严重）
       scoreRatio: score <= 0 ? 0 : (score >= BDI_MAX_SCORE ? 1 : score / BDI_MAX_SCORE),
       // 没出分时不能说"正常"：给空标签 + 中性色，避免把"还没算"读成"结果正常"
       severityLabel: score > 0 ? UiConstant.severityLabelOf(level) : '',
@@ -416,7 +455,7 @@ export class AppStore {
   }
 
   /**
-   * 当前任务的首帧照片地址
+   * 任意素材的首帧照片地址（工作台 hero / 历史素材查看共用）
    *
    * ① 会话里的**首帧对齐人脸**优先（图片=那唯一一帧，视频=采样出的第一帧）；
    * ② 首帧还没到、但媒体库有缩略图（图片上传后后端会生成）→ 用缩略图顶上，
@@ -425,13 +464,24 @@ export class AppStore {
    *
    * ★ 只在**图片**上退到缩略图：视频的 `thumbnailUrl` 会回落到 `item.url`（一个 .mp4 地址），
    *   `Image` 组件吃它只会得到一片空白，反而掩盖了"帧还没到"这件事。
+   * ★ 按 mediaId 取**该素材自己的**会话；取不到就退到图片缩略图/占位，
+   *   绝不拿别的素材的首帧顶替（与 BUG-14 的根因相对）。
    */
-  private firstFrameUrlOf(session: AnalysisSessionModel | null): string {
+  public firstFrameUrlOfMedia(mediaId: string): string {
+    const normalized: string = normalizeMediaId(mediaId);
+    if (normalized.length === 0) {
+      return '';
+    }
+    return this.firstFrameUrlOf(normalized, this.analysisSessionOf(normalized));
+  }
+
+  /** 首帧取数的内部实现 · 允许调用方传入已取好的会话来省一次查找 */
+  private firstFrameUrlOf(mediaId: string, session: AnalysisSessionModel | null): string {
     if (session !== null && session.firstFrameFace.length > 0) {
       const raw: string = session.firstFrameFace;
       return raw.startsWith('data:') ? raw : `data:image/jpeg;base64,${raw}`;
     }
-    const media: MediaItemModel | null = this.domainMedia.findById(this.currentTaskMediaId);
+    const media: MediaItemModel | null = this.domainMedia.findById(normalizeMediaId(mediaId));
     if (media === null || media.type !== MediaType.image) {
       return '';
     }
@@ -445,6 +495,116 @@ export class AppStore {
     this.currentTaskStatus = TaskStatus.none;
     this.currentTaskScore = 0;
     this.currentTaskError = '';
+    this.currentTaskRestored = false;
+  }
+
+  // ══════════════════ 工作台：当前评估持久化 ══════════════════
+
+  /** 当前用户归属 key（持久化载荷校验，避免换号串数据） */
+  private userKeyOf(user: UserModel): string {
+    return `${user.id}`;
+  }
+
+  /**
+   * 持久化「当前评估」：当前任务元信息 + 该素材的最终分析会话
+   *
+   * ★ 只在 `done` 时落盘：
+   *   · running 态落盘会在重启后留下永远"分析中 42%"的幽灵任务；
+   *   · failed 不落盘，保留上一次成功评估更有用。
+   * ★ 会话包含逐帧人脸 base64 与 16×16 热度矩阵（最多 30 帧，约 0.5MB），
+   *   所以放 RDB 的整包 JSON，而不是 preferences 小配置。
+   * ★ 任何异常都不打断分析收尾（日志留痕即可）。
+   */
+  public async persistAssessment(): Promise<void> {
+    const user: UserModel | null = this.currentUser;
+    if (user === null) {
+      return;
+    }
+    const task: CurrentTaskModel | null = this.currentTask();
+    if (task === null || task.status !== TaskStatus.done) {
+      return;
+    }
+    const session: AnalysisSessionModel | null = this.analysisSessionOf(task.mediaId);
+    const payload: WorkbenchAssessmentModel = {
+      version: 1,
+      userKey: this.userKeyOf(user),
+      savedAt: Date.now(),
+      mediaId: task.mediaId,
+      mediaName: task.mediaName,
+      mediaType: task.mediaType,
+      status: task.status,
+      score: task.bdiScore,
+      error: task.errorMsg,
+      session: session
+    };
+    try {
+      const json: string = JSON.stringify(payload);
+      const ok: boolean = await StorageManager.assessmentDao().save(json, payload.savedAt);
+      this.log.i(
+        `评估已持久化 · mediaId=${payload.mediaId} 会话=${session === null ? '无' : '有'} ok=${ok}`
+      );
+    } catch (err) {
+      this.log.e('评估持久化失败', err as Object);
+    }
+  }
+
+  /**
+   * 恢复上一次评估（App 启动 / 登录成功后由 `loadAll()` 调用）
+   *
+   * 顺序：
+   *   ① 校验 RDB 载荷存在、版本与 userKey 匹配（换号/旧版本直接丢弃）；
+   *   ② 写回当前任务镜像（mediaId / name / type / status / score / error）；
+   *   ③ 把最终会话注入桥接器归档（热力图/曲线/严重度/VLM 全部回来）；
+   *   ④ `sync()` 让门面镜像与 currentTask 投影一致。
+   *
+   * ★ 恢复出来的不是 live 会话：无取消按钮、无实时进度；页面会按
+   *   `currentTaskRestored` 显示「最近一次评估 / 上次分析 · 时间」。
+   * ★ 若本次会话已经开始了新任务（currentTaskMediaId 非空），不覆盖。
+   */
+  public async restoreAssessment(): Promise<void> {
+    const user: UserModel | null = this.currentUser;
+    if (user === null || this.currentTaskMediaId.length > 0) {
+      return;
+    }
+    const json: string = await StorageManager.assessmentDao().loadPayload();
+    if (json.length === 0) {
+      return;
+    }
+
+    let payload: WorkbenchAssessmentModel;
+    try {
+      payload = JSON.parse(json) as WorkbenchAssessmentModel;
+    } catch (err) {
+      this.log.w('评估快照解析失败，已丢弃');
+      await StorageManager.assessmentDao().deleteAll();
+      return;
+    }
+
+    if (
+      payload.version !== 1 ||
+      payload.userKey !== this.userKeyOf(user) ||
+      payload.mediaId.length === 0
+    ) {
+      // 版本不兼容 / 换号：直接清掉，避免看到别的用户或半截数据
+      await StorageManager.assessmentDao().deleteAll();
+      this.log.i('评估快照版本或归属不匹配，已丢弃');
+      return;
+    }
+
+    this.currentTaskMediaId = payload.mediaId;
+    this.currentTaskMediaName = payload.mediaName;
+    this.currentTaskMediaType = payload.mediaType;
+    this.currentTaskStatus = payload.status;
+    this.currentTaskScore = payload.score;
+    this.currentTaskError = payload.error;
+    this.currentTaskRestored = true;
+
+    if (payload.session !== null && payload.session.mediaId === payload.mediaId) {
+      this.analysis().restoreSession(payload.session);
+    }
+
+    this.sync();
+    this.log.i(`已恢复上一次评估 · mediaId=${payload.mediaId} status=${payload.status as number}`);
   }
 
   /**
@@ -478,13 +638,15 @@ export class AppStore {
   // ══════════════════ 工作台：最近使用的素材 ══════════════════
 
   /**
-   * 最近使用的素材（按报告时间倒序、按素材去重）
+   * 最新报告投影（按报告时间倒序、按素材去重）
    *
+   * ★ 「最近使用的素材」列表已删除；本方法现在只用于工作台 hero 在
+   *   **没有当前任务 / 没有持久化评估**时的首条报告回退（页面取 1 条）。
    * ★ 为什么是从**报告**推导而不是从媒体库：
-   *   "使用过"= 跑过分析 = 服务端写了 `diagnosis_report`；
+   *   "评估过"= 跑过分析 = 服务端写了 `diagnosis_report`；
    *   而分数只存在于报告侧（`/api/media/list` 不返回任何评分）。
    * ★ 为什么要去重：同一素材重复分析会产生多条报告（`routers/ws.py` 每次落一条），
-   *   不去重的话"最近 2 条"可能全是同一个文件的两次分析。
+   *   不去重的话首条可能只是同一个文件的两次分析。
    * ★ `reportItems` 已由服务端按 `detected_at desc` 排序，这里保持顺序即最新在前。
    */
   public recentMedia(limit: number): RecentMediaModel[] {
@@ -581,7 +743,7 @@ export class AppStore {
     return this.domainMedia.visibleItems();
   }
 
-  /** 去重后的患者名列表（含「未命名」占位）· 素材库顶部筛选器用 */
+  /** 去重后的患者名列表（含「未命名」占位）· 顶部筛选器用 */
   public patientOptions(): string[] {
     return this.domainMedia.patientOptions();
   }
@@ -673,6 +835,8 @@ export class AppStore {
     const item: MediaItemModel | null = this.findMedia(mediaId);
     const id: string = item === null ? normalizeMediaId(mediaId) : item.id;
     const type: MediaType = item === null ? MediaType.image : item.type;
+    // 新一轮分析开始：清掉"上次评估恢复"标记（即便调用方没走 setCurrentTask）
+    this.currentTaskRestored = false;
     try {
       this.analysis().start(id, type);
       this.sync();
@@ -709,7 +873,7 @@ export class AppStore {
   }
 
   /**
-   * **按素材归档的分析会话列表**（详情页/工作台的唯一帧数据入口）
+   * **按素材归档的分析会话列表**（工作台分析区的唯一帧数据入口）
    *
    * ★ 返回的是桥接器里那个 `@Trace` 数组**本身**，不是副本：
    *   页面在 `@Computed` 里读它，每来一帧（整体替换引用）就会失效重算，
@@ -723,7 +887,7 @@ export class AppStore {
 
   /**
    * 取某一素材自己的分析会话（没有则 null）
-   * ★ 详情页只认这个入口：**看哪个素材就只拿那个素材的结果**，
+   * ★ 工作台分析区只认这个入口：**看哪个素材就只拿那个素材的结果**，
    *   取不到就老实显示"本机未保留逐帧数据"，绝不拿别的素材兜底。
    */
   public analysisSessionOf(mediaId: string): AnalysisSessionModel | null {

@@ -1,8 +1,9 @@
 # ==============================================================================
 #  MindScope  .gitignore
 #  目标：只上传「源码 + 文档 + 演示数据 + 运行必需的模型文件」，不上传环境、依赖、素材原件
-#  重要：dashboard/backend/depression.db（121条诊断报告）
+#  重要：dashboard/backend/demo/depression.db（演示种子，首次启动自动复制为运行库）
 #        dashboard/backend/media/（15MB 图片视频）是演示数据，必须保留、必须上传！
+#  运行期数据（不入库）：dashboard/backend/depression.db、dashboard/backend/backups/
 #  例外：dashboard/backend/best.pt 与 dashboard/LMTformer_model/ 是服务端推理必需，
 #        体积很小（3.78 MB + 14 KB），必须上传，见文件末尾的「例外」小节。
 # ==============================================================================
@@ -43,6 +44,14 @@ htmlcov/
 # 离线安装用的 wheels 与手动下载的包（207MB，含 torch 124MB）
 wheelhouse/
 *.whl
+
+# ------------------------------------------------------------------ 运行期数据库
+# ★ 线上部署请把 DATABASE_PATH 指到仓库外（如 /var/lib/mindscope/depression.db），
+#   否则 git pull / reset 仍可能覆盖数据（BUG-26：2026-10-18 账号与报告被仓库快照覆盖）。
+# 默认运行库（首次启动从 demo/depression.db 复制而来）
+dashboard/backend/depression.db
+# 启动前自动备份（backup_db.py 生成）
+dashboard/backend/backups/
 
 # ------------------------------------------------------------------ Node / 前端
 node_modules/

@@ -62,7 +62,8 @@ async def seed():
 
             asset = MediaAsset(
                 name=item["name"],
-                file_path=str(file_path),
+                # 只存文件名：DB 随仓库搬机器后绝对路径会失效（见 media_paths.py）
+                file_path=file_path.name,
                 type=item["type"],
                 duration=item["duration"],
                 thumbnail_url="",

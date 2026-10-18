@@ -22,7 +22,7 @@
  */
 
 import { MediaType } from './enums';
-import { CurrentTaskModel, MediaItemModel, RecentMediaModel, ReportListItemModel } from './model';
+import { MediaItemModel, ReportListItemModel } from './Index';
 
 /** 全部页面参数的基类 · 让"页面参数"在类型上有一个共同祖先，便于统一签名与调试 */
 export class PageParam {
@@ -308,7 +308,7 @@ export class MediaLibraryPageParam extends TabPageParam {
   /** 点「上传」· 窗口层负责调起相册选择器并上传（内部弹患者命名输入框） */
   public onUpload: () => void = () => {};
 
-  /** 点某个素材 · 窗口层负责触发分析并打开分析详情 */
+  /** 点某个素材 · 窗口层负责触发分析（跳转目标后续再接） */
   public onOpenMedia: (mediaId: string) => void = (mediaId: string) => {};
 
   /** 点删除 · 窗口层负责二次确认 + 调删除接口 */
@@ -322,28 +322,6 @@ export class MediaLibraryPageParam extends TabPageParam {
 
   /** 给素材命名/改所属患者 · 窗口层负责弹输入框 + 调重命名接口 */
   public onRename: (mediaId: string) => void = (mediaId: string) => {};
-}
-
-/**
- * 历史报告页参数
- *
- * 报告列表与加载态直接读 `AppStore`（异步数据经参数传递不可靠）；
- * 本类只承载窗口层动作：刷新、筛选、打开已保存报告。
- */
-export class ReportsPageParam extends TabPageParam {
-  /** 拉取全部历史报告 */
-  public onRefresh: () => Promise<void> = (): Promise<void> => {
-    return Promise.resolve();
-  };
-
-  /** 应用筛选 · 空串表示全部 */
-  public onFilter: (severity: string, mediaType: string) => Promise<void> =
-    (severity: string, mediaType: string): Promise<void> => {
-      return Promise.resolve();
-    };
-
-  /** 打开某条已保存报告 */
-  public onOpenReport: (report: ReportListItemModel) => void = (report: ReportListItemModel) => {};
 }
 
 /**
@@ -396,38 +374,59 @@ export class ProfilePageParam extends TabPageParam {
 /**
  * 工作台参数（`pages/WorkbenchPage.ets`）
  *
- * ★★ 这个类**只承载动作回调，不承载展示数据** —— 与其它页面都不一样，原因：
- *   工作台的展示数据来自 `/health` 探活与 WebSocket，都是**异步到达**的。
- *   而页面是经 `Navigation.navDestination` 挂载的：改参数对象的字段**不会**让
- *   已挂载的页面重新收到新值（现象就是"点刷新圆点不变色，切页签回来才更新"）。
- *   所以工作台改为直接订阅 `AppStore`（`@ObservedV2` + `@Trace`，变更必定触发重绘），
- *   本类于是退化为"路由分发器用来识别页面 + 携带回调"的载体。
+ * ══════════════════ ★★ 本轮（工作台主页重构 + 评估持久化）契约变更 ══════════════════
+ * 工作台已不只是"入口页"：它把原分析详情页的 hero / 热力图 / 曲线 / 分布 /
+ * 智能解读全部收进主页面。随后按用户要求**删除了「最近使用的素材」区块**
+ * （页面已经足够长，且评估会持久化，不再需要靠列表找回上一次结果）。
  *
- * ★ 为什么还要保留 `instanceof WorkbenchPageParam` 这条判断：
- *   `MainPage.destination` 需要按路由名+参数类型分发到正确的页面组件，
- *   回调也必须有个地方存（由窗口层注入一次、页面只读）。
+ * 所以本类只剩两类东西：
+ *   · 动作回调（刷新 / 选素材 / 重新分析 / 取消）；
+ *   · 两个**挂载后仍会变化**的 UI 状态：`scrollTopTick`（上传完成回顶）与
+ *     `refreshing`（刷新按钮忙碌态）。
+ *
+ * ★ 这两个字段按 BUG-10/11 的判据必须可观察：写入发生在页面
+ *   `NavDestination` 挂载之后，普通 class 字段改了不会让已挂载页面刷新。
+ *   所以本类保持 `@ObservedV2`，字段标 `@Trace`；`@Param` 的对象引用不变。
+ *
+ * ★ 展示数据仍然**不进参数**：分数 / 帧 / 进度来自 `AppStore` 的 `@Trace`
+ *   会话（异步、逐帧到达），页面直接订阅；恢复上一次评估也由 AppStore 完成。
  */
+@ObservedV2
 export class WorkbenchPageParam extends TabPageParam {
-  // ── 动作回调（全部由窗口层实现） ──
+  // ── 动作回调（全部由窗口层实现；push 之前挂一次，不参与观察） ──
 
-  /** 点右上角刷新 / 离线横幅的「重试」· 窗口层调 `AppStore.checkHealth()` */
+  /** 点右上角刷新 / 离线横幅的「重试」· 窗口层做 health + 数据全量刷新 */
   public onRefresh: () => void = () => {};
 
   /** 点「选择素材」或「开始新的辅助评估」卡片 · 窗口层跳素材选择页 */
   public onSelectMedia: () => void = () => {};
 
-  /** 点「当前任务」卡片 · 窗口层重新打开分析详情页 */
-  public onOpenTask: () => void = () => {};
+  /**
+   * 点「重新分析该素材」· 窗口层对**这条素材**重新起一次分析
+   * ★ 名称/类型随参数带过去：hero 的当前任务 / 最近报告里都能拿到；
+   *   窗口层不需要再反查一次 media 表，素材缺失时也能按报告快照开始分析。
+   */
+  public onReanalyze: (mediaId: string, mediaName: string, mediaType: MediaType) => void =
+    (mediaId: string, mediaName: string, mediaType: MediaType) => {};
 
-  /** 点「查看全部」· 窗口层切到历史报告页签 */
-  public onViewAll: () => void = () => {};
+  /** 点「取消分析」· 窗口层调 AppStore.cancelAnalysis()（视频场景基本无效） */
+  public onCancelAnalysis: () => void = () => {};
 
-  /** 点某条最近素材 · 窗口层按该素材的报告快照打开分析详情页（**不是**切到历史报告页签） */
-  public onSelectRecent: (mediaId: string) => void = (mediaId: string) => {};
+  // ── 以下字段在页面挂载后会被窗口层改写，必须 `@Trace` ──
+
+  /**
+   * 回顶信号 · 上传完成出栈前 +1
+   * ★ 用户可能在页面底部时点「选择素材」；新任务的 hero 在顶部，
+   *   不回顶就会错过实时进度。用整型信号而不是布尔，连续两次上传也能触发。
+   */
+  @Trace scrollTopTick: number = 0;
+
+  /** 是否正在刷新（刷新按钮 / 离线重试的忙碌态） */
+  @Trace refreshing: boolean = false;
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  六、工作台二级页面
+//  六、工作台二级页面（本轮只剩素材选择页）
 // ══════════════════════════════════════════════════════════════════
 
 /**
@@ -436,9 +435,10 @@ export class WorkbenchPageParam extends TabPageParam {
  * 这一页负责"系统选择器 → 上传服务端"的完整动作，页面自己不碰网络与系统能力：
  *   - 点按钮   → 调 `onPickRequest`（窗口层决定用系统选择器还是别的方式）
  *   - 上传     → 调 `onUpload`（窗口层调 `MediaStore.uploadMedia`）
- *   - 上传成功 → 窗口层用 `replacePathByName` 把本页换成分析详情页（页面不碰路由栈）
+ *   - 上传成功 → 窗口层**出栈回到工作台**，由工作台 hero 就地展示实时分析
+ *                （页面不碰路由栈；分析内容内联在工作台，独立详情页只服务历史报告）
  *
- * ══════════════════ ★★ 为什么**只有这一个**参数类是 `@ObservedV2` ══════════════════
+ * ══════════════════ ★★ 这个参数类也必须是 `@ObservedV2` ══════════════════
  * 本页是**选完素材后页面自己要立刻变样**的页面：预览要出现、按钮要从「选择素材」变成
  * 「开始分析」、上传态要亮、错误文案要显示。而这些字段是窗口层在
  * `await 系统选择器 / await 上传请求` **之后**才回填的 —— 也就是**页面已经挂载着**的时候。
@@ -447,9 +447,10 @@ export class WorkbenchPageParam extends TabPageParam {
  * 改字段**不会**让已挂载的页面收到新值（这是本工程 BUG-10 的同一条根因）。
  * 实测现象就是 BUG-11：选完图片，页面一点变化都没有 —— "等于没选"。
  *
- * 其它参数类（登录 / 注册 / 页签 / 详情页）的字段都是"push 之前写一次、页面挂载后不再变"，
+ * 其它参数类（登录 / 注册 / 普通页签）的字段都是"push 之前写一次、页面挂载后不再变"，
  * 页面靠自己的 `@Local` + 回调就能跑起来，所以**不要**给它们也加装饰
  * —— 装饰器不是免费的，它会给每次字段写入都挂一层观察者。
+ * （工作台是例外：它的 focus/refreshing 也是挂载后写入，见 `WorkbenchPageParam`。）
  */
 @ObservedV2
 export class MediaPickerPageParam extends PageParam {
@@ -491,22 +492,35 @@ export class MediaPickerPageParam extends PageParam {
 }
 
 /**
+ * 历史报告页参数
+ *
+ * 报告列表与加载态直接读 `AppStore`（异步数据经参数传递不可靠）；
+ * 本类只承载窗口层动作：刷新、筛选、打开已保存报告。
+ */
+export class ReportsPageParam extends TabPageParam {
+  /** 拉取全部历史报告 */
+  public onRefresh: () => Promise<void> = (): Promise<void> => {
+    return Promise.resolve();
+  };
+
+  /** 应用筛选 · 空串表示全部 */
+  public onFilter: (severity: string, mediaType: string) => Promise<void> =
+    (severity: string, mediaType: string): Promise<void> => {
+      return Promise.resolve();
+    };
+
+  /** 打开某条已保存报告 · 进入分析详情页查看该素材的报告快照/本机会话 */
+  public onOpenReport: (report: ReportListItemModel) => void = (report: ReportListItemModel) => {};
+}
+
+/**
  * 分析详情页参数（`pages/AnalysisDetailPage.ets`）
  *
- * ══════════════════ ★★ 本轮（分析页实装轮）契约变更 ══════════════════
- * 旧实现把**实时数据也塞进参数**（`followLiveTask` / `status` / `progress` / `bdiScore` /
- * `severityLabel` / `severityColor` / `vlmText` / `frameCount`），再由窗口层的
- * `syncDetailParam()` 从 `AppStore` 抄一遍。那条链路有两个死结：
- *   ① `syncDetailParam()` 只在"切页签 / 入栈"时被调用，**WS 每来一帧不会触发它**
- *      → 分析跑完了，档位标签与智能解读也永远不出现（BUG-15），帧数还停在 0；
- *   ② "实时 / 历史快照"靠一个布尔开关区分，可真正的判据是"这条素材是不是当前会话"。
+ * ★ 工作台重构后分析内容已经内联到主页面；这个页面现在只服务**历史报告**：
+ *   点历史报告卡时展示该素材的报告快照，若本机还保留逐帧会话就展示逐帧结果。
  *
- * 现在参数只承载**入栈那一刻就确定**的信息（素材元信息 + 报告回落值 + 回调），
- * 页面自己按 `mediaId` 从 `AppStore` 的 `@Trace` 会话里读实时数据：
- *   `AppStore.analysisSessionOf(pageParam.mediaId)`
- *     · 有  → 用会话（实时进行中 / 刚跑完 / 本机归档，三者同一条数据形状）；
- *     · 没有 → 回落到本参数里的报告分数（并提示"本机未保留逐帧数据"）。
- * `syncDetailParam()` 已整体删除，页面不再有两份真相。
+ * 参数只承载**入栈那一刻就确定**的信息（素材元信息 + 报告回落值 + 回调），
+ * 页面自己按 `mediaId` 从 `AppStore` 的 `@Trace` 会话里读实时数据。
  */
 export class AnalysisDetailPageParam extends PageParam {
   /** 要展示的素材 id · 页面按它去取**该素材自己的**分析会话（绝不跨素材兜底） */
@@ -542,4 +556,6 @@ export class AnalysisDetailPageParam extends PageParam {
    */
   public onReanalyze: () => void = () => {};
 }
+
+
 

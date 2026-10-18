@@ -99,12 +99,14 @@ export class CardTransit {
   static readonly riseY: number = 12;
 
   /**
-   * 各页面**参与离场**的组件个数 · 必须等于该页里跟随 `exitClock` 的 `RevealCard` 数量
-   *
-   * ★ 列表里的卡片传了 `_playExit: false`（离场由列表容器整块承担），**不计入**这里；
-   *   只有「页头 / 固定块 / 列表容器」这类真正逐块离场的组件才计数。
+   * 工作台（主页）：页头 0 / 本次评估 hero 1 / 开始评估 2 / 热力图 3 /
+   * 情绪曲线 4 / 严重度分布 5 / 智能解读 6
+   * ★ 「最近使用的素材」区块已按用户要求删除，所以最大序号从 7 收敛到 6。
+   *   必须与该页里 `RevealCard({ order })` 的**最大序号 + 1** 一致：
+   *   3~6 号卡在没有查看目标时不渲染，但 order 固定不变，所以这里始终按 7 算。
+   *   少算一个，最后一个组件的动画会被换页切在尾巴上。
    */
-  static readonly CARDS_WORKBENCH: number = 4;
+  static readonly CARDS_WORKBENCH: number = 7;
 
   /**
    * 统计页：页头 0 / 核心卡 1 / 三张 KPI 小卡 2·3·4 / 环形图 5 / 折线 6
@@ -122,12 +124,13 @@ export class CardTransit {
    */
   static readonly CARDS_REPORTS: number = 3;
 
-  /** 素材库（占位页）：页头 + 占位内容块 · 与历史报告页拆分后各自独立 */
   static readonly CARDS_PLACEHOLDER: number = 2;
 
   /**
-   * 素材库页：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
-   * ★ 必须与该页里 `RevealCard({ order })` 的个数一致。
+   * 素材库页的**目标**转场位：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
+   *
+   * ★ 当前页面尚未挂 `RevealCard`，`MainPage.cardCountOf()` 仍走 `CARDS_PLACEHOLDER`（同为 2）；
+   *   等页面接入逐块动画后，再把 `cardCountOf()` 改为返回本常量。
    */
   static readonly CARDS_MEDIA: number = 2;
 

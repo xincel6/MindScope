@@ -2,7 +2,6 @@ import asyncio
 import datetime
 import json
 import time
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -14,7 +13,7 @@ from database import async_session
 from models import MediaAsset, DiagnosisReport, SeverityLevel, User
 from services.frame_processor import process_media
 from services.vlm import call_vlm_image, call_vlm_video
-from config import MEDIA_DIR
+from media_paths import media_file_name, resolve_media_path
 
 router = APIRouter()
 
@@ -152,11 +151,15 @@ async def ws_analysis(ws: WebSocket):
         await _safe_close(ws)
         return
 
-    # Build full path（DB 可能存绝对路径或 Windows 反斜杠路径）
-    fp = Path(asset.file_path)
-    media_path = fp if fp.is_file() else MEDIA_DIR / fp.name
-    if not media_path.exists():
-        await _safe_send_json(ws, {"type": "error", "message": f"File not found: {media_path}"})
+    # DB 里的 file_path 可能是别的机器上的绝对路径（Windows 反斜杠 / macOS 路径），
+    # 统一交给 media_paths 解析：先认原路径，再回到本机 MEDIA_DIR 按文件名找。
+    media_path = resolve_media_path(asset.file_path)
+    if media_path is None:
+        missing = media_file_name(asset.file_path) or asset.file_path
+        await _safe_send_json(
+            ws,
+            {"type": "error", "message": f"源文件不存在：{missing}（服务器 media 目录里没有找到，请重新上传该素材）"},
+        )
         await _safe_close(ws)
         return
 

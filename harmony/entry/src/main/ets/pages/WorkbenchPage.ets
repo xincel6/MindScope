@@ -1,160 +1,750 @@
 /**
- * WorkbenchPage · 工作台（一级页签）
+ * WorkbenchPage · 工作台（一级页签）· **应用主页面**
  *
- * ────────────────── 本页为什么直接读 AppStore（唯一的纪律例外）──────────────────
- * 工程通用纪律是「页面只吃参数、不 import store」。工作台**刻意偏离**了这一条，
- * 原因是这条纪律在"异步到达的数据"上不可靠：
+ * ══════════════════ 本轮（工作台主页重构 + 评估持久化）做了什么 ══════════════════
+ * 用户第一阶段要求：工作台把主要内容都放到了「分析详情」二级页里，导致主页面很空；
+ *   **拆掉分析页面，组成一个更丰富好看的主页面**。
+ * 用户第二阶段要求：页面已经足够长，「最近使用的素材」失去了作用；
+ *   **删除该区块，并把工作台目前的评估持久化**。
  *
- *   · 服务状态来自 `/health` 探活、任务进度来自 WebSocket，都是 `await` 之后才写值；
- *   · 页面是通过 `Navigation.navDestination` 挂载的，**改参数的字段不会让已挂载的
- *     页面重新收到新值**（实测：点刷新圆点不变色，切页签再回来才更新）。
- *
- * 而 `AppStore` 是 `@ObservedV2` + `@Trace`，它的字段变化**必定**触发依赖它的组件重绘，
- * 是 ArkUI 里最可靠的一条响应式路径。所以本页：
- *   · **读** 走 `AppStore`（响应式，异步刷新不会丢）；
- *   · **写** 仍走注入的回调（不碰路由栈、不发请求，纪律的核心部分保留）。
- *
- * ★ 这道口子只开给工作台：其它页签的数据是"进入页面时一次性拉取"的，
- *   没有这个痛点，继续走参数契约。
- *
- * ══════════════════ 本轮（工作台二次打磨）的页面结构 ══════════════════
+ * 现在工作台是一张纵向长页；分析内容内联，独立详情页只给历史报告用，也没有最近素材列表：
  * ```
- * 工作台                                    ⟳（与背景重合的刷新按钮）
- * 分析入口与今日概览
- * ┌ 无法连接服务器（● 红点 + 重试）┐   ← **只在离线时出现**，在线时整块不存在
- * └───────────────────────────────┘
- * 当前任务                            ← 本轮上移到这里（原在「开始新的辅助评估」下方）
- * ┌ 首帧照片 ｜ 素材名/状态 ｜ BDI + 档位 ┐
- * │ ▓▓▓▓▓░░░░░░░░░░░░░░░░░（BDI 进度条）│
- * └──────────────────────────────────────┘
- * ┌ 开始新的辅助评估 ………… [选择素材] ┐
- * └──────────────────────────────────┘
- * 最近使用的素材                查看全部
- * ┌ 缩略图 ｜ 文件名 ｜ 分数档位 ｜ 进度条 ┐
- * └──────────────────────────────────────┘
+ * 页头（标题 + 问候/日期 + 累计概览 + 刷新）          order 0
+ * [离线横幅：仅探活失败时出现]
+ * 本次评估 hero（素材 / 状态 / 分数环 / 阶段 / 动作）   order 1
+ * 开始新的辅助评估                                    order 2
+ * 注意力热力图（16×16 + 逐帧列表）                     order 3
+ * 情绪曲线                                            order 4
+ * 严重度分布                                          order 5
+ * 智能解读（VLM）                                      order 6
  * ```
- * 两条改动都是用户本轮的明确要求：
- *   ① **在线提示整块删掉**（原来的「● 在线 + 服务器地址」卡片），只在**离线**时弹出
- *      一条「无法连接服务器」+ 红点；**不显示服务器地址**（原地址行一并去掉）。
- *   ② **「当前任务」上移到「开始新的辅助评估」上方**，并给卡片补上首帧照片与 BDI 进度条
- *      （照片与条都在 `CurrentTaskCard` 里画，数据在 `AppStore.currentTask()` 里备好）。
+ * 3~6 号卡只在"有查看目标"时渲染；没有数据时页面是 hero 空态 + 开始评估，
+ * 不会出现四张空卡片堆在一起。
+ *
+ * ────────────────── 查看目标与持久化 ──────────────────
+ * 优先级：**当前任务（含重启后恢复的上一次评估）→ 最新一条报告 → 无**。
+ *   · 分析完成后，`AppStore` 把当前任务 + 该素材的最终会话（分数/帧/热度/VLM）
+ *     写入 RDB；下次启动/登录后自动恢复，hero 与四张分析卡直接还原；
+ *   · 恢复的评估显示「最近一次评估 / 上次分析 · 时间」，并保留「重新分析该素材」；
+ *   · 首次安装或尚未持久化时用报告列表首条兜底（只用于 hero，不渲染列表）；
+ *   · 上传完成后窗口层出栈回本页并把 `scrollTopTick` +1，页面回到顶部看实时进度。
+ *
+ * ────────────────── ★ 本页为什么直接读 AppStore（唯一纪律例外）──────────────────
+ * 页面通用纪律是「页面只吃参数」，但工作台展示的数据（探活、WS 逐帧、进度、分数）
+ * 都是 `await` / 回调之后才到的，而经 `navDestination` 改参数字段不会让已挂载页面
+ * 收到新值（BUG-10/11）。`AppStore` 是 `@ObservedV2` + `@Trace`，字段变化必定触发重绘，
+ * 所以：**读**走 AppStore（响应式），**写**仍走 `pageParam` 注入的回调（不碰路由栈、
+ * 不发请求）。`pageParam` 只承载回顶信号、刷新忙碌态与动作回调。
+ *
+ * ────────────────── 语法纪律 ──────────────────
+ * · `build()` / `@Builder` 体内不能声明局部变量（ArkTS 踩坑），所有取值走 `@Computed`；
+ * · 新增 builder 一律无参，避免 @Builder 按值传参导致"一半新一半旧"（BUG-19）；
+ * · 分析卡片的取数继续复用 `AnalysisChartModel` / `HeatmapViewModel` 的纯函数，
+ *   图片=1 帧/直线/刻度尺、视频=逐帧/折线/环形，且**只按 mediaId 取本素材会话**。
  */
 
 import { UiTheme } from '../common/UiTheme';
-import { RevealCard } from '../components/RevealCard';
 import { AppStore } from '../store/AppStore';
-import { CurrentTaskModel, RecentMediaModel } from '../types/Index';
+import {
+  AnalysisFocusModel, AnalysisFrameModel, AnalysisSessionModel, BDI_MAX_SCORE, CurrentTaskModel,
+  MediaType, RecentMediaModel, SeverityMeta, TaskStatus, WorkbenchHeroModel
+} from '../types/Index';
+import { WorkbenchPageParam } from '../types/PageParams';
+import { RevealCard } from '../components/RevealCard';
 import { RippleCard } from '../components/RippleCard';
 import { StatusDot } from '../components/workbench/StatusDot';
 import { StartAssessmentCard } from '../components/workbench/StartAssessmentCard';
-import { CurrentTaskCard } from '../components/workbench/CurrentTaskCard';
-import { RecentMediaSection } from '../components/workbench/RecentMediaSection';
+import { AnalysisHeroCard } from '../components/workbench/AnalysisHeroCard';
+import { AnalysisHeatmapCard } from '../components/analysis/AnalysisHeatmapCard';
+import { AnalysisVlmCard } from '../components/analysis/AnalysisVlmCard';
+import {
+  buildCurveView, buildSeverityView, CurveView, displayFrameCount, latestScore,
+  resolveFrames, SeverityView, severityMetaOf
+} from '../components/charts/AnalysisChartModel';
+import { EmotionCurveCard } from '../components/charts/EmotionCurveCard';
+import { SeverityDistributionCard } from '../components/charts/SeverityDistributionCard';
 
-/** 工作台「最近使用的素材」展示条数（用户指定两条） */
-const RECENT_MEDIA_LIMIT: number = 2;
+/** 星期的中文短名 · 下标与 `Date.getDay()` 一致（0 = 周日） */
+const WEEKDAY_LABELS: string[] = ['日', '一', '二', '三', '四', '五', '六'];
+
+/** 根据小时给一句问候（只影响文案，不承载业务） */
+function greetingOfHour(hour: number): string {
+  if (hour < 6) {
+    return '夜深了';
+  }
+  if (hour < 12) {
+    return '早上好';
+  }
+  if (hour < 14) {
+    return '中午好';
+  }
+  if (hour < 18) {
+    return '下午好';
+  }
+  return '晚上好';
+}
+
+/** 今天的中文日期 · 形如「10月17日 · 周六」 */
+function formatToday(): string {
+  const now: Date = new Date();
+  return `${now.getMonth() + 1}月${now.getDate()}日 · 周${WEEKDAY_LABELS[now.getDay()]}`;
+}
+
+/**
+ * 报告时间的短文案 · "YYYY-MM-DD HH:mm:ss" → "MM-DD HH:mm"
+ * ★ 只截字符串，不构造 Date：报告时间本来就是服务端本地时间文案，
+ *   再解析时区反而可能跨天。
+ */
+function shortDateText(raw: string): string {
+  if (raw.length >= 16) {
+    return `${raw.substring(5, 10)} ${raw.substring(11, 16)}`;
+  }
+  return raw;
+}
+
+/** 两位补零（ArkTS 的 String 没有 padStart） */
+function pad2(value: number): string {
+  return value < 10 ? `0${value}` : `${value}`;
+}
+
+/**
+ * 毫秒时间戳 → "MM-DD HH:mm"
+ * ★ 用于恢复上一次评估后显示「上次分析 · …」：
+ *   这不是服务端文案，必须自己构造 Date；取本地时区的月/日/时/分。
+ */
+function formatStamp(stamp: number): string {
+  if (!Number.isFinite(stamp) || stamp <= 0) {
+    return '';
+  }
+  const date: Date = new Date(stamp);
+  return `${pad2(date.getMonth() + 1)}-${pad2(date.getDate())} ${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+/** 进度比例 → 百分比文案（0 给 0%，1 给 100%） */
+function percentText(ratio: number): string {
+  if (!Number.isFinite(ratio) || ratio <= 0) {
+    return '0%';
+  }
+  if (ratio >= 1) {
+    return '100%';
+  }
+  return `${Math.round(ratio * 100)}%`;
+}
 
 @ComponentV2
 export struct WorkbenchPage {
-  // ══════════════════ 入参 · 动作回调（全部由窗口层实现）══════════════════
+  /** ★ 本页唯一入参：动作回调 + scrollTopTick / refreshing（挂载后会变，参数类已可观察） */
+  @Param pageParam: WorkbenchPageParam = new WorkbenchPageParam();
 
-  /** 点右上角刷新 / 离线横幅的「重试」· 窗口层调 `AppStore.checkHealth()` */
-  @Param onRefresh: () => void = () => {};
+  /** 外层滚动控制器 · 上传完成出栈后把页面拉回顶部（新任务的 hero 在顶部） */
+  private scroller: Scroller = new Scroller();
 
-  /** 点「选择素材」或「开始新的辅助评估」卡片 · 窗口层跳素材选择页 */
-  @Param onSelectMedia: () => void = () => {};
+  // ══════════════════ 读数（只读 store，见文件头）══════════════════
 
-  /** 点「当前任务」卡片 · 窗口层重新打开分析详情页 */
-  @Param onOpenTask: () => void = () => {};
-
-  /** 点「查看全部」· 窗口层切到历史报告页签 */
-  @Param onViewAll: () => void = () => {};
-
-  /** 点某条最近素材 · 窗口层按该素材的报告快照打开分析详情页 */
-  @Param onSelectRecent: (mediaId: string) => void = (mediaId: string) => {};
-
-  /**
-   * 卡片转场由 `components/RevealCard.ets` 里的包装组件负责（每个组件自己管自己），
-   * 本页不再需要持有共享的运动模型。
-   */
-
-  // ══════════════════ 读数 · 直接订阅 store（响应式，见文件头说明）══════════════════
-
-  /** store 门面 · 只读，不在这里调用任何写方法 */
   @Computed
   get app(): AppStore {
     return AppStore.get();
   }
 
-  /** 服务端是否在线 */
-  @Computed
-  get serverOnline(): boolean {
-    return this.app.serverOnline;
-  }
-
-  /** 是否正在探活（刷新/重试按钮的忙碌态） */
-  @Computed
-  get healthChecking(): boolean {
-    return this.app.healthChecking;
-  }
-
-  /** 是否至少完成过一次探活（决定离线横幅能不能出现，见 offlineBanner 注释） */
-  @Computed
-  get healthChecked(): boolean {
-    return this.app.healthChecked;
-  }
-
-  /**
-   * 是否展示离线横幅
-   * ★ 三个条件缺一不可：探活过 + 未在线 + 不在探活中（探活中不闪、失败后才弹）。
-   */
-  @Computed
-  get showOfflineBanner(): boolean {
-    return this.healthChecked && !this.serverOnline;
-  }
-
-  /** 当前任务 · null 表示「暂无进行中的分析」 */
+  /** 当前任务 · null = 没有进行中的分析 */
   @Computed
   get currentTask(): CurrentTaskModel | null {
     return this.app.currentTask();
   }
 
-  /** 最近 2 条素材（报告 + 媒体库拼出来的） */
+  /**
+   * 最新一条报告的投影（工作台 hero 在没有当前任务时的回退）
+   *
+   * ★ 「最近使用的素材」区块已按用户要求删除，但 hero 仍需要一条"上次评估"：
+   *   首次安装/清缓存后还没有持久化评估时，用报告列表的首条兜底，
+   *   否则主页面会重新变成空页。这里只取 1 条，页面上不再渲染列表。
+   */
   @Computed
-  get recentItems(): RecentMediaModel[] {
-    return this.app.recentMedia(RECENT_MEDIA_LIMIT);
+  get latestReport(): RecentMediaModel | null {
+    const list: RecentMediaModel[] = this.app.recentMedia(1);
+    return list.length > 0 ? list[0] : null;
   }
 
-  /** 最近素材是否仍在加载（只有"列表为空且正在拉"才算，避免有缓存时误报） */
+  /** 报告是否仍在加载（只有"没有任何回退数据且正在拉"才算） */
   @Computed
-  get recentLoading(): boolean {
-    return this.app.reportLoading && this.recentItems.length === 0;
+  get latestLoading(): boolean {
+    return this.app.reportLoading && this.latestReport === null;
   }
 
-  /** 最近素材的错误文案（有数据时不展示错误，避免同时出现内容与报错） */
+  /** 服务端是否在线（离线横幅用） */
   @Computed
-  get recentError(): string {
-    return this.recentItems.length === 0 ? this.app.reportError : '';
+  get serverOnline(): boolean {
+    return this.app.serverOnline;
   }
 
-  // ══════════════════ 页头（标题 + 右侧刷新） ══════════════════
+  /** 是否至少完成过一次探活（挡住冷启动的假离线告警） */
+  @Computed
+  get healthChecked(): boolean {
+    return this.app.healthChecked;
+  }
+
+  /** 是否展示离线横幅 */
+  @Computed
+  get showOfflineBanner(): boolean {
+    return this.healthChecked && !this.serverOnline;
+  }
+
+  /** 刷新按钮 / 离线重试的忙碌态（窗口层在页头刷新时写入） */
+  @Computed
+  get refreshing(): boolean {
+    return this.pageParam.refreshing;
+  }
+
+  // ══════════════════ 页头文案 ══════════════════
+
+  /** 问候 + 用户名（未登录时只有问候） */
+  @Computed
+  get greetingLine(): string {
+    const greeting: string = greetingOfHour(new Date().getHours());
+    const name: string = this.app.username();
+    return name.length > 0 ? `${greeting}，${name}` : greeting;
+  }
+
+  /** 今天的日期文案 */
+  @Computed
+  get todayText(): string {
+    return formatToday();
+  }
+
+  /** 累计概览 · 统计还没到时整行不渲染 */
+  @Computed
+  get statsCaption(): string {
+    const stats = this.app.statsSummary;
+    if (stats === null) {
+      return '';
+    }
+    return `累计 ${stats.totalAnalyses} 次评估 · ${stats.totalMedia} 份素材`;
+  }
+
+  // ══════════════════ 查看目标（focus）══════════════════
 
   /**
-   * 刷新按钮 · 与背景完全重合
-   * ★ 图标暂用字符 `⟳` 占位（用户明确说明图标待选）：
-   *   拿到图标资源后把这里换成 `Image($r('app.media.ic_refresh'))` 即可，其它代码不动。
+   * 当前查看目标
+   * 优先级：当前任务（含重启后恢复的评估）→ 最新一条报告 → 无
+   * ★ 「最近使用的素材」列表已删除，不再有用户固定查看的历史素材；
+   *   最新报告只作为首装/无持久化评估时的 hero 回退，页面上没有列表入口。
+   * ★ 返回的是**投影对象**，不是 store 里的引用；分数/时间仍会在下面按会话校正。
+   */
+  @Computed
+  get focus(): AnalysisFocusModel | null {
+    const task: CurrentTaskModel | null = this.currentTask;
+    if (task !== null) {
+      const fromTask: AnalysisFocusModel = {
+        mediaId: task.mediaId,
+        mediaName: task.mediaName,
+        mediaType: task.mediaType,
+        reportScore: task.bdiScore,
+        reportTime: ''
+      };
+      return fromTask;
+    }
+
+    const latest: RecentMediaModel | null = this.latestReport;
+    if (latest !== null) {
+      const fromRecent: AnalysisFocusModel = {
+        mediaId: latest.mediaId,
+        mediaName: latest.name,
+        mediaType: latest.type,
+        reportScore: latest.bdiScore,
+        reportTime: latest.detectedAt
+      };
+      return fromRecent;
+    }
+    return null;
+  }
+
+  /** 是否有查看目标 */
+  @Computed
+  get hasFocus(): boolean {
+    return this.focus !== null;
+  }
+
+  /** 当前目标是否为「重启后恢复的上一次评估」 */
+  @Computed
+  get restored(): boolean {
+    return this.app.currentTaskRestored;
+  }
+
+  /** 当前目标的素材类型（无目标时按图片兜底） */
+  @Computed
+  get focusMediaType(): MediaType {
+    const current: AnalysisFocusModel | null = this.focus;
+    return current === null ? MediaType.image : current.mediaType;
+  }
+
+  /** **该素材自己的**分析会话（null = 本机没有这条素材的数据） */
+  @Computed
+  get session(): AnalysisSessionModel | null {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return null;
+    }
+    return this.app.analysisSessionOf(current.mediaId);
+  }
+
+  /** 是否有会话（历史素材可能只有报告分数） */
+  @Computed
+  get hasSession(): boolean {
+    return this.session !== null;
+  }
+
+  /** 门面正在跑/刚跑完的会话是不是当前看的目标 */
+  @Computed
+  get isLive(): boolean {
+    const current: AnalysisFocusModel | null = this.focus;
+    return current !== null && this.app.analysisLiveMediaIdOf() === current.mediaId;
+  }
+
+  /** 当前看的目标是不是「当前任务」 */
+  @Computed
+  get isCurrentFocus(): boolean {
+    const current: AnalysisFocusModel | null = this.focus;
+    const task: CurrentTaskModel | null = this.currentTask;
+    return current !== null && task !== null && current.mediaId === task.mediaId;
+  }
+
+  // ══════════════════ 分数 / 状态 / 进度 ══════════════════
+
+  /** 当前分数：会话优先，否则回落到报告分数 */
+  @Computed
+  get score(): number {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return 0;
+    }
+    return latestScore(this.session, current.reportScore);
+  }
+
+  /** 档位配置 · 判档与取色统一走 BdiThreshold + UiConstant */
+  @Computed
+  get severityMeta(): SeverityMeta {
+    return severityMetaOf(this.score);
+  }
+
+  /** 档位中文标签 · 未出分时为空串（不能被读成"结果正常"） */
+  @Computed
+  get severityLabel(): string {
+    return this.score > 0 ? this.severityMeta.label : '';
+  }
+
+  /** 档位色 · 未出分用中性色 */
+  @Computed
+  get severityColor(): string {
+    return this.score > 0 ? this.severityMeta.color : UiTheme.textSecondary;
+  }
+
+  /** 分数文案 */
+  @Computed
+  get scoreText(): string {
+    return this.score > 0 ? this.score.toFixed(1) : '--';
+  }
+
+  /** BDI 填充比例 = score / 63（0–1） */
+  @Computed
+  get scoreRatio(): number {
+    if (this.score <= 0) {
+      return 0;
+    }
+    return this.score >= BDI_MAX_SCORE ? 1 : this.score / BDI_MAX_SCORE;
+  }
+
+  /**
+   * 状态：会话优先；当前任务尚未建会话时用当前任务状态；
+   * 历史素材只有报告分数时视为已完成。
+   */
+  @Computed
+  get status(): TaskStatus {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return TaskStatus.none;
+    }
+    const own: AnalysisSessionModel | null = this.session;
+    if (own !== null) {
+      return own.status;
+    }
+    const task: CurrentTaskModel | null = this.currentTask;
+    if (task !== null && task.mediaId === current.mediaId && task.status !== TaskStatus.none) {
+      return task.status;
+    }
+    return current.reportScore > 0 ? TaskStatus.done : TaskStatus.none;
+  }
+
+  /** 分析进度 0–1 */
+  @Computed
+  get progress(): number {
+    const own: AnalysisSessionModel | null = this.session;
+    if (own !== null) {
+      return own.progress;
+    }
+    const current: AnalysisFocusModel | null = this.focus;
+    const task: CurrentTaskModel | null = this.currentTask;
+    if (current !== null && task !== null && task.mediaId === current.mediaId) {
+      return task.progress;
+    }
+    return this.status === TaskStatus.done ? 1 : 0;
+  }
+
+  /** 进度百分比文案 */
+  @Computed
+  get progressText(): string {
+    return percentText(this.progress);
+  }
+
+  /**
+   * 阶段下标：0 上传 / 1 逐帧推理 / 2 汇总评分
+   * ★ done 直接收敛到 2：服务端落库后 progress 可能停在 0.99，不能只靠阈值兜底。
+   * ★ failed 不跳阶段：停在 progress 指向的那一段，用户才知道"挂在哪一步"。
+   */
+  @Computed
+  get stageIndex(): number {
+    if (this.status === TaskStatus.done || this.progress >= 0.95) {
+      return 2;
+    }
+    if (this.progress < 0.15) {
+      return 0;
+    }
+    return 1;
+  }
+
+  /** 状态文案 · 运行中带进度百分比（进度条已被 BDI/阶段占用，进度只走文字） */
+  @Computed
+  get statusLabel(): string {
+    if (this.status === TaskStatus.running) {
+      if (this.progress <= 0) {
+        return '分析中';
+      }
+      return `分析中 ${percentText(this.progress)}`;
+    }
+    if (this.status === TaskStatus.done) {
+      return '已完成';
+    }
+    if (this.status === TaskStatus.failed) {
+      return '分析失败';
+    }
+    return '未开始';
+  }
+
+  /** 状态颜色（胶囊文字 + 圆点共用；失败用错误色，完成用档位色） */
+  @Computed
+  get statusColor(): string {
+    if (this.status === TaskStatus.failed) {
+      return UiTheme.danger;
+    }
+    if (this.status === TaskStatus.done) {
+      return this.score > 0 ? this.severityMeta.color : UiTheme.statusOnline;
+    }
+    if (this.status === TaskStatus.running) {
+      return UiTheme.primary;
+    }
+    return UiTheme.textSecondary;
+  }
+
+  /** 首帧照片地址（会话首帧 → 图片缩略图 → 空串占位） */
+  @Computed
+  get firstFrameUrl(): string {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return '';
+    }
+    return this.app.firstFrameUrlOfMedia(current.mediaId);
+  }
+
+  /** 帧数文案（图片恒为 1 帧；视频按实际收到的帧数） */
+  @Computed
+  get frameCountText(): string {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return '';
+    }
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null) {
+      // ★ 历史素材没有本机会话时最多只有一个报告分数；文案要短，
+      //   hero 右栏是窄列，长句会被省略号截断（真机截图已复现）。
+      return current.mediaType === MediaType.image
+        ? '单次推理 · 无逐帧数据'
+        : '逐帧数据未保留';
+    }
+    const count: number = displayFrameCount(own, current.mediaType);
+    if (current.mediaType === MediaType.image) {
+      return count > 0 ? '1 帧（单次推理）' : '等待推理结果';
+    }
+    return count > 0 ? `共 ${count} 帧（逐帧采样）` : '等待逐帧数据';
+  }
+
+  /** 推理耗时文案（取最后一帧的实测值） */
+  @Computed
+  get inferenceText(): string {
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null || own.frames.length === 0) {
+      return '';
+    }
+    const last: AnalysisFrameModel = own.frames[own.frames.length - 1];
+    return last.inferenceTimeMs > 0 ? `本次推理 ${last.inferenceTimeMs.toFixed(1)} ms` : '';
+  }
+
+  /** 错误文案（会话错误 / 实时连接错误 / 当前任务错误） */
+  @Computed
+  get errorMsg(): string {
+    const own: AnalysisSessionModel | null = this.session;
+    if (own !== null && own.errorMsg.length > 0) {
+      return own.errorMsg;
+    }
+    if (this.isLive) {
+      const liveError: string = this.app.analysisErrorOf();
+      if (liveError.length > 0) {
+        return liveError;
+      }
+    }
+    const current: AnalysisFocusModel | null = this.focus;
+    const task: CurrentTaskModel | null = this.currentTask;
+    if (
+      current !== null && task !== null && task.mediaId === current.mediaId &&
+      task.status === TaskStatus.failed
+    ) {
+      return task.errorMsg;
+    }
+    return '';
+  }
+
+  /** 右栏一句话说明（错误优先由 hero 处理，这里只给正常态语义） */
+  @Computed
+  get hintText(): string {
+    if (this.restored && this.status === TaskStatus.done) {
+      return '本机保存的上一次评估结果，可直接重新分析或发起新评估';
+    }
+    if (this.status === TaskStatus.failed) {
+      return '分析中断，可点「重新分析该素材」重试';
+    }
+    if (this.status === TaskStatus.running) {
+      return this.focusMediaType === MediaType.image
+        ? '正在对这张图片做单次推理，几秒内出结果'
+        : '服务端正在逐帧推理，图表会随帧更新';
+    }
+    if (this.status === TaskStatus.done) {
+      return this.session === null
+        ? '该素材最近一次分析的报告分数'
+        : '分数越高表示抑郁倾向越明显';
+    }
+    return '等待开始';
+  }
+
+  /** 来源标签 */
+  @Computed
+  get sourceLabel(): string {
+    if (this.isCurrentFocus && !this.restored) {
+      return '当前任务';
+    }
+    return '最近一次评估';
+  }
+
+  /**
+   * 时间文案
+   * · 当前任务（本次运行）→「本次分析」/ 实时更新；
+   * · 重启后恢复的上一次评估 →「上次分析 · MM-DD HH:mm」；
+   * · 只有报告、没有本机会话 →「报告时间 MM-DD HH:mm」。
+   */
+  @Computed
+  get timeText(): string {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return '';
+    }
+    if (this.isCurrentFocus) {
+      if (this.restored) {
+        const own: AnalysisSessionModel | null = this.session;
+        const stamp: string = own === null ? '' : formatStamp(own.updatedAt);
+        return stamp.length > 0 ? `上次分析 · ${stamp}` : '上次分析';
+      }
+      return this.status === TaskStatus.running ? '本次分析 · 实时更新' : '本次分析';
+    }
+    if (current.reportTime.length > 0) {
+      return `报告时间 ${shortDateText(current.reportTime)}`;
+    }
+    if (this.isLive) {
+      return '本次分析 · 实时更新';
+    }
+    return '本次分析';
+  }
+
+  /**
+   * 是否可「重新分析该素材」
+   * · 本机没会话（只有报告分数）/ 上一次失败 → 给出口；
+   * · 重启后恢复的上一次评估 → 给出口（用户不必重新选一遍素材就能再跑）；
+   * · 本次运行刚完成 → 不给（避免误触重新跑一遍）。
+   */
+  @Computed
+  get canReanalyze(): boolean {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null || current.mediaId.length === 0) {
+      return false;
+    }
+    if (this.restored) {
+      return true;
+    }
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null) {
+      return true;
+    }
+    return own.status === TaskStatus.failed;
+  }
+
+  /** 是否可「取消分析」：只有当前 live 且仍在跑时 */
+  @Computed
+  get canCancel(): boolean {
+    return this.isLive && this.status === TaskStatus.running;
+  }
+
+  // ══════════════════ 图表取数（纯函数在 AnalysisChartModel.ets）══════════════════
+
+  /** 要展示的帧（图片恒为最多 1 帧） */
+  @Computed
+  get frames(): AnalysisFrameModel[] {
+    const current: AnalysisFocusModel | null = this.focus;
+    return current === null ? [] : resolveFrames(this.session, current.mediaType);
+  }
+
+  /** 情绪曲线：视频=逐帧折线，图片=水平直线 */
+  @Computed
+  get curveView(): CurveView {
+    const current: AnalysisFocusModel | null = this.focus;
+    return buildCurveView(
+      this.session,
+      current === null ? 0 : current.reportScore,
+      current === null ? MediaType.image : current.mediaType
+    );
+  }
+
+  /** 严重度分布：视频=帧级环形图，图片=档位刻度尺 */
+  @Computed
+  get severityView(): SeverityView {
+    const current: AnalysisFocusModel | null = this.focus;
+    return buildSeverityView(
+      this.session,
+      current === null ? 0 : current.reportScore,
+      current === null ? MediaType.image : current.mediaType
+    );
+  }
+
+  /** VLM 文本（没有会话时为空） */
+  @Computed
+  get vlmText(): string {
+    const own: AnalysisSessionModel | null = this.session;
+    return own === null ? '' : own.vlmText;
+  }
+
+  /** VLM 空态说明 */
+  @Computed
+  get vlmEmptyHint(): string {
+    if (this.status === TaskStatus.running) {
+      return '分析完成后会生成一段文字解读';
+    }
+    if (this.session === null) {
+      return '本机未保留本次分析的文字解读';
+    }
+    return '本次分析没有生成文字解读';
+  }
+
+  /** hero 的只读展示投影 · 组件只负责画（见 AnalysisHeroCard） */
+  @Computed
+  get heroModel(): WorkbenchHeroModel {
+    const current: AnalysisFocusModel | null = this.focus;
+    return {
+      hasFocus: current !== null,
+      loading: current === null && this.latestLoading,
+      mediaId: current === null ? '' : current.mediaId,
+      mediaName: current === null ? '' : current.mediaName,
+      mediaType: this.focusMediaType,
+      firstFrameUrl: this.firstFrameUrl,
+      sourceLabel: current === null ? '' : this.sourceLabel,
+      timeText: current === null ? '' : this.timeText,
+      score: this.score,
+      scoreText: this.scoreText,
+      scoreRatio: this.scoreRatio,
+      severityLabel: this.severityLabel,
+      severityColor: this.severityColor,
+      status: this.status,
+      statusLabel: this.statusLabel,
+      statusColor: this.statusColor,
+      progress: this.progress,
+      progressText: this.progressText,
+      stageIndex: this.stageIndex,
+      stageFailed: this.status === TaskStatus.failed,
+      // 阶段轨只画"本次运行正在走流程"；重启恢复的上一次评估 / 纯报告不画
+      showStageRail: this.isCurrentFocus && !this.restored,
+      isLive: this.isLive,
+      isImage: this.focusMediaType === MediaType.image,
+      frameCountText: this.frameCountText,
+      inferenceText: this.inferenceText,
+      hintText: this.hintText,
+      errorMsg: this.errorMsg,
+      canReanalyze: this.canReanalyze,
+      canCancel: this.canCancel
+    };
+  }
+
+  // ══════════════════ 动作 ══════════════════
+
+  /** 把「重新分析该素材」转交窗口层（页面不碰网络/路由） */
+  private handleReanalyze(): void {
+    const current: AnalysisFocusModel | null = this.focus;
+    if (current === null) {
+      return;
+    }
+    this.pageParam.onReanalyze(current.mediaId, current.mediaName, current.mediaType);
+  }
+
+  /** 取消分析 · 窗口层调 AppStore.cancelAnalysis() */
+  private handleCancel(): void {
+    this.pageParam.onCancelAnalysis();
+  }
+
+  /**
+   * 上传完成出栈后回顶
+   * ★ 用户可能是在页面底部点「选择素材」的；新任务的 hero 在顶部，
+   *   不回顶就会错过实时进度。窗口层出栈前把 `scrollTopTick` +1。
+   */
+  @Monitor('pageParam.scrollTopTick')
+  private onScrollTopRequested(): void {
+    try {
+      this.scroller.scrollTo({
+        xOffset: 0,
+        yOffset: 0,
+        animation: { duration: 260, curve: Curve.EaseOut }
+      });
+    } catch (err) {
+      // 页面刚挂载 / 滚动容器还未绑定时不阻塞数据更新
+      console.warn(`[Workbench] 回顶失败：${err}`);
+    }
+  }
+
+  // ══════════════════ 页头 ══════════════════
+
+  /**
+   * 刷新按钮 · 与背景完全重合；忙碌态显示省略号并禁用
+   * ★ 图标尚未选定：原来用 `⟳` 占位，但真机字体把它渲染成了半个括号（截图可见）。
+   *   在拿到图标资源前改用「刷新」文字占位，语义明确且不依赖字体符号；
+   *   将来换成 `Image($r('app.media.ic_refresh'))` 时只改这一处。
    */
   @Builder
   refreshButton() {
-    Button(this.healthChecking ? '…' : '⟳')
-      .fontSize(20)
+    Button(this.refreshing ? '…' : '刷新')
+      .fontSize(UiTheme.fontSizeCaption)
       .fontColor(UiTheme.textSecondary)
       .backgroundColor(Color.Transparent)
       .borderRadius(UiTheme.cardRadius)
-      .width(40)
+      .width(48)
       .height(40)
-      .enabled(!this.healthChecking)
+      // ★ Button 默认自带左右内边距；宽度只有 48 时会把「刷新」两个字挤成省略号。
+      //   显式压到 4vp，两个 12fp 汉字才放得下（这也解释了旧 `⟳` 为什么显示成半个括号）。
+      .padding({ left: UiTheme.gapXs, right: UiTheme.gapXs })
+      .enabled(!this.refreshing)
       .onClick(() => {
-        this.onRefresh();
+        this.pageParam.onRefresh();
       })
   }
 
@@ -174,34 +764,30 @@ export struct WorkbenchPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      Text('分析入口与今日概览')
+      Text(`${this.greetingLine} · ${this.todayText}`)
         .fontSize(UiTheme.fontSizeBody)
         .fontColor(UiTheme.textSecondary)
         .width('100%')
         .textAlign(TextAlign.Start)
+        .maxLines(1)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+      if (this.statsCaption.length > 0) {
+        Text(this.statsCaption)
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
     }
     .width('100%')
     .alignItems(HorizontalAlign.Start)
   }
 
-  // ══════════════════ 离线横幅（★ 只在离线时出现） ══════════════════
+  // ══════════════════ 离线横幅（只在离线时出现）══════════════════
 
-  /**
-   * 离线提示 · **服务端不可达时才出现**
-   *
-   * 用户本轮的要求（逐条落地）：
-   *   ① 「在线提示」整块删掉 —— 原来的服务状态卡片（`ServiceStatusCard`）已删除，
-   *      在线时页面里**没有任何**服务状态相关的元素；
-   *   ② 离线时才弹出，文案固定「无法连接服务器」，左边一个**红点**；
-   *   ③ **不显示服务器地址**（原卡片的 `host:port` 行连同组件一起删掉）。
-   *
-   * ★ 判据是 `healthChecked && !serverOnline`（见 `showOfflineBanner`）：
-   *   `healthChecked` 挡住冷启动那一刻的假告警（`serverOnline` 默认 false，
-   *   不挡的话每次进页面都会先闪一条"连不上"）；点在探活中也不隐藏横幅，
-   *   只把按钮变成「重连中…」——否则横幅会"消失又出现"，看着像页面在抽搐。
-   * ★ 不用整页错误态：工作台即使离线也应该能看历史素材与上一次的分数（本地有缓存），
-   *   所以这里只加一条横幅，而不是用 `ErrorRetryView` 把整页盖掉。
-   */
   @Builder
   offlineBanner() {
     RippleCard({ _padding: UiTheme.gapM, _enabled: false, _clickable: false }) {
@@ -226,7 +812,7 @@ export struct WorkbenchPage {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        Button(this.healthChecking ? '重连中…' : '重试')
+        Button(this.refreshing ? '重连中…' : '重试')
           .fontSize(UiTheme.fontSizeBody)
           .fontColor(UiTheme.danger)
           .backgroundColor(Color.Transparent)
@@ -235,9 +821,9 @@ export struct WorkbenchPage {
           .borderRadius(UiTheme.buttonRadius)
           .height(36)
           .padding({ left: UiTheme.gapL, right: UiTheme.gapL })
-          .enabled(!this.healthChecking)
+          .enabled(!this.refreshing)
           .onClick(() => {
-            this.onRefresh();
+            this.pageParam.onRefresh();
           })
       }
       .width('100%')
@@ -245,60 +831,119 @@ export struct WorkbenchPage {
     }
   }
 
+  // ══════════════════ 各区块（★ 无参 builder）══════════════════
+
+  /** 本次评估 hero */
+  @Builder
+  heroSection() {
+    AnalysisHeroCard({
+      model: this.heroModel,
+      onReanalyze: () => {
+        this.handleReanalyze();
+      },
+      onCancel: () => {
+        this.handleCancel();
+      }
+    })
+  }
+
+  /** 开始新的辅助评估 */
+  @Builder
+  startSection() {
+    StartAssessmentCard({
+      onPick: () => {
+        this.pageParam.onSelectMedia();
+      }
+    })
+  }
+
+  /** 注意力热力图卡（内容）· 白卡由 RippleCard 提供 */
+  @Builder
+  heatmapSection() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      AnalysisHeatmapCard({
+        frames: this.frames,
+        mediaType: this.focusMediaType,
+        isLive: this.isLive,
+        hasSession: this.hasSession
+      })
+    }
+  }
+
+  /** 情绪曲线卡（内容） */
+  @Builder
+  curveSection() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      EmotionCurveCard({ view: this.curveView })
+    }
+  }
+
+  /** 严重度分布卡（内容） */
+  @Builder
+  severitySection() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      SeverityDistributionCard({ view: this.severityView })
+    }
+  }
+
+  /** 智能解读卡（内容） */
+  @Builder
+  vlmSection() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      AnalysisVlmCard({
+        text: this.vlmText,
+        emptyHint: this.vlmEmptyHint
+      })
+    }
+  }
+
   build() {
-    Column({ space: UiTheme.gapL }) {
-      Scroll() {
+    Column() {
+      Scroll(this.scroller) {
         Column({ space: UiTheme.gapL }) {
-          // ── 页头（0 号位 · 转场由 RevealCard 内部负责）──
+          // ── 页头（0 号位）──
           RevealCard({ order: 0 }) {
-            Column() {
-              this.pageHeader()
-            }
-            .width('100%')
-            .alignItems(HorizontalAlign.Start)
+            this.pageHeader()
           }
 
-          // ── ① 离线横幅（只在探活失败后出现；在线时整块不存在） ──
+          // ── 离线横幅：只在探活失败后出现（不占 order）──
           if (this.showOfflineBanner) {
             this.offlineBanner()
           }
 
-          // ── ② 当前任务（1 号位 · ★ 上移到「开始新的辅助评估」上方：首帧照片 + BDI 进度条） ──
+          // ── 本次评估 hero（1 号位）──
           RevealCard({ order: 1 }) {
-            CurrentTaskCard({
-              task: this.currentTask,
-              onOpen: () => {
-                this.onOpenTask();
-              }
-            })
+            this.heroSection()
           }
 
-          // ── ③ 开始新的辅助评估（2 号位）──
+          // ── 开始新的辅助评估（2 号位）──
           RevealCard({ order: 2 }) {
-            StartAssessmentCard({
-              onPick: () => {
-                this.onSelectMedia();
-              }
-            })
+            this.startSection()
           }
 
-          // ── ④ 最近使用的素材（3 号位）──
-          RevealCard({ order: 3 }) {
-            RecentMediaSection({
-              items: this.recentItems,
-              loading: this.recentLoading,
-              errorMsg: this.recentError,
-              onViewAll: () => {
-                this.onViewAll();
-              },
-              onSelect: (mediaId: string) => {
-                this.onSelectRecent(mediaId);
-              }
-            })
+          // ── 分析区：没有查看目标时整段不渲染（避免四张空卡片）──
+          if (this.hasFocus) {
+            RevealCard({ order: 3 }) {
+              this.heatmapSection()
+            }
+            RevealCard({ order: 4 }) {
+              this.curveSection()
+            }
+            RevealCard({ order: 5 }) {
+              this.severitySection()
+            }
+            RevealCard({ order: 6 }) {
+              this.vlmSection()
+            }
           }
         }
         .width('100%')
-        .padding({ bottom: UiTheme.gapXl })
+        .padding({
+          left: UiTheme.pagePadding,
+          right: UiTheme.pagePadding,
+          top: UiTheme.gapL,
+          bottom: UiTheme.gapXxl
+        })
         .alignItems(HorizontalAlign.Start)
       }
       .layoutWeight(1)
@@ -308,7 +953,6 @@ export struct WorkbenchPage {
     }
     .width('100%')
     .height('100%')
-    .padding({ left: UiTheme.pagePadding, right: UiTheme.pagePadding, top: UiTheme.gapL })
     .alignItems(HorizontalAlign.Start)
     .backgroundColor(UiTheme.pageBackground)
   }

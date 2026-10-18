@@ -1,4 +1,4 @@
-# 项目分析报告 & HarmonyOS 端构建方案
+# MindScope · 项目分析报告与 HarmonyOS 端构建方案
 
 > 分析对象：`E:\大挑项目\基于 MSSTformer 与端云协同的轻量化抑郁症智能筛选系统设计\`
 > 分析方式：通读技术文档、答辩 PPT、训练日志、B 端全部源码（FastAPI 后端 + Vue3 前端 + LMTformer 模型）
