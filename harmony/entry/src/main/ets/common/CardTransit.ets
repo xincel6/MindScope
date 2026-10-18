@@ -98,7 +98,12 @@ export class CardTransit {
   /** 入场时的纵向起始偏移（vp）· 轻微上浮，避免只有单一横向语言 */
   static readonly riseY: number = 12;
 
-  /** 各页面参与转场的组件个数 · 必须与该页里 `order` 的数量一致 */
+  /**
+   * 各页面**参与离场**的组件个数 · 必须等于该页里跟随 `exitClock` 的 `RevealCard` 数量
+   *
+   * ★ 列表里的卡片传了 `_playExit: false`（离场由列表容器整块承担），**不计入**这里；
+   *   只有「页头 / 固定块 / 列表容器」这类真正逐块离场的组件才计数。
+   */
   static readonly CARDS_WORKBENCH: number = 4;
 
   /**
@@ -108,6 +113,16 @@ export class CardTransit {
    */
   static readonly CARDS_STATS: number = 7;
 
+  /**
+   * 历史报告页：页头 0 / 筛选栏 1 / 列表区整块 2
+   *
+   * ★ 列表里的每张报告卡**不计入**这里：它们只播入场（各自按列表下标错峰），
+   *   离场由列表区整块承担（卡片 `_playExit: false`）。若把卡片数量算进来，
+   *   几十张卡会让等待时间膨胀到几秒，切页签会明显卡住。
+   */
+  static readonly CARDS_REPORTS: number = 3;
+
+  /** 素材库（占位页）：页头 + 占位内容块 · 与历史报告页拆分后各自独立 */
   static readonly CARDS_PLACEHOLDER: number = 2;
 
   static readonly CARDS_PROFILE: number = 3;

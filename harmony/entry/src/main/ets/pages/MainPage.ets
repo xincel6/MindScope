@@ -168,9 +168,11 @@ export struct MainPage {
   }
 
   /**
-   * 某个页签有多少个参与转场的组件
-   * ★ 必须与页面里 `RevealCard({ order: ... })` 的个数一致，
+   * 某个页签有多少个**参与离场**的组件
+   * ★ 必须与页面里跟随 `exitClock` 的 `RevealCard` 个数一致，
    *   否则等待时间算短了会砍断最后一个组件的动画。
+   * ★ 列表里的卡片（历史报告卡等）传了 `_playExit: false`，只播入场、不参与离场，
+   *   不能算进这里 —— 否则几十张卡会把等待时间撑到几秒，切页签明显卡顿。
    */
   private cardCountOf(tab: MainTab): number {
     if (tab === MainTab.workbench) {
@@ -181,6 +183,9 @@ export struct MainPage {
     }
     if (tab === MainTab.profile) {
       return CardTransit.CARDS_PROFILE;
+    }
+    if (tab === MainTab.reports) {
+      return CardTransit.CARDS_REPORTS;
     }
     return CardTransit.CARDS_PLACEHOLDER;
   }

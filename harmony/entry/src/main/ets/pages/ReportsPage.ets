@@ -13,6 +13,14 @@
  *
  * 数据来源：`AppStore.reportItems`（GET /api/reports）。
  * 本页不发起分析，也不使用当前分析会话的数据顶替历史报告。
+ *
+ * ★ 转场（本页 3 个转场位，与 `CardTransit.CARDS_REPORTS` 对齐）：
+ *   0 号位 = 页头，1 号位 = 筛选栏，2 号位 = **列表区整块**。
+ *   · 每张报告卡各包一层 `RevealCard({ order: 2 + min(下标, 5), _playExit: false })`：
+ *     `onAppear` 里按列表顺序依次从侧向滑入（方向与整页转场一致）—— 这就是"卡片错峰"的落点。
+ *   · 列表区外层再包一层 `RevealCard({ order: 2, _playEnter: false })`：
+ *     它**不播入场**（否则会和卡片的错峰叠成两层动画），只负责离场 ——
+ *     换页时整块列表跟着页头/筛选栏按序滑出，几十张卡不会各自排队等到被销毁。
  */
 
 import { AppBootstrap } from '../common/AppBootstrap';
@@ -33,6 +41,18 @@ const SEVERITY_FILTERS: string[] = ['', 'none', 'mild', 'moderate', 'severe'];
 
 /** 素材类型筛选项 · 空串 = 全部 */
 const MEDIA_TYPE_FILTERS: string[] = ['', 'image', 'video'];
+
+/**
+ * 卡片入场错峰的**下标上限**
+ *
+ * ★ 为什么必须封顶：全量拉取可能有几十上百张卡，若延迟按真实下标线性增长，
+ *   第 50 张要等 5 秒以上才出现 —— 虽然多数在屏幕外，但用户一进来快速下滑
+ *   就会看到一串"空白槽位"。
+ * ★ 取 5 的依据：一屏大约只能放下 4~5 张报告卡（单卡约 150vp、屏高约 800vp），
+ *   前 6 张（下标 0..5）覆盖了首屏可见范围；再往下用户要滚动才看得到，
+ *   那时它们早已落位。延迟上限 = `(2 + 5) × 110ms + 240ms ≈ 1.0s`。
+ */
+const LIST_STAGGER_LIMIT: number = 5;
 
 /**
  * 历史报告排序函数
@@ -237,6 +257,17 @@ export struct ReportsPage {
 
   private mediaTypeLabelOf(item: ReportListItemModel): string {
     return item.mediaType === MediaType.video ? '视频' : '图片';
+  }
+
+  /**
+   * 列表第 index 张卡在整页转场里的入场序号
+   *
+   * 页头占 0、筛选栏占 1，所以卡片从 2 起依次 +1（与 `CardTransit.CARDS_REPORTS = 3`
+   * 的"第 3 个转场位 = 列表区整块"对应）；超过 `LIST_STAGGER_LIMIT` 后不再加延迟。
+   * ★ 直接传给 `RevealCard.order` 即可：该值同时决定延迟与横向拖尾距离（越靠后甩得略远）。
+   */
+  private listOrder(index: number): number {
+    return 2 + Math.min(index, LIST_STAGGER_LIMIT);
   }
 
   /** 同一素材的分析次数与历史分数范围 */
@@ -555,30 +586,40 @@ export struct ReportsPage {
           this.listToolbar()
         }
 
-        if (!this.app.reportAllLoaded && !this.app.reportLoading && this.app.reportTotal > 0) {
-          this.incompleteCard()
-        }
-
-        if (this.app.reportLoading && this.reportGroups.length === 0) {
-          this.skeletonList()
-        } else if (this.app.reportError.length > 0 && this.reportGroups.length === 0) {
-          ErrorRetryView({
-            message: this.app.reportError,
-            retryLabel: '重新加载',
-            retrying: this.app.reportLoading,
-            onRetry: () => {
-              this.reload();
-            }
-          })
-        } else if (this.reportGroups.length === 0) {
-          this.emptyCard()
-        } else {
+        // 2 号位 · 列表区整块（骨架 / 错误 / 空态 / 卡片列表都在里面）
+        //   ★ `_playEnter: false`：不整体滑入 —— 入场由下面每张卡自己的错峰承担；
+        //     容器若也播，会和卡片的位移/透明度叠成两层，观感变成"抖一下再变淡"。
+        //   ★ 参与离场：换页时这整块按 order 2 滑出，而不是让每张卡各自排队。
+        RevealCard({ order: 2, _playEnter: false }) {
           Column({ space: UiTheme.gapM }) {
-            ForEach(this.reportGroups, (group: ReportMediaGroupModel) => {
-              this.reportCard(group)
-            }, (group: ReportMediaGroupModel) => `media-${group.mediaId}`)
+            if (!this.app.reportAllLoaded && !this.app.reportLoading && this.app.reportTotal > 0) {
+              this.incompleteCard()
+            }
 
-            this.listFooter()
+            if (this.app.reportLoading && this.reportGroups.length === 0) {
+              this.skeletonList()
+            } else if (this.app.reportError.length > 0 && this.reportGroups.length === 0) {
+              ErrorRetryView({
+                message: this.app.reportError,
+                retryLabel: '重新加载',
+                retrying: this.app.reportLoading,
+                onRetry: () => {
+                  this.reload();
+                }
+              })
+            } else if (this.reportGroups.length === 0) {
+              this.emptyCard()
+            } else {
+              // ★ 每张报告卡各包一层：order 按列表下标递增 ⇒ 一张接一张滑入
+              //   （`_playExit: false`：离场由上面那层列表容器整块负责）
+              ForEach(this.reportGroups, (group: ReportMediaGroupModel, index: number) => {
+                RevealCard({ order: this.listOrder(index), _playExit: false }) {
+                  this.reportCard(group)
+                }
+              }, (group: ReportMediaGroupModel) => `media-${group.mediaId}`)
+
+              this.listFooter()
+            }
           }
           .width('100%')
           .alignItems(HorizontalAlign.Start)
