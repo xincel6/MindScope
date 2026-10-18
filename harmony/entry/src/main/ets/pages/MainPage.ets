@@ -111,6 +111,9 @@ export struct MainPage {
   /** 素材库删除进行中的素材 id（空串 = 无） */
   @Local deletingMediaId: string = '';
 
+  /** 患者命名对话框控制器 · 必须由页面持有（局部变量会被回收，close 会崩） */
+  private patientDialogCtrl: CustomDialogController | null = null;
+
   /** 「我的」页展示的应用版本（只读一次，缓存）· 空串表示没取到 */
   private versionLabel: string = '';
 
@@ -402,18 +405,40 @@ export struct MainPage {
     });
   }
 
-  /** 弹患者名输入框（自定义对话框） */
+  /**
+   * 弹患者名输入框（自定义对话框）
+   *
+   * ★ controller 必须由页面持有：`@CustomDialog` 组件内部的 `controller` 在 V2 页面里
+   *   取不到注入值，在对话框内部 close 会抛
+   *   `TypeError: Cannot read property close of undefined` 并把应用打崩（真机实测）。
+   *   所以确认/取消都回调到页面，由页面统一 `closePatientDialog()`。
+   */
   private promptPatientName(initial: string, title: string, onConfirm: (patient: string) => void): void {
-    const ctrl: CustomDialogController = new CustomDialogController({
+    this.patientDialogCtrl = new CustomDialogController({
       builder: PatientNameDialog({
         title: title,
         initial: initial,
-        onConfirm: onConfirm
+        onConfirm: (patient: string): void => {
+          this.closePatientDialog();
+          onConfirm(patient);
+        },
+        onCancel: (): void => {
+          this.closePatientDialog();
+        }
       }),
       autoCancel: true,
       alignment: DialogAlignment.Center
     });
-    ctrl.open();
+    this.patientDialogCtrl.open();
+  }
+
+  /** 关闭患者命名对话框 · 先把字段置空，避免重复点击时二次 close */
+  private closePatientDialog(): void {
+    const ctrl: CustomDialogController | null = this.patientDialogCtrl;
+    this.patientDialogCtrl = null;
+    if (ctrl !== null) {
+      ctrl.close();
+    }
   }
 
   /** 上传：调起系统相册选择器，选中后带上患者名走 MediaStore 上传 */
