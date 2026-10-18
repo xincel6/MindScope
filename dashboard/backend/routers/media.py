@@ -18,6 +18,7 @@ from schemas import (
     FaceB64Request,
     MediaItemOut,
     MediaListOut,
+    PatientUpdateIn,
 )
 from services.inference import lmtformer_inference
 
@@ -43,6 +44,7 @@ async def list_media(
             thumbnail_url=a.thumbnail_url or "",
             url=f"/media/{fname}" if fname else "",
             duration=a.duration,
+            patient=a.patient,
             created_at=a.created_at.strftime("%Y-%m-%d"),
         ))
 
@@ -77,6 +79,33 @@ async def delete_media(
             pass
 
     return {"ok": True}
+
+
+@router.put("/media/{media_id}/patient")
+async def update_media_patient(
+    media_id: str,
+    req: PatientUpdateIn,
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+):
+    """给素材命名 / 改所属患者；空串或 null 表示清除。"""
+    try:
+        pk = int(media_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="无效的资源 ID")
+
+    patient = (req.patient or "").strip()
+    if len(patient) > 64:
+        raise HTTPException(status_code=400, detail="患者名最长 64 个字符")
+
+    result = await db.execute(select(MediaAsset).where(MediaAsset.id == pk))
+    asset = result.scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="资源不存在")
+
+    asset.patient = patient or None
+    await db.commit()
+    return {"ok": True, "patient": asset.patient or ""}
 
 
 @router.post("/analyze", response_model=AnalysisResponse)

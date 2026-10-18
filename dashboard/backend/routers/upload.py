@@ -1,8 +1,9 @@
 import uuid
 import shutil
 from pathlib import Path
+from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import MEDIA_DIR
@@ -19,12 +20,17 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".avi", ".mov", "
 @router.post("/upload/image")
 async def upload_image(
     file: UploadFile = File(...),
+    patient: Optional[str] = Query(None, description="所属患者名（可选，最长 64 字符）"),
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
     ext = Path(file.filename or "upload.jpg").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"不支持的文件格式: {ext}")
+
+    patient_name = (patient or "").strip()
+    if len(patient_name) > 64:
+        raise HTTPException(status_code=400, detail="患者名最长 64 个字符")
 
     # Save file with unique name
     unique_name = f"{uuid.uuid4().hex}{ext}"
@@ -43,6 +49,7 @@ async def upload_image(
     asset = MediaAsset(
         name=file.filename or unique_name,
         uploader_name=_user.username,
+        patient=patient_name or None,
         file_path=str(dest),
         type=media_type,
         duration=None,
@@ -57,4 +64,5 @@ async def upload_image(
         "name": asset.name,
         "type": asset.type.value,
         "url": f"/media/{unique_name}",
+        "patient": asset.patient or "",
     }

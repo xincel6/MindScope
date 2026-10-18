@@ -25,3 +25,7 @@ async def init_db():
             await conn.exec_driver_sql(
                 "ALTER TABLE media_assets ADD COLUMN uploader_name VARCHAR(64)"
             )
+        if "patient" not in columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE media_assets ADD COLUMN patient VARCHAR(64)"
+            )
