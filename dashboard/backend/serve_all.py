@@ -56,6 +56,20 @@ if __name__ == "__main__":
             print(f"[serve_all] 启动前备份失败（不影响启动）：{exc}")
     print(f"[serve_all] 数据库：{DATABASE_PATH}")
 
+    from config import SSL_CERTFILE, SSL_KEYFILE
+
     host = os.getenv("HOST", "127.0.0.1")   # 默认仅本机（安全）；临时开放用 HOST=0.0.0.0
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
+
+    # HTTPS：证书路径从环境变量读（SSL_CERTFILE / SSL_KEYFILE，见 config.py）。
+    # 两个都配置时才启用 TLS；否则保持纯 HTTP（默认）。
+    if SSL_CERTFILE and SSL_KEYFILE:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            ssl_certfile=SSL_CERTFILE,
+            ssl_keyfile=SSL_KEYFILE,
+        )
+    else:
+        uvicorn.run(app, host=host, port=port)

@@ -79,4 +79,18 @@ LLM_API_PATH = os.getenv("LLM_API_PATH", "/maas/v1/messages")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
 
 # CORS
-CORS_ORIGINS = ["*"]
+# ★ 默认只允许同源（空列表 = 不加 CORS 白名单，跨域请求一律拒绝）。
+#   需要额外允许的前端来源通过环境变量配置，逗号分隔，例如：
+#     CORS_ORIGINS=http://localhost:5173,http://192.168.0.10:5173
+#   注意：不要再用 "*"——它无法与 allow_credentials=True 共存，等于把认证放开。
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+# HTTPS / TLS
+# ★ 证书文件由运维放置（本地可用自签证书），这里只读配置，源码不硬编码证书。
+#   两个都配置了才会启用 TLS；缺任一则保持纯 HTTP。
+SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")
+SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")
