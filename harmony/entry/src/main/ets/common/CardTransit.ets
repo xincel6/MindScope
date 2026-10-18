@@ -110,6 +110,12 @@ export class CardTransit {
 
   static readonly CARDS_PLACEHOLDER: number = 2;
 
+  /**
+   * 素材库页：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
+   * ★ 必须与该页里 `RevealCard({ order })` 的个数一致。
+   */
+  static readonly CARDS_MEDIA: number = 2;
+
   static readonly CARDS_PROFILE: number = 3;
 
   /** "开始离场"信号 · 每次切页签自增一次，各组件监听它 */

@@ -71,6 +71,13 @@ export class HttpClient {
     return HttpClient.send<T>(path, http.RequestMethod.POST, bodyJson, headers, null);
   }
 
+  /** PUT JSON · body 为已序列化的字符串（鸿蒙 RequestMethod 无 PATCH，用 PUT 表达「更新单字段」） */
+  public static put<T>(path: string, bodyJson: string): Promise<T> {
+    const headers: Record<string, string> = {};
+    headers['Content-Type'] = 'application/json';
+    return HttpClient.send<T>(path, http.RequestMethod.PUT, bodyJson, headers, null);
+  }
+
   /**
    * POST multipart 上传单文件
    * ★ 字段名固定为 `file`（后端 `UploadFile = File(...)` 的形参名）

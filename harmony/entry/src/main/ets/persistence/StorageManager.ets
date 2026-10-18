@@ -22,7 +22,7 @@ import { BusinessError } from '@kit.BasicServicesKit';
 import { RDB_STORE_NAME, RDB_VERSION } from '../types/Index';
 import { ApiConfig } from '../common/ApiConfig';
 import { Logger } from '../common/Logger';
-import { DbSchema } from './DbSchema';
+import { DbSchema, MediaTable } from './DbSchema';
 import { MediaDao } from './MediaDao';
 import { ReportDao } from './ReportDao';
 import { StatsCacheDao } from './StatsCacheDao';
@@ -202,6 +202,16 @@ export class StorageManager {
     store: relationalStore.RdbStore, fromVersion: number, toVersion: number
   ): Promise<void> {
     StorageManager.log.i(`RDB 迁移 ${fromVersion} → ${toVersion}`);
+    // v1 → v2：media_asset 新增 patient 列（患者命名）
+    if (fromVersion < 2) {
+      try {
+        await store.executeSql(`ALTER TABLE ${MediaTable.tableName} ADD COLUMN ${MediaTable.colPatient} TEXT NOT NULL DEFAULT ''`);
+        StorageManager.log.i('迁移：media_asset 新增 patient 列');
+      } catch (err) {
+        // 列已存在（极端幂等场景）时忽略
+        StorageManager.log.w('迁移 patient 列失败（可能已存在）');
+      }
+    }
     await StorageManager.createSchema(store);
   }
 

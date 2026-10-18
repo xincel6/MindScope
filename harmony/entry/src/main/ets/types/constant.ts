@@ -186,7 +186,7 @@ export const PREFERENCES_NAME: string = 'mindscope_store';
 export const RDB_STORE_NAME: string = 'mindscope.db';
 
 /** RDB 当前版本号 · 改表结构时必须 +1 并补迁移分支 */
-export const RDB_VERSION: number = 1;
+export const RDB_VERSION: number = 2;
 
 /** 令牌本地有效期（毫秒）· 后端 JWT 为 7 天，本地留 1 小时余量 */
 export const TOKEN_TTL_MS: number = 7 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000;

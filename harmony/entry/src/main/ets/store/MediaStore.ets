@@ -38,6 +38,9 @@ export class MediaStore extends BaseStore {
   /** 媒体库筛选（null = 全部） */
   @Trace typeFilter: MediaType | null = null;
 
+  /** 当前患者名筛选（空串 = 全部患者） */
+  @Trace patientFilter: string = '';
+
   /** 最近一次成功上传的素材 · 供窗口层拿到 id 去开分析会话 */
   @Trace lastUploaded: MediaItemModel | null = null;
 
@@ -82,6 +85,58 @@ export class MediaStore extends BaseStore {
   /** 视频数量 */
   public videoCount(): number {
     return this.countByType(MediaType.video);
+  }
+
+  /**
+   * 去重后的患者名列表（含「未命名」占位，空串归为"未命名"）
+   * ★ UI 顶部筛选器直接用；顺序按首次出现，稳定不跳。
+   */
+  public patientOptions(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const p: string = this.items[i].patient;
+      const label: string = p.length > 0 ? p : '未命名';
+      if (!this.containsString(out, label)) {
+        out.push(label);
+      }
+    }
+    return out;
+  }
+
+  /** 当前患者筛选（空串 = 全部） */
+  public patientFilterValue(): string {
+    return this.patientFilter;
+  }
+
+  /** 设置患者筛选（空串 = 全部患者） */
+  public setPatientFilter(patient: string): void {
+    this.patientFilter = patient;
+  }
+
+  /** 应用了「患者 + 类型」双重筛选后的列表（UI 直接吃） */
+  public filteredItems(type: MediaType): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const patient: string = this.patientFilter;
+    for (let i = 0; i < this.items.length; i++) {
+      const item: MediaItemModel = this.items[i];
+      if (item.type !== type) {
+        continue;
+      }
+      // 患者筛选：空串 = 全部；否则按「未命名」或具体名字匹配
+      if (patient.length > 0) {
+        const itemPatient: string = item.patient.length > 0 ? item.patient : '未命名';
+        if (itemPatient !== patient) {
+          continue;
+        }
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 是否已筛选患者（用于顶部显示「清除筛选」） */
+  public hasPatientFilter(): boolean {
+    return this.patientFilter.length > 0;
   }
 
   /** 按 id 查找（★ 入参可能是数字形态，内部会归一化成字符串再比） */
@@ -230,11 +285,51 @@ export class MediaStore extends BaseStore {
     return MediaStore.ok('上传成功');
   }
 
+  /** 上传图片并附带患者名（供素材库患者命名用） */
+  public async uploadImageWithPatient(file: UploadFileSpec, patient: string): Promise<ActionResultModel> {
+    this.beginLoad();
+    try {
+      const dto: UploadImageOutDto = await MediaApi.uploadImageWithPatient(file, patient);
+      const item: MediaItemModel = Mapper.toUploadedMedia(dto, new Date());
+      // 后端若未回显 patient，用入参补齐，保证本地一致
+      if (item.patient.length === 0) {
+        item.patient = patient;
+      }
+      this.prependLocal(item);
+      await StorageManager.mediaDao().save(item);
+      this.endLoadOk();
+      this.log().i(`图片已上传 · id=${item.id} · patient=${item.patient}`);
+      return MediaStore.ok('上传成功');
+    } catch (err) {
+      const apiErr = toApiError(err as Object);
+      this.endLoadErr(apiErr.message);
+      this.log().e('图片上传失败', err as Object);
+      return MediaStore.fail(apiErr.message);
+    }
+  }
+
+  /** 给素材命名/改所属患者 · 服务端成功后同步更新本地镜像与内存 */
+  public async renamePatient(mediaId: string, patient: string): Promise<ActionResultModel> {
+    const normalized: string = normalizeMediaId(mediaId);
+    try {
+      await MediaApi.updatePatient(normalized, patient);
+      await StorageManager.mediaDao().updatePatient(normalized, patient);
+      this.patchPatientLocal(normalized, patient);
+      this.log().i(`素材患者名已更新 · ${normalized} → ${patient}`);
+      return MediaStore.ok('已命名');
+    } catch (err) {
+      const apiErr = toApiError(err as Object);
+      this.log().e(`更新患者名失败 · ${normalized}`, err as Object);
+      return MediaStore.fail(apiErr.message);
+    }
+  }
+
   /** 实现 BaseStore：清空内存（磁盘缓存由 StorageManager.clearBusinessCache 负责） */
   public clear(): void {
     this.items = [];
     this.current = null;
     this.typeFilter = null;
+    this.patientFilter = '';
     this.loading = false;
     this.errorMsg = '';
     this.lastSyncAt = 0;
@@ -256,6 +351,54 @@ export class MediaStore extends BaseStore {
       }
     }
     return total;
+  }
+
+  /** 字符串数组是否已包含目标（避免每次写内联循环） */
+  private containsString(list: string[], target: string): boolean {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 内存中就地更新某条素材的患者名（保持 @Trace 触发 UI 刷新） */
+  private patchPatientLocal(mediaId: string, patient: string): void {
+    const next: MediaItemModel[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const item: MediaItemModel = this.items[i];
+      if (item.id === mediaId) {
+        const updated: MediaItemModel = {
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          thumbnailUrl: item.thumbnailUrl,
+          url: item.url,
+          duration: item.duration,
+          createdAt: item.createdAt,
+          patient: patient
+        };
+        next.push(updated);
+      } else {
+        next.push(item);
+      }
+    }
+    this.items = next;
+    const current: MediaItemModel | null = this.current;
+    if (current !== null && current.id === mediaId) {
+      const updatedCurrent: MediaItemModel = {
+        id: current.id,
+        name: current.name,
+        type: current.type,
+        thumbnailUrl: current.thumbnailUrl,
+        url: current.url,
+        duration: current.duration,
+        createdAt: current.createdAt,
+        patient: patient
+      };
+      this.current = updatedCurrent;
+    }
   }
 
   /** 新上传的条目置顶（列表按创建时间倒序，与服务端一致） */

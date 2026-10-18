@@ -19,7 +19,7 @@ export class MediaDao extends BaseDao<MediaItemModel> {
   public columnNames(): string[] {
     return [
       MediaTable.colId, MediaTable.colName, MediaTable.colType, MediaTable.colFilePath,
-      MediaTable.colThumbnailUrl, MediaTable.colDuration, MediaTable.colCreatedAt
+      MediaTable.colThumbnailUrl, MediaTable.colDuration, MediaTable.colCreatedAt, MediaTable.colPatient
     ];
   }
 
@@ -55,6 +55,14 @@ export class MediaDao extends BaseDao<MediaItemModel> {
   /** 读取全部（按创建时间倒序，与服务端一致） */
   public loadAll(): Promise<MediaItemModel[]> {
     return this.queryAll();
+  }
+
+  /** 更新单条素材的患者名（本地镜像 · 与 PUT /api/media/{id}/patient 配对调用） */
+  public async updatePatient(mediaId: string, patient: string): Promise<boolean> {
+    const sql: string = `UPDATE ${this.tableName()} SET ${MediaTable.colPatient} = ? WHERE ${MediaTable.colId} = ?`;
+    const args: relationalStore.ValueType[] = [patient, mediaId];
+    await this.execute(sql, args);
+    return true;
   }
 
   /** 按类型读取（媒体库筛选走这里，离线也能筛） */

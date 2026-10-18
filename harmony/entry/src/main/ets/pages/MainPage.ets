@@ -27,7 +27,11 @@
 
 import { bundleManager } from '@kit.AbilityKit';
 import { UiTheme } from '../common/UiTheme';
+import { fileIo } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { CardTransit } from '../common/CardTransit';
+import { ApiConfig } from '../common/ApiConfig';
+import { Logger } from '../common/Logger';
 import { AppStore } from '../store/AppStore';
 import {
   ActionResultModel, CurrentTaskModel, MediaItemModel, MediaType, PickedMediaModel,
@@ -35,14 +39,15 @@ import {
 } from '../types/Index';
 import { UploadFileSpec } from '../network/HttpClient';
 import {
-  AnalysisDetailPageParam, MainPageParam, MainTab, MediaPickerPageParam, ProfilePageParam,
-  ReportsPageParam, TabPageParam, WorkbenchPageParam
+  AnalysisDetailPageParam, MainPageParam, MainTab, MediaLibraryPageParam, MediaPickerPageParam,
+  ProfilePageParam, ReportsPageParam, TabPageParam, WorkbenchPageParam
 } from '../types/PageParams';
 import {
   ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabIndexOf, mainTabLabel,
   MainTabMeta
 } from './PageRoutes';
 import { MediaPicker, PickResult } from '../common/MediaPicker';
+import { PatientNameDialog } from '../components/PatientNameDialog';
 import { WorkbenchPage } from './WorkbenchPage';
 import { MediaLibraryPage } from './MediaLibraryPage';
 import { ReportsPage } from './ReportsPage';
@@ -85,7 +90,7 @@ export struct MainPage {
   // ── 页面参数对象（构造一次，之后只改字段）──
 
   private workbenchParam: WorkbenchPageParam = new WorkbenchPageParam();
-  private mediaParam: TabPageParam = new TabPageParam();
+  private mediaParam: MediaLibraryPageParam = new MediaLibraryPageParam();
   private reportsParam: ReportsPageParam = new ReportsPageParam();
   private statsParam: TabPageParam = new TabPageParam();
   private profileParam: ProfilePageParam = new ProfilePageParam();
@@ -95,8 +100,19 @@ export struct MainPage {
   /** 动作回调是否已挂载（只挂一次，避免每次同步都新建闭包） */
   private actionsAttached: boolean = false;
 
+  /** 素材库动作回调是否已挂载（只挂一次） */
+  private mediaActionsAttached: boolean = false;
+
+  /** 素材库当前选中的素材 id（空串 = 未选中） */
+  @Local selectedMediaId: string = '';
+
+  /** 素材库删除进行中的素材 id（空串 = 无） */
+  @Local deletingMediaId: string = '';
+
   /** 素材选择页当前选中的素材（窗口层持有，页面只读投影字段） */
   private picked: PickedMediaModel | null = null;
+
+  private readonly log = Logger.scope('MainPage');
 
   /** 「我的」页展示的应用版本（只读一次，缓存）· 空串表示没取到 */
   private versionLabel: string = '';
@@ -179,6 +195,9 @@ export struct MainPage {
     if (tab === MainTab.stats) {
       return CardTransit.CARDS_STATS;
     }
+    if (tab === MainTab.media) {
+      return CardTransit.CARDS_MEDIA;
+    }
     if (tab === MainTab.profile) {
       return CardTransit.CARDS_PROFILE;
     }
@@ -226,8 +245,7 @@ export struct MainPage {
       return;
     }
     if (tab === MainTab.media) {
-      param.busy = app.mediaLoading;
-      param.errorMsg = app.mediaError;
+      this.syncMediaParam();
       return;
     }
     if (tab === MainTab.reports) {
@@ -288,6 +306,261 @@ export struct MainPage {
   private syncWorkbenchParam(param: WorkbenchPageParam): void {
     const stack: NavPathStack | null = this.navStack;
     param.pathStack = stack;
+  }
+
+  // ══════════════════ 素材库页参数与动作（患者命名）══════════════════
+
+  /**
+   * 把 store 的实时状态写进素材库页参数（数据字段 + 动作回调）
+   * 回调只挂一次，数据字段每次刷新都改写。
+   */
+  private syncMediaParam(): void {
+    const param: MediaLibraryPageParam = this.mediaParam;
+    if (!this.mediaActionsAttached) {
+      this.mediaActionsAttached = true;
+      this.attachMediaActions(param);
+    }
+    const app: AppStore = AppStore.get();
+    param.activeTab = MainTab.media;
+    param.pathStack = this.navStack;
+    param.busy = app.mediaLoading;
+    param.errorMsg = app.mediaError;
+    param.videos = this.collectMedia(MediaType.video);
+    param.images = this.collectMedia(MediaType.image);
+    param.patients = app.patientOptions();
+    param.selectedPatient = app.patientFilter();
+    param.selectedMediaId = this.selectedMediaId;
+    param.analyzing = app.analyzing;
+  }
+
+  /** 从门面取某类型的素材列表（已按患者筛选，并解析 URL 后返回新数组） */
+  private collectMedia(type: MediaType): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const items: MediaItemModel[] = AppStore.get().filteredMediaItems(type);
+    for (let i = 0; i < items.length; i++) {
+      const src: MediaItemModel = items[i];
+      // 复制一份并把相对路径解析成绝对地址，页面拿到即可直接喂给 Image
+      const item: MediaItemModel = {
+        id: src.id,
+        name: src.name,
+        type: src.type,
+        thumbnailUrl: ApiConfig.resolveMediaUrl(src.thumbnailUrl),
+        url: ApiConfig.resolveMediaUrl(src.url),
+        duration: src.duration,
+        createdAt: src.createdAt,
+        patient: src.patient
+      };
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 挂载素材库页的动作回调（只执行一次） */
+  private attachMediaActions(param: MediaLibraryPageParam): void {
+    param.onUpload = (): void => {
+      this.startUploadFlow();
+    };
+    param.onOpenMedia = (mediaId: string): void => {
+      this.openMedia(mediaId);
+    };
+    param.onDelete = (mediaId: string): void => {
+      this.confirmDeleteMedia(mediaId);
+    };
+    param.onRetry = (): void => {
+      this.retryLoadMedia();
+    };
+    param.onSelectPatient = (patient: string): void => {
+      this.selectPatient(patient);
+    };
+    param.onRename = (mediaId: string): void => {
+      this.startRenameFlow(mediaId);
+    };
+  }
+
+  /** 切换患者筛选 */
+  private selectPatient(patient: string): void {
+    AppStore.get().setPatientFilter(patient);
+    this.refreshMediaUi();
+  }
+
+  /** 上传流程：先弹患者命名输入框（可跳过），再调起相册选择器 */
+  private startUploadFlow(): void {
+    this.promptPatientName('', '为素材命名所属患者', (patient: string) => {
+      this.pickAndUpload(patient);
+    });
+  }
+
+  /** 重命名流程：弹输入框回填当前患者名，确认后调 renamePatient */
+  private startRenameFlow(mediaId: string): void {
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    const current: string = item === null ? '' : item.patient;
+    this.promptPatientName(current, '修改素材所属患者', async (patient: string) => {
+      const res: ActionResultModel = await AppStore.get().renamePatient(mediaId, patient);
+      this.refreshMediaUi();
+      this.toast(res.message);
+    });
+  }
+
+  /** 弹患者名输入框（自定义对话框） */
+  private promptPatientName(initial: string, title: string, onConfirm: (patient: string) => void): void {
+    const ctrl: CustomDialogController = new CustomDialogController({
+      builder: PatientNameDialog({
+        title: title,
+        initial: initial,
+        onConfirm: onConfirm
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center
+    });
+    ctrl.open();
+  }
+
+  /** 上传：调起系统相册选择器，选中后带上患者名走 MediaStore 上传 */
+  private async pickAndUpload(patient: string): Promise<void> {
+    try {
+      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
+      const uris: string[] = result.photoUris;
+      if (uris.length === 0) {
+        return;
+      }
+      const uri: string = uris[0];
+      const file: UploadFileSpec = this.buildUploadSpec(uri);
+      const res: ActionResultModel = patient.length > 0
+        ? await AppStore.get().media().uploadImageWithPatient(file, patient)
+        : await AppStore.get().media().uploadImage(file);
+      this.refreshMediaUi();
+      this.toast(res.message);
+    } catch (err) {
+      this.log.e('选择或上传素材失败', err as Object);
+      this.refreshMediaUi();
+      this.toast('上传失败，请重试');
+    }
+  }
+
+  /** 从相册 URI 构造上传文件描述（copy 到沙箱后再传，规避跨应用访问权限） */
+  private buildUploadSpec(uri: string): UploadFileSpec {
+    let filePath: string = uri;
+    let fileName: string = 'upload.jpg';
+    let mimeType: string = 'image/jpeg';
+    try {
+      const context: Context = this.getUIContext().getHostContext() as Context;
+      const source: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const namePart: string = this.extractName(uri);
+      fileName = namePart.length > 0 ? namePart : 'upload.jpg';
+      mimeType = this.inferMime(namePart);
+      const destPath: string = `${context.cacheDir}/${fileName}`;
+      const dest: fileIo.File = fileIo.openSync(
+        destPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      const stat: fileIo.Stat = fileIo.statSync(source.fd);
+      const buf: ArrayBuffer = new ArrayBuffer(stat.size);
+      fileIo.readSync(source.fd, buf);
+      fileIo.writeSync(dest.fd, buf);
+      fileIo.closeSync(source);
+      fileIo.closeSync(dest);
+      filePath = destPath;
+    } catch (err) {
+      this.log.e('复制上传文件到沙箱失败，退回原始 URI', err as Object);
+    }
+    const spec: UploadFileSpec = {
+      filePath: filePath,
+      fileName: fileName,
+      mimeType: mimeType
+    };
+    return spec;
+  }
+
+  /** 从 URI 里抽取文件名（取最后一段，去掉查询串） */
+  private extractName(uri: string): string {
+    const clean: string = uri.split('?')[0];
+    const parts: string[] = clean.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  /** 按扩展名推断 MIME */
+  private inferMime(name: string): string {
+    const lower: string = name.toLowerCase();
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (lower.endsWith('.mp4')) {
+      return 'video/mp4';
+    }
+    return 'image/jpeg';
+  }
+
+  /** 打开素材 · 触发分析（跳转目标后续再接） */
+  private openMedia(mediaId: string): void {
+    this.selectedMediaId = mediaId;
+    AppStore.get().startAnalysis(mediaId);
+    this.refreshMediaUi();
+  }
+
+  /** 删除素材 · 二次确认后调 MediaStore.deleteMedia */
+  private confirmDeleteMedia(mediaId: string): void {
+    if (this.deletingMediaId.length > 0) {
+      return;
+    }
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    const name: string = item === null ? '该素材' : item.name;
+    this.getUIContext().showAlertDialog({
+      title: '删除素材',
+      message: `确定删除「${name}」吗？删除后不可恢复。`,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: UiTheme.danger,
+        action: (): void => {
+          this.doDeleteMedia(mediaId);
+        }
+      }
+    });
+  }
+
+  /** 执行删除 */
+  private async doDeleteMedia(mediaId: string): Promise<void> {
+    this.deletingMediaId = mediaId;
+    try {
+      const res: ActionResultModel = await AppStore.get().media().deleteMedia(mediaId);
+      this.refreshMediaUi();
+      this.toast(res.message);
+    } catch (err) {
+      this.log.e('删除素材失败', err as Object);
+      this.refreshMediaUi();
+      this.toast('删除失败，请重试');
+    } finally {
+      this.deletingMediaId = '';
+    }
+  }
+
+  /** 重试加载素材 */
+  private async retryLoadMedia(): Promise<void> {
+    await AppStore.get().refreshMedia();
+    this.refreshMediaUi();
+  }
+
+  /** 素材库动作收尾统一：tick + 同步素材库参数 */
+  private refreshMediaUi(): void {
+    this.tick = this.tick + 1;
+    this.syncMediaParam();
+  }
+
+  /** 轻提示 */
+  private toast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
   // ══════════════════ 动作实现（★ 只有本文件与 Index 允许碰 store）══════════════════
@@ -622,9 +895,9 @@ export struct MainPage {
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)
-    } else if (name === MainTab.media && param instanceof TabPageParam) {
+    } else if (name === MainTab.media && param instanceof MediaLibraryPageParam) {
       NavDestination() {
-        MediaLibraryPage({ pageParam: param as TabPageParam })
+        MediaLibraryPage({ pageParam: param as MediaLibraryPageParam })
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)

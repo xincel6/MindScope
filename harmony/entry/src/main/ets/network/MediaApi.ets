@@ -7,11 +7,16 @@
  *   3. 列表接口**没有分页参数**，一次全量返回。
  */
 
-import { MediaListOutDto, MediaItemOutDto, UploadImageOutDto } from '../types/Index';
+import { MediaListOutDto, MediaItemOutDto, UpdatePatientReqDto, UploadImageOutDto } from '../types/Index';
 import { HttpClient, UploadFileSpec } from './HttpClient';
 
 /** 删除结果 */
 export interface DeleteMediaResult {
+  ok: boolean;
+}
+
+/** 更新患者名结果 */
+export interface UpdatePatientResult {
   ok: boolean;
 }
 
@@ -56,5 +61,22 @@ export class MediaApi {
     return HttpClient.uploadWithTimeout<UploadImageOutDto>(
       '/api/upload/image', 'file', file, HttpClient.uploadTimeoutMs
     );
+  }
+
+  /** 上传图片并附带患者名（`patient` 走 query 参数，供素材库患者命名用） */
+  public static uploadImageWithPatient(file: UploadFileSpec, patient: string): Promise<UploadImageOutDto> {
+    const path: string = patient.length > 0
+      ? `/api/upload/image?patient=${encodeURIComponent(patient)}`
+      : '/api/upload/image';
+    return HttpClient.upload<UploadImageOutDto>(path, 'file', file);
+  }
+
+  /** 给素材命名/改所属患者 · PUT /api/media/{id}/patient（鸿蒙 RequestMethod 无 PATCH，用 PUT） */
+  public static async updatePatient(mediaId: string, patient: string): Promise<boolean> {
+    const body: UpdatePatientReqDto = { patient: patient };
+    const result: UpdatePatientResult = await HttpClient.put<UpdatePatientResult>(
+      `/api/media/${mediaId}/patient`, JSON.stringify(body)
+    );
+    return result.ok === true;
   }
 }
