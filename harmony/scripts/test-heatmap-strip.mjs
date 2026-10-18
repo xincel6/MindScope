@@ -12,11 +12,10 @@
  *   · 另有一条**源码文本级检查**：确认真正生效的 `.ets` 里仍有相同的判定顺序与常量，
  *     避免"测试里的镜像改了、产品代码没改"这种假绿。
  *
- * ★★ 本轮（分析页实装轮）新增的**回归守卫**：
- *   旧实现有第五个参数 `lastFrame`，在没有本素材帧时回退成 `frames = [lastFrame]`
- *   （全局最新一帧）—— 那正是「退出分析页再回来只剩 1 帧」与
- *   「所有素材热力图都变成最近那个人」两个 bug 的唯一入口。
- *   现在这个参数**不允许存在**，下面第 9 组用例 + 源码断言双重守卫它不被加回来。
+ * ★★ 本轮新增的**回归守卫**（"所有帧都是同一帧"）：
+ *   旧实现超出 24 格时 `slice` 保留**最后 24 帧**。服务端一批正好 24 帧，
+ *   于是整列就是一个批次的同一张图（连帧号都因尾批补帧而错位）。
+ *   现在必须**按时间均匀抽取（含首尾）**，且收尾裁剪也必须是抽稀而不是砍头。
  *
  * 用法：node harmony/scripts/test-heatmap-strip.mjs
  */
@@ -27,6 +26,7 @@ import { dirname, join } from 'node:path';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const VM_PATH = join(HERE, '..', 'entry', 'src', 'main', 'ets', 'components', 'charts', 'HeatmapViewModel.ets');
+const HOLDER_PATH = join(HERE, '..', 'entry', 'src', 'main', 'ets', 'store', 'AnalysisStateHolder.ets');
 
 // ───────────────── 与 HeatmapViewModel.ets 同口径的镜像实现 ─────────────────
 
@@ -36,9 +36,24 @@ function hasHeat(f) {
   return f.heatmapData.length > 0 && f.heatmapData[0].length > 0;
 }
 
+/** 等距抽样（保留首尾）· 与 .ets 里的 sampleEvenly 逐行对应 */
+function sampleEvenly(frames, maxTiles) {
+  if (maxTiles <= 0) return [];
+  if (frames.length <= maxTiles) return frames;
+  const out = [];
+  const lastIndex = frames.length - 1;
+  const step = lastIndex / (maxTiles - 1);
+  for (let i = 0; i < maxTiles; i++) {
+    let index = Math.round(i * step);
+    if (index < 0) index = 0;
+    if (index > lastIndex) index = lastIndex;
+    out.push(frames[index]);
+  }
+  return out;
+}
+
 function heatOnly(frames, maxTiles) {
-  const out = frames.filter(hasHeat);
-  return out.length > maxTiles ? out.slice(out.length - maxTiles) : out;
+  return sampleEvenly(frames.filter(hasHeat), maxTiles);
 }
 
 function pickIndex(frames, focusedIndex, lastIndex) {
@@ -141,15 +156,33 @@ console.log('\n4) 空热度矩阵的帧必须被过滤掉（否则缩略图是�
   check('主图 = 有数据的最新帧', v.heatmap[0][0] === 0.8, `实际 ${JSON.stringify(v.heatmap)}`);
 }
 
-console.log('\n5) 渲染上限：超出时保留【最新】的 N 帧（不能保留最旧的）');
+console.log('\n5) 渲染上限：超出时按时间【均匀抽取】（不能再只留最后 N 帧）');
 {
   const own = [];
   for (let i = 1; i <= 40; i++) own.push(frame(i, i / 100));
   const v = buildView(own, [], -1, true, 24);
-  check('frames 被裁到 24 帧', v.frames.length === 24, `实际 ${v.frames.length}`);
-  check('保留的是第 17~40 帧', v.frames[0].frameId === 17 && v.frames[23].frameId === 40,
-    `首 ${v.frames[0].frameId} 末 ${v.frames[23].frameId}`);
+  check('frames 被抽到 24 格', v.frames.length === 24, `实际 ${v.frames.length}`);
+  check('保留首帧（第 1 格 = #1）', v.frames[0].frameId === 1, `实际 ${v.frames[0].frameId}`);
+  check('保留尾帧（最后一格 = #40）', v.frames[23].frameId === 40, `实际 ${v.frames[23].frameId}`);
+  check('抽稀后的帧号严格递增（无重复格）',
+    v.frames.every((f, i) => i === 0 || f.frameId > v.frames[i - 1].frameId),
+    `帧号 ${v.frames.map((f) => f.frameId).join(',')}`);
   check('主图仍是最新帧', v.heatmap[0][0] === 0.4, `实际 ${JSON.stringify(v.heatmap)}`);
+}
+
+console.log('\n5b) 真实视频口径：60 帧抽 24 格，必须覆盖整段（首尾都在）');
+{
+  const own = [];
+  for (let i = 1; i <= 60; i++) own.push(frame(i, i / 100));
+  const v = buildView(own, [], -1, true, 24);
+  check('共 24 格', v.frames.length === 24, `实际 ${v.frames.length}`);
+  check('覆盖第 1 帧', v.frames[0].frameId === 1, `实际 ${v.frames[0].frameId}`);
+  check('覆盖第 60 帧', v.frames[23].frameId === 60, `实际 ${v.frames[23].frameId}`);
+  let maxGap = 0;
+  for (let i = 1; i < v.frames.length; i++) {
+    maxGap = Math.max(maxGap, v.frames[i].frameId - v.frames[i - 1].frameId);
+  }
+  check('相邻格间隔 ≤ 4 帧（不是挤在最后一个批次里）', maxGap <= 4, `最大间隔 ${maxGap}`);
 }
 
 console.log('\n6) 本素材的归档会话（isLive = false）→ source = snapshot（文案要说清是归档）');
@@ -199,7 +232,8 @@ const src = readFileSync(VM_PATH, 'utf8');
 const required = [
   ['渲染上限常量 24', /MAX_STRIP_TILES: number = 24/],
   ['只保留有热度数据的帧', /function heatOnly/],
-  ['超出上限时保留最新（slice 尾部）', /out\.slice\(out\.length - MAX_STRIP_TILES\)/],
+  ['均匀抽样函数（含首尾）', /function sampleEvenly/],
+  ['抽稀用四舍五入等距', /Math\.round\(i \* step\)/],
   ['本素材帧优先', /const own: AnalysisFrameModel\[\] = heatOnly\(frames\)/],
   ['pinned 判定', /focusedIndex >= 0 && index === focusedIndex/],
   ['live / snapshot 分流', /isLive \? HeatSource\.live : HeatSource\.snapshot/],
@@ -208,6 +242,20 @@ const required = [
 ];
 for (const [name, re] of required) {
   check(`HeatmapViewModel.ets 含「${name}」`, re.test(src), `未匹配 ${re}`);
+}
+check('HeatmapViewModel.ets 不再「只留最后 24 帧」',
+  !/out\.slice\(out\.length - MAX_STRIP_TILES\)/.test(src),
+  '仍存在 out.slice(out.length - MAX_STRIP_TILES)');
+
+console.log('\n11) 归档裁剪也必须是抽稀（只留尾部 = 列表里全是同一批）');
+{
+  const holder = readFileSync(HOLDER_PATH, 'utf8');
+  check('AnalysisStateHolder 用 sampleEvenly 抽稀', /sampleEvenly\(prev\.frames, MAX_ARCHIVE_FRAMES\)/.test(holder),
+    '未找到 sampleEvenly(prev.frames, MAX_ARCHIVE_FRAMES)');
+  check('AnalysisStateHolder 不再从头部切掉帧',
+    !/frames\.slice\(frames\.length - MAX_ARCHIVE_FRAMES\)/.test(stripComments(holder)),
+    '仍存在 frames.slice(frames.length - MAX_ARCHIVE_FRAMES)');
+  check('归档上限常量仍为 30', /MAX_ARCHIVE_FRAMES: number = 30/.test(holder), '未找到 30');
 }
 
 console.log('');

@@ -31,7 +31,30 @@ JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "depression-dashboard-dev-secret-ch
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24 * 7)))  # default 7 days
 MEDIA_DIR = BASE_DIR / "media"
-DATABASE_URL = f"sqlite+aiosqlite:///{BASE_DIR / 'depression.db'}"
+
+
+def _resolve_path(raw: str, default: Path) -> Path:
+    """解析可配置路径：空值用默认；相对路径按 backend 目录解析（与启动目录无关）。"""
+    value = (raw or "").strip()
+    if not value:
+        return default
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (BASE_DIR / path).resolve()
+    return path
+
+
+# ── 数据库（★ 线上请用 DATABASE_PATH 指到仓库外，见 docs/Linux服务端部署指南.md）──
+# 为什么要可配置：`depression.db` 曾经**被 git 跟踪**，服务器每次 `git pull` /
+# `git reset` 都会拿仓库里的旧快照覆盖线上库 —— 2026-10-18 那次部署就因此
+# 丢掉了注册账号和报告（BUG-26）。现在仓库里只放 `demo/depression.db` 种子，
+# 运行库不进版本库；线上再把 DATABASE_PATH 指到仓库外，git 就再也碰不到它。
+DEMO_DB_PATH = BASE_DIR / "demo" / "depression.db"
+DATABASE_PATH = _resolve_path(os.getenv("DATABASE_PATH", ""), BASE_DIR / "depression.db")
+DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
+
+# 启动前自动备份目录（`backup_db.py` 与 serve_all.py 共用；不进版本库）
+BACKUP_DIR = _resolve_path(os.getenv("DB_BACKUP_DIR", ""), BASE_DIR / "backups")
 
 # Frame processing
 FRAMES_PER_BATCH = 24

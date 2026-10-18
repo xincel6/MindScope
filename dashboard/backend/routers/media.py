@@ -20,7 +20,7 @@ from schemas import (
     MediaListOut,
     PatientUpdateIn,
 )
-from services.inference import lmtformer_inference
+from services.inference import average_heatmaps, lmtformer_inference
 
 router = APIRouter(prefix="/api")
 
@@ -159,9 +159,10 @@ async def analyze_single_face(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     faces = [face] * FRAMES_PER_BATCH
-    scores, ms, heatmap = await lmtformer_inference(faces)
+    scores, ms, heatmaps = await lmtformer_inference(faces)
     return FaceAnalyzeOut(
         bdi_score=float(scores[0]),
         inference_time_ms=float(ms),
-        heatmap_data=heatmap,
+        # 单张脸没有"时间"可言：把 12 个时间 token 平均回一张，口径与旧版一致
+        heatmap_data=average_heatmaps(heatmaps),
     )

@@ -22,6 +22,7 @@ from PIL import Image
 from config import FRAMES_PER_BATCH, FACE_SIZE, TARGET_INFERENCE_MS
 from schemas import AnalysisFrame
 from services.face_alignment import align_face
+from services.frame_plan import heatmap_for_frame, tail_plan
 from services.inference import lmtformer_inference
 
 
@@ -125,7 +126,7 @@ async def _process_image(
     aligned, _heatmap = await align_face(frame_bgr)
     face_b64 = _encode_base64(aligned)
 
-    scores, inf_ms, attn_heatmap = await lmtformer_inference(
+    scores, inf_ms, heatmaps = await lmtformer_inference(
         [aligned] * FRAMES_PER_BATCH
     )
     score = scores[0]
@@ -136,7 +137,7 @@ async def _process_image(
         timestamp=time.time(),
         bdi_score=score,
         aligned_face=face_b64,
-        heatmap_data=attn_heatmap,
+        heatmap_data=heatmap_for_frame(heatmaps, 0),
         inference_time_ms=elapsed_ms,
         progress=1.0,
     )
@@ -152,8 +153,14 @@ async def _process_video(
 ) -> None:
     """Video path: sample frames, batch by 24, stream results.
 
-    MTCNN runs only on keyframes (every KEYFRAME_INTERVAL sampled frames)
+    MTCNN runs only on keyframes (every KEYFRAME_EVERY sampled frames)
     to keep latency manageable. Intermediate frames reuse the last transform.
+
+    ★ 三条与"用户看到的帧"直接相关的规则：
+      1. 每批 24 帧只跑**一次**推理，模型给的是 clip 级分数，批内 24 帧相同（段级语义）；
+      2. 注意力按 12 个时间 token 拆开，每个 token 覆盖 2 帧 —— 所以批内热力图**不再全同**；
+      3. 尾批不足 24 帧时，补帧只用于凑齐模型输入，**只发送真实帧**且帧号连续
+         （旧实现把补帧也发出去、还按补齐后的长度倒推起点，导致重复帧 + 错号）。
     """
     cap = _video_capture(path)
     if not cap.isOpened():
@@ -166,11 +173,9 @@ async def _process_video(
     KEYFRAME_EVERY = 10  # re-detect face every 10 sampled frames
 
     frame_buffer: list[np.ndarray] = []
-    heatmap_buffer: list[np.ndarray] = []
     frame_id = 0
     read_idx = 0
     last_aligned = None
-    last_heatmap = None
     sampled_count = 0
 
     while True:
@@ -186,35 +191,33 @@ async def _process_video(
 
         # Full MTCNN detection only on keyframes
         if sampled_count % KEYFRAME_EVERY == 1 or last_aligned is None:
-            aligned, heatmap = await align_face(frame_bgr)
+            aligned, _ = await align_face(frame_bgr)
             last_aligned = aligned
-            last_heatmap = heatmap
         else:
             aligned = last_aligned
-            heatmap = last_heatmap
 
         frame_buffer.append(aligned)
-        heatmap_buffer.append(heatmap)
         frame_id += 1
 
         if len(frame_buffer) == FRAMES_PER_BATCH:
             await _flush_batch(
-                queue, frame_buffer, heatmap_buffer,
+                queue, frame_buffer,
                 frame_id - FRAMES_PER_BATCH + 1,
                 total, sample_every,
             )
             frame_buffer.clear()
-            heatmap_buffer.clear()
 
-    # Flush remaining frames (pad with duplicates if needed)
+    # Flush remaining frames: pad only for the model input, emit real frames only
     if frame_buffer:
-        while len(frame_buffer) < FRAMES_PER_BATCH:
-            frame_buffer.append(frame_buffer[-1])
-            heatmap_buffer.append(heatmap_buffer[-1])
+        plan = tail_plan(len(frame_buffer), frame_id)
+        padded = list(frame_buffer)
+        if plan.padding > 0:
+            padded.extend([frame_buffer[-1]] * plan.padding)
         await _flush_batch(
-            queue, frame_buffer, heatmap_buffer,
-            frame_id - len(frame_buffer) + 1,
+            queue, padded,
+            plan.start_id,
             total, sample_every,
+            emit_count=plan.emit_count,
         )
 
     cap.release()
@@ -224,15 +227,24 @@ async def _process_video(
 async def _flush_batch(
     queue: asyncio.Queue,
     faces: list[np.ndarray],
-    heatmaps: list[np.ndarray],
     start_id: int,
     total_frames: int,
     sample_every: int,
+    emit_count: Optional[int] = None,
 ) -> None:
-    """Run inference on a batch and push each frame result to queue."""
-    scores, inf_ms, attn_heatmap = await lmtformer_inference(faces)
+    """Run inference on one batch and push each **real** frame result to queue.
 
-    for i, (face, score) in enumerate(zip(faces, scores)):
+    Args:
+        faces: 24 帧（尾批可能是补帧后的副本）。模型要求固定批大小。
+        start_id: 本批第一条真实帧的全局帧号（1-based）。
+        emit_count: 只发送前多少条；None = 全部（满批）。
+                    ★ 尾批必须传真实帧数，否则会把补帧副本也发出去。
+    """
+    scores, inf_ms, heatmaps = await lmtformer_inference(faces)
+
+    emit = len(faces) if emit_count is None else max(0, min(emit_count, len(faces)))
+    for i in range(emit):
+        face = faces[i]
         face_b64 = _encode_base64(face)
 
         progress = min(1.0, (start_id + i) / max(1, total_frames // sample_every))
@@ -240,9 +252,10 @@ async def _flush_batch(
         af = AnalysisFrame(
             frame_id=start_id + i,
             timestamp=time.time(),
-            bdi_score=score,
+            bdi_score=scores[i],
             aligned_face=face_b64,
-            heatmap_data=attn_heatmap,
+            # 该帧所在时间片（2 帧）的热力图，不是整批共用一张
+            heatmap_data=heatmap_for_frame(heatmaps, i),
             inference_time_ms=round(inf_ms, 3),
             progress=round(progress, 4),
         )

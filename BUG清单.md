@@ -1107,4 +1107,140 @@ node harmony/scripts/test-heatmap-colormap.mjs → PASS
 > 其中 `test-workbench-layout.mjs` 已按“分析详情页保留、仅从历史报告进入”的现行架构更新，
 > 不再断言“详情页已删除”。
 
+---
+
+# 逐帧数据粒度轮 · 新增缺陷（BUG-25）
+
+## BUG-25 · 「逐帧热力图」一整列全是同一帧
+
+**现象**
+工作台 / 分析详情页的「逐帧热力图（视频切分视图）」里，24 格的人脸、热力颜色、BDI 全部一样；
+主图下方写「已固定第 211 帧 · BDI 18.4」，而每格都是 18.4。
+同一段视频的情绪曲线也很像一条条水平台阶。
+
+**实测（改前，样本视频 `anonymous_001.mp4`，采样 60 帧）**
+
+```text
+messages        : 72        ← 实际只有 60 帧，多出 12 条
+frame_id range  : 1..60  unique=60  duplicate ids=12
+distinct heats  : 3         ← 一批 24 帧共用 1 张
+distinct scores : 3         ← 3 批各 1 个段级分数
+```
+
+**根因（四条叠加，前三条在服务端）**
+
+1. `services/inference.py` 把 12 个时间 token 的注意力在**时间维取平均**成 1 张 →
+   一批 24 帧共用同一张 16×16 热力图。
+2. 模型输出的是**整段 clip 级**分数，`scores = [score] * 24` 广播给整批 →
+   批内 24 帧分数必然相同（这本身是模型口径，UI 必须按“段级”解释）。
+3. `services/frame_processor.py` 尾批补帧时把**补出来的副本也发送**，且用补齐后的长度
+   倒推起点（`frame_id - 24 + 1`）→ 12 条重复帧 + 帧号错位；
+   客户端 `frameCount` 因此是 72 而不是 60。
+4. 客户端 `HeatmapViewModel` 超出渲染上限时**只保留最后 24 帧**，而服务端一批正好 24 帧 →
+   整列天然就是同一批；`AnalysisStateHolder` 收尾时又**从头部切**到 30 帧，
+   连"切分视图"该有的时间跨度也没了。
+
+**修法**
+
+| 层 | 改动 |
+|---|---|
+| 推理 | 按时间 token 拆出 **12 张**热力图（每个覆盖 2 帧），**整批全局归一化**（时间上强弱可比），不再时间平均 |
+| 帧流 | 尾批：补帧只用于模型输入；**只发真实帧**，起点按真实帧数倒推（`services/frame_plan.py`） |
+| 端上列表 | 超出 24 格时按时间**均匀抽取（含首尾）**；收尾裁剪改成**均匀抽稀**到 30 帧 |
+| 文案 | 「每 24 帧推理一次」「热力图每 2 帧一张」，标题由“共 N 帧”改为“均匀抽取 N 格” |
+
+**改后实测（同一视频，同一个探针）**
+
+```text
+messages        : 60        ← 与真实采样帧数一致
+frame_id range  : 1..60  unique=60  duplicate ids=0
+distinct heats  : 30        ← 12 + 12 + 尾批 6
+distinct scores : 3         ← 段级语义，未变（这是模型事实）
+```
+
+**防复发规则**
+> **界面的展示粒度不得细于服务端的数据粒度。**
+> 看到“逐帧”两个字时先问：这个字段是每帧算出来的，还是每 N 帧算一次广播下来的？
+> 是后者就按“段”写文案、按段做交互，**不要用画满一屏的重复格子假装逐帧**。
+>
+> 补帧（padding）只允许进入模型输入，**绝不进入发送循环**；帧号一律用真实帧数倒推。
+
+**涉及文件**
+`dashboard/backend/services/inference.py`、`services/frame_processor.py`、`services/frame_plan.py`（新增）、
+`routers/media.py`、`tests/test_frame_stream.py`（新增）、
+`harmony/entry/src/main/ets/components/charts/HeatmapViewModel.ets`、
+`store/AnalysisStateHolder.ets`、`components/analysis/AnalysisHeatmapCard.ets`、
+`pages/AnalysisDetailPage.ets`、`harmony/scripts/test-heatmap-strip.mjs`
+
+---
+
+## 2026-10-18 逐帧粒度轮 · 复跑验证
+
+```text
+dashboard/backend: venv\Scripts\python.exe -m unittest discover -s tests → 24 tests OK
+dashboard/backend: venv\Scripts\python.exe import main                   → import OK（11 routes）
+端到端探针（真实 MTCNN + LMTformer + 样本视频）                          → 72 → 60 条，热力图 3 → 30 张
+bash harmony/scripts/build.sh                                            → BUILD SUCCESSFUL
+node harmony/scripts/test-heatmap-strip.mjs                              → PASS（含新增抽稀 / 归档断言）
+node harmony/scripts/test-heatmap-colormap.mjs                           → PASS
+node harmony/scripts/test-analysis-detail.mjs                            → PASS
+node harmony/scripts/test-workbench-layout.mjs                           → PASS
+```
+
+---
+
+# 数据库隔离轮 · 新增缺陷（BUG-26）
+
+## BUG-26 · 部署一次，线上账号与报告被仓库快照覆盖
+
+**现象**
+2026-10-18 15:00 左右，`xincell` / `712098opa` 登录报 401（10-17 实测同一对账号可登录）。
+实测：`xincell1013` / `712098opa` 仍能登录（id=8），但 `GET /api/stats` 变成
+**130 条报告 / 11 条素材 / 严重度 37·21·72 / 最新 2026-10-15 22:53:19**，
+与仓库里 10-16 提交的 `dashboard/backend/depression.db` **逐项一致**；
+而文档记录 10-17 时服务器是「≥13 用户 / 140 报告」。`xincell`（10-16 注册，id=12）消失。
+
+**根因**
+`depression.db` 当时**被 git 跟踪**。服务端在 14:19 之后的那次重新部署（OpenAPI 里已出现
+当天 14:19 才提交的 `/api/media/{patient}` 路由）执行了 `git pull` / `git reset` / 重新 clone，
+仓库里的旧快照直接覆盖了线上库。
+**数据在仓库工作树内 = 任何一次"重置代码"都可能变成"重置数据"。**
+
+**修法**
+| 层 | 改动 |
+|---|---|
+| 仓库 | 演示库改名为 `dashboard/backend/demo/depression.db`（种子）；运行库 `backend/depression.db` 与 `backups/` 加入 `.gitignore` |
+| 启动 | `database.ensure_database()`：运行库不存在时复制种子，存在则**绝不覆盖** |
+| 配置 | `DATABASE_PATH` / `DB_BACKUP_DIR` 环境变量；相对路径按 backend 目录解析 |
+| 备份 | 新增 `backup_db.py`（sqlite3 backup API 热备，保留最近 N 份）；`serve_all.py` **启动前自动备份** |
+| 部署文档 | Linux 指南新增 3.4.1：库移出仓库、systemd 环境变量、备份/恢复、`git pull` 更新流程 |
+| 测试 | `tests/test_db_maintenance.py`：种子只复制一次、已有库不被覆盖、备份可读、轮转保留最新 |
+
+**防复发规则**
+> **线上数据目录不得位于仓库工作树内。** 代码可以随时 reset，数据不行。
+> 部署"更新"只允许 `git pull`（数据在仓库外）；出现冲突时**先备份、再人工处理**，
+> 绝不用 `git checkout .` / `git reset --hard` 把冲突抹掉。
+> 任何"清库 / 重置 / 迁移"操作前，先跑一次 `python backup_db.py`，并确认备份文件可打开。
+
+> 已丢的数据只能从服务器上的旧文件恢复：找旧部署目录、`*.db.bak`、`git stash`，
+> 或 `backups/` 里的历史快照；找不到就只能重新注册账号（`xincell` 用户名已空出）。
+
+**涉及文件**
+`dashboard/backend/config.py`、`database.py`、`backup_db.py`（新增）、`serve_all.py`、
+`tests/test_db_maintenance.py`（新增）、`.gitignore`、`.env.example`、
+`README.md`、`docs/Linux服务端部署指南.md`、`docs/Windows复现部署指南.md`、
+`dashboard/backend/demo/depression.db`（由 `backend/depression.db` 改名）
+
+---
+
+## 2026-10-18 数据库隔离轮 · 复跑验证
+
+```text
+dashboard/backend: unittest discover -s tests              → 30 tests OK
+首次启动（无运行库）→ 自动从 demo 种子复制               → 8 users / 130 reports
+backup_db.py                                              → backups/depression-20261018-152112.db
+                                                            快照可读：8 users / 130 reports
+git status                                                → 运行库与 backups/ 均不再出现
+```
+
 

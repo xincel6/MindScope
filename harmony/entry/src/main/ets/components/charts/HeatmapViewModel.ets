@@ -74,14 +74,46 @@ function hasHeat(frame: AnalysisFrameModel): boolean {
  * 为什么要有它：视频素材服务端会推 ~60~96 帧，每格都要建一个 16×16 PixelMap
  * 加一个透明 Canvas。实机（模拟器 API 23）一次性渲染 90+ 格会把渲染服务压死
  * （实测黑屏 / `LIFECYCLE_TIMEOUT` 冻结日志）。取 24 兼顾两点：
- *   · 一屏能看到 3~4 格、滑两下能回看 20 多帧，足够看出热点随时间的漂移；
+ *   · 一屏能看到 3~4 格、滑两下能回看 20 多帧；
  *   · 节点数与 PixelMap 数都留在安全区。
- * 完整逐帧数据仍在会话里（live 上限 90、收尾后 30），
- * 将来做"整片时间轴 / 视频切分"时替换成**懒加载或缩略图**即可，不必改数据层。
+ *
+ * ★ 超出上限时**按时间均匀抽取**（保留首尾），不再"只留最后 24 帧"——
+ *   服务端每 24 帧才推理一次，最后 24 帧正好是同一批，整列 24 格会完全同图
+ *   （用户报的"所有帧都是同一帧"）。均匀抽取后 24 格跨越整段视频，
+ *   "注意力热点随时间漂移"才看得出来。
  */
 const MAX_STRIP_TILES: number = 24;
 
-/** 只保留有热度数据的帧，并在超出渲染上限时**保留最新的那些** */
+/**
+ * 等距抽样（保留首尾）
+ *
+ * @param frames 已过滤掉无热度矩阵的帧（按时间顺序）
+ * @param maxTiles 渲染上限
+ */
+function sampleEvenly(frames: AnalysisFrameModel[], maxTiles: number): AnalysisFrameModel[] {
+  if (maxTiles <= 0) {
+    return [];
+  }
+  if (frames.length <= maxTiles) {
+    return frames;
+  }
+  const out: AnalysisFrameModel[] = [];
+  const lastIndex: number = frames.length - 1;
+  const step: number = lastIndex / (maxTiles - 1);
+  for (let i = 0; i < maxTiles; i++) {
+    let index: number = Math.round(i * step);
+    if (index < 0) {
+      index = 0;
+    }
+    if (index > lastIndex) {
+      index = lastIndex;
+    }
+    out.push(frames[index]);
+  }
+  return out;
+}
+
+/** 只保留有热度数据的帧，并在超出渲染上限时**按时间均匀抽取** */
 function heatOnly(frames: AnalysisFrameModel[]): AnalysisFrameModel[] {
   const out: AnalysisFrameModel[] = [];
   for (let i = 0; i < frames.length; i++) {
@@ -89,10 +121,7 @@ function heatOnly(frames: AnalysisFrameModel[]): AnalysisFrameModel[] {
       out.push(frames[i]);
     }
   }
-  if (out.length > MAX_STRIP_TILES) {
-    return out.slice(out.length - MAX_STRIP_TILES);
-  }
-  return out;
+  return sampleEvenly(out, MAX_STRIP_TILES);
 }
 
 /**

@@ -100,7 +100,7 @@ MindScope/
 │       ├── services/              face_alignment / frame_processor / inference / vlm / llm
 │       ├── models.py schemas.py database.py auth_utils.py deps.py seed.py
 │       ├── best.pt                MSSTformer 权重（3.9 MB，已提交）
-│       ├── depression.db          演示数据（见第六节）
+│       ├── demo/depression.db    演示数据种子（首次启动自动复制为 depression.db）
 │       ├── media/                 演示媒体文件
 │       └── requirements.txt
 ├── harmony/                       鸿蒙端 DevEco Studio 工程（ArkTS）
@@ -250,13 +250,27 @@ cd dashboard && npm run dev        # http://localhost:3000
 
 | 文件 | 内容 | 是否提交 |
 |---|---|---|
-| `dashboard/backend/depression.db` | **8 个用户、121 条诊断报告、11 条媒体记录** | ✅ 已提交 |
+| `dashboard/backend/demo/depression.db` | **演示种子**：8 个用户、130 条诊断报告、11 条媒体记录 | ✅ 已提交 |
 | `dashboard/backend/media/` | 18 个图片 / 视频（约 15 MB），媒体库与报告预览依赖它 | ✅ 已提交 |
 | `dashboard/backend/processed/label.csv` | 标签表 | ✅ 已提交 |
 | `dashboard/backend/best.pt` | MSSTformer 模型权重（3.9 MB） | ✅ 已提交 |
 
+> **运行时数据库不在仓库里**：首次启动会把 `demo/depression.db` 复制成
+> `dashboard/backend/depression.db`（已 `.gitignore`），之后**只写运行库、绝不再复制种子**。
+> 这样 `git pull` / `git reset` 不会再把线上数据覆盖回演示快照（BUG-26）。
+>
+> 线上请把库指到仓库外，并保留启动前自动备份：
+>
+> ```ini
+> DATABASE_PATH=/var/lib/mindscope/depression.db
+> DB_BACKUP_DIR=/var/lib/mindscope/backups
+> ```
+>
+> 手动备份：`venv/bin/python backup_db.py`（热备，运行中可用；默认保留最近 10 份）。
+> 详见 [Linux 服务端部署指南](docs/Linux服务端部署指南.md) 的 3.4.1。
+
 > ⚠️ **请勿把这些文件当作临时文件清理掉**，否则远程界面会变成空列表。
-> `seed.py` 只能生成 3 条演示媒体，**重建不出这 121 条报告**，删了不可恢复。
+> `seed.py` 只能生成 3 条演示媒体，**重建不出这 130 条报告**，删了不可恢复。
 >
 > 数据库中 8 个测试账号的密码以 bcrypt 哈希存储，请向作者索取明文。
 
