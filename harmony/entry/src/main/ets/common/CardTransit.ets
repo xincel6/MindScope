@@ -127,8 +127,10 @@ export class CardTransit {
   static readonly CARDS_PLACEHOLDER: number = 2;
 
   /**
-   * 素材库页：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
-   * ★ 必须与该页里 `RevealCard({ order })` 的个数一致。
+   * 素材库页的**目标**转场位：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
+   *
+   * ★ 当前页面尚未挂 `RevealCard`，`MainPage.cardCountOf()` 仍走 `CARDS_PLACEHOLDER`（同为 2）；
+   *   等页面接入逐块动画后，再把 `cardCountOf()` 改为返回本常量。
    */
   static readonly CARDS_MEDIA: number = 2;
 

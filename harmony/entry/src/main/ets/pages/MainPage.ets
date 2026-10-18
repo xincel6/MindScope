@@ -12,7 +12,7 @@
  *  ① **一个 Navigation 一个栈**：主界面与登录流各有独立 `NavPathStack`，
  *     分支切换时旧栈自然销毁，所以不存在"返回键回到登录页"的问题。
  *  ② **页签用 `replacePathByName` 切换**：栈深恒定为 1，底部导航来回点也不会堆积历史；
- *     二级页面（本轮只剩素材选择）用 `pushPathByName`，返回键即回到当前页签。
+ *     二级页面（素材选择 / 历史报告详情）用 `pushPathByName`，返回键即回到当前页签。
  *  ③ **页面参数由这里注入**：每个页的 `*PageParam` 都带上 `pathStack`（二级页还带动作回调），
  *     于是子页面既能执行"返回/下一步"，又完全不需要碰 UI 上下文 API 或 store。
  *  ④ **本文件与 `Index.ets` 是仅有的两个"窗口层"**：只有它们允许 import store、
@@ -25,7 +25,7 @@
  *
  * ★ 二级页面不随页签销毁：压入 `mediaPicker` 时工作台仍在栈底存活；
  *   上传完成后选择页出栈，工作台 hero 直接显示新任务的实时进度。
- *   ★ 本轮已删除独立分析详情页：分析内容全部内嵌在工作台主页里。
+ *   ★ 工作台的分析内容内联在主页面；独立分析详情页只服务历史报告（点报告卡进入）。
  */
 
 import { bundleManager, common } from '@kit.AbilityKit';
@@ -203,6 +203,7 @@ export struct MainPage {
     if (tab === MainTab.reports) {
       return CardTransit.CARDS_REPORTS;
     }
+    // 素材库尚未挂 RevealCard：沿用 2 个等待位（与目标常量 CARDS_MEDIA 同值）
     return CardTransit.CARDS_PLACEHOLDER;
   }
 

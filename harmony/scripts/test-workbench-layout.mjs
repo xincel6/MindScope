@@ -2,12 +2,13 @@
  * test-workbench-layout.mjs · 工作台主页重构的**结构/接线**离线测试
  *
  * ────────────────── 为什么需要它 ──────────────────
- * 本轮把独立分析详情页拆进工作台，涉及三类"编译能过、运行才坏"的契约：
- *   ① 8 个 RevealCard 的 order 必须连续且与 `CARDS_WORKBENCH` 对齐，
+ * 本轮把分析内容内联进工作台，涉及三类"编译能过、运行才坏"的契约：
+ *   ① 7 个 RevealCard 的 order 必须连续且与 `CARDS_WORKBENCH` 对齐，
  *      否则切页签的离场动画会被提前切断（最后一个组件演到一半页面就换了）；
- *   ② `WorkbenchPageParam` 的 focus / refreshing 必须在页面挂载后仍能刷新，
+ *   ② `WorkbenchPageParam` 的 scrollTopTick / refreshing 必须在页面挂载后仍能刷新，
  *      即必须是 `@ObservedV2` + `@Trace`（BUG-10/11 的根因）；
- *   ③ 独立分析详情页的路由/参数/页面必须彻底移除，不能留下悬空引用。
+ *   ③ 分析详情页**保留**为历史报告查看器：路由 / 参数 / 页面都在，但工作台不得再引用它；
+ *      工作台自己的分析内容必须保持内联。已删除的是 CurrentTaskCard / RecentMediaSection。
  *
  * 这些都是**源码级契约**，不需要真机就能验证；配合运行时的截图验收，
  * 可以把"重构后页面变回来/动画断尾/点最近素材没反应"这类回归挡在构建之前。
@@ -32,7 +33,7 @@ const HEATMAP_PATH = join(ETS, 'components', 'analysis', 'AnalysisHeatmapCard.et
 const VLM_PATH = join(ETS, 'components', 'analysis', 'AnalysisVlmCard.ets');
 const RING_PATH = join(ETS, 'components', 'common', 'ScoreRing.ets');
 const RAIL_PATH = join(ETS, 'components', 'workbench', 'AnalysisStageRail.ets');
-const DELETED_PAGE_PATH = join(ETS, 'pages', 'AnalysisDetailPage.ets');
+const DETAIL_PAGE_PATH = join(ETS, 'pages', 'AnalysisDetailPage.ets');
 const DELETED_CARD_PATH = join(ETS, 'components', 'workbench', 'CurrentTaskCard.ets');
 const DELETED_RECENT_PATH = join(ETS, 'components', 'workbench', 'RecentMediaSection.ets');
 const DAO_PATH = join(ETS, 'persistence', 'AssessmentCacheDao.ets');
@@ -138,34 +139,50 @@ check('门面新增 firstFrameUrlOfMedia', /public firstFrameUrlOfMedia\(mediaId
 check('页面按 restored 显示「上次评估」', /currentTaskRestored/.test(storeSrc) && /get restored/.test(pageSrc),
   '缺少 currentTaskRestored / restored 接线');
 
-// ═══════════════ 4. 旧分析详情页彻底移除 ═══════════════
-console.log('\n4) 独立分析详情页已移除');
-check('AnalysisDetailPage.ets 文件已删除', !existsSync(DELETED_PAGE_PATH), '文件仍存在');
-check('CurrentTaskCard.ets 文件已删除', !existsSync(DELETED_CARD_PATH), '文件仍存在');
-check('RecentMediaSection.ets 文件已删除', !existsSync(DELETED_RECENT_PATH), '文件仍存在');
+// ═══════════════ 4. 分析详情页仅服务历史报告 ═══════════════
+console.log('\n4) 分析详情页仅服务历史报告');
+check('AnalysisDetailPage.ets 仍存在（历史报告查看器）', existsSync(DETAIL_PAGE_PATH), '文件缺失');
+check('CurrentTaskCard.ets 已删除', !existsSync(DELETED_CARD_PATH), '文件仍存在');
+check('RecentMediaSection.ets 已删除', !existsSync(DELETED_RECENT_PATH), '文件仍存在');
 check('工作台不再挂载最近素材', !/RecentMediaSection|recentSection/.test(pageSrc),
   'WorkbenchPage 仍残留 RecentMediaSection');
 check('MainPage 不再注入最近素材回调', !/onSelectRecent|onViewAll/.test(mainSrc),
   'MainPage 仍残留 onSelectRecent / onViewAll');
-check('PageRoutes 不再有 analysisDetail 路由', !/ANALYSIS_DETAIL_ROUTE|analysisDetail/.test(routeSrc),
-  'PageRoutes 仍残留 analysisDetail');
-check('PageParams 不再有 AnalysisDetailPageParam', !/AnalysisDetailPageParam/.test(paramSrc),
-  'PageParams 仍残留 AnalysisDetailPageParam');
-check('MainPage 不再有 detailParam', !/detailParam/.test(mainSrc), 'MainPage 仍残留 detailParam');
+check('PageRoutes 保留 analysisDetail 路由', /ANALYSIS_DETAIL_ROUTE/.test(routeSrc)
+  && /'analysisDetail'/.test(routeSrc), 'PageRoutes 缺少 analysisDetail 路由');
+check('PageParams 保留 AnalysisDetailPageParam', /export class AnalysisDetailPageParam/.test(paramSrc),
+  'PageParams 缺少 AnalysisDetailPageParam');
+check('MainPage 保留 detailParam 与详情页分发', /detailParam/.test(mainSrc)
+  && /ANALYSIS_DETAIL_ROUTE/.test(mainSrc), 'MainPage 缺少 detailParam / 详情页分发');
+check('工作台不再引用分析详情页',
+  !/AnalysisDetailPage|ANALYSIS_DETAIL_ROUTE|AnalysisDetailPageParam/.test(pageSrc),
+  'WorkbenchPage 仍引用详情页');
+check('历史报告通过 onOpenReport 打开详情',
+  /onOpenReport/.test(paramSrc) && /reportsParam\.onOpenReport/.test(mainSrc)
+  && /openReportDetail/.test(mainSrc), '历史报告 → 详情页的接线缺失');
 check('MainPage 把整个 pageParam 交给工作台',
   /WorkbenchPage\(\{ pageParam: param as WorkbenchPageParam \}\)/.test(mainSrc),
   '未找到 WorkbenchPage({ pageParam: ... })');
 check('上传完成走 navStack.pop()', /this\.navStack\.pop\(\)/.test(mainSrc),
   '未找到上传后的 navStack.pop()');
 
+const ALLOWED_DETAIL_REFS = new Set([
+  'pages/AnalysisDetailPage.ets',
+  'pages/MainPage.ets',
+  'pages/PageRoutes.ets',
+  'types/PageParams.ets'
+]);
 const stale = [];
 for (const file of collectEts(ETS, [])) {
   const src = readFileSync(file, 'utf8');
   if (/AnalysisDetailPage|ANALYSIS_DETAIL_ROUTE|AnalysisDetailPageParam|RecentMediaSection/.test(src)) {
-    stale.push(file.replace(ETS + '\\', '').replace(ETS + '/', ''));
+    const rel = file.slice(ETS.length + 1).replace(/\\/g, '/');
+    if (!ALLOWED_DETAIL_REFS.has(rel)) {
+      stale.push(rel);
+    }
   }
 }
-check('全量 .ets 无悬空 AnalysisDetailPage / RecentMediaSection 引用',
+check('详情页引用只出现在预期文件（页面 / 路由 / 参数 / 窗口层）',
   stale.length === 0, stale.join(', '));
 
 // ═══════════════ 5. 当前评估持久化 ═══════════════
@@ -201,7 +218,7 @@ for (const file of [HERO_PATH, HEATMAP_PATH, VLM_PATH, RING_PATH, RAIL_PATH]) {
 
 console.log('');
 if (failures === 0) {
-  console.log('PASS 全部通过：7 段错峰、最近素材已移除、评估持久化/恢复链路已接通、旧详情页已移除。');
+  console.log('PASS 全部通过：7 段错峰、最近素材已移除、评估持久化/恢复链路已接通、详情页仅服务历史报告。');
   process.exit(0);
 }
 console.log(`FAIL 存在 ${failures} 处失败。`);

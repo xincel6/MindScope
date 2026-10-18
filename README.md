@@ -105,16 +105,23 @@ MindScope/
 │       └── requirements.txt
 ├── harmony/                       鸿蒙端 DevEco Studio 工程（ArkTS）
 │   ├── AppScope/  entry/src/
-│   │   └── main/ets/              数据层：types/ common/ network/ persistence/ store/
+│   │   └── main/ets/              页面 pages/ + 数据层 types/ common/ network/ persistence/ store/
 │   └── build-profile.json5  oh-package.json5  hvigorfile.ts
 ├── docs/                          设计文档与部署指南
-│   ├── 项目分析报告与HarmonyOS端构建方案.md
+│   ├── README.md                  ★ 鸿蒙端文档中心（先读这里）
+│   ├── 鸿蒙端开发进度.md           ★ 当前功能矩阵、缺口与验证状态
+│   ├── 鸿蒙端页面框架与路由说明.md  ★ 页面 / 参数 / 路由 / 视觉规范
+│   ├── 鸿蒙端数据获取使用指南.md    ★ 鸿蒙端取数接口与调用示例
 │   ├── 鸿蒙端接口清单与登录注册实现.md
 │   ├── 鸿蒙端网络层与类型共享方案.md
-│   ├── 鸿蒙端数据获取使用指南.md   ★ 鸿蒙端取数接口与调用示例
+│   ├── 交付记录.md                 按时间整理的每轮交付
+│   ├── 参考/                       专题分析与方案评估
+│   ├── 归档/                       原始交付说明与需求输入
+│   ├── 项目分析报告与HarmonyOS端构建方案.md
 │   ├── Linux服务端部署指南.md      ★ 服务器（Linux）部署与验收
 │   ├── Windows复现部署指南.md
 │   └── images/                    系统界面截图
+├── BUG清单.md                      鸿蒙端缺陷台账（活文档）
 ├── .gitattributes                 换行符与二进制文件属性
 ├── .gitignore
 └── README.md
@@ -274,10 +281,14 @@ cd dashboard && npm run dev        # http://localhost:3000
 
 | 文档 | 内容 |
 |---|---|
-| [项目分析报告与 HarmonyOS 端构建方案](docs/项目分析报告与HarmonyOS端构建方案.md) | 项目定位、四层架构、两条数据链路、MSSTformer 细节、鸿蒙端落地方案 |
-| [鸿蒙端接口清单与登录注册实现](docs/鸿蒙端接口清单与登录注册实现.md) | 14 条真实接口清单、鉴权细节、错误码表、ArkTS 实现步骤 |
+| [**鸿蒙端文档中心**](docs/README.md) | **鸿蒙端文档的唯一入口**：阅读路线、文档状态、目录结构与更新规范 |
+| [鸿蒙端开发进度](docs/鸿蒙端开发进度.md) | **当前做到哪了**：功能矩阵、应用结构、接口缺口、验证状态与下一步 |
+| [鸿蒙端页面框架与路由说明](docs/鸿蒙端页面框架与路由说明.md) | 页面目录、参数契约、路由表、转场、视觉规范、ArkTS 踩坑 |
+| [鸿蒙端数据获取使用指南](docs/鸿蒙端数据获取使用指南.md) | **写 UI 必读**：`AppStore` 字段与方法、分析会话取数、异常态处理 |
+| [鸿蒙端接口清单与登录注册实现](docs/鸿蒙端接口清单与登录注册实现.md) | 14 条接口清单、鉴权、错误码，以及患者命名 / 上传者的增量说明 |
 | [鸿蒙端网络层与类型共享方案](docs/鸿蒙端网络层与类型共享方案.md) | WebSocket 时序与边界条件、ArkTS ↔ TS 类型零漂移方案 |
-| [鸿蒙端数据获取使用指南](docs/鸿蒙端数据获取使用指南.md) | **写 UI 必读**：`AppStore` 门面全部字段与方法、4 个可抄页面示例、离线与未登录处理 |
+| [鸿蒙端交付记录](docs/交付记录.md) | 2026-10-14 起每轮交付的目标 / 交付 / 验证 / 遗留 |
+| [项目分析报告与 HarmonyOS 端构建方案](docs/项目分析报告与HarmonyOS端构建方案.md) | 项目定位、四层架构、两条数据链路、MSSTformer 细节、鸿蒙端落地方案 |
 | [Linux 服务端部署指南](docs/Linux服务端部署指南.md) | 服务器拉取部署全流程、依赖与流量注意事项、systemd 常驻、部署验收命令 |
 | [Windows 复现部署指南](docs/Windows复现部署指南.md) | 零依赖起步、依赖安装绕行方案、离线 wheelhouse 部署 |
 
