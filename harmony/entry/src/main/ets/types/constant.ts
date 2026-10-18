@@ -187,7 +187,7 @@ export const RDB_STORE_NAME: string = 'mindscope.db';
 
 /**
  * RDB 当前版本号 · 改表结构时必须 +1 并补迁移分支
- * v2：`media_asset` 新增 `patient` 列（素材库患者命名）。
+ * v2：新增 `workbench_assessment` 单行快照表 + `media_asset.patient` 列（患者命名）。
  */
 export const RDB_VERSION: number = 2;
 

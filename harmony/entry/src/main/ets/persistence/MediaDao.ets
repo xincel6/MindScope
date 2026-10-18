@@ -57,7 +57,7 @@ export class MediaDao extends BaseDao<MediaItemModel> {
     return this.queryAll();
   }
 
-  /** 更新单条素材的患者名（本地镜像 · 与 PUT /api/media/{id}/patient 配对调用） */
+  /** 更新单条素材的患者名（本地镜像 · 与 PATCH /api/media/{id}/patient 配对调用） */
   public async updatePatient(mediaId: string, patient: string): Promise<boolean> {
     const sql: string = `UPDATE ${this.tableName()} SET ${MediaTable.colPatient} = ? WHERE ${MediaTable.colId} = ?`;
     const args: relationalStore.ValueType[] = [patient, mediaId];

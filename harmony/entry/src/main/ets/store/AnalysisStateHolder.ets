@@ -115,7 +115,7 @@ export class AnalysisStateHolder extends AnalysisListener {
 
   /**
    * 主动停止并释放连接（登出 / 换账号时必须调用）
-   * ★ **不清结果**：用户离开详情页后回来仍能看到那个素材的分数与热力图。
+   * ★ **不清结果**：用户切走页签再回来，仍能看到那个素材的分数与热力图。
    * ★ 会话状态不动：真在跑的任务会在 `onDone` / `onError` 里收尾。
    */
   public stop(): void {
@@ -145,7 +145,38 @@ export class AnalysisStateHolder extends AnalysisListener {
   }
 
   /**
-   * **按素材归档的全部会话**（详情页 / 工作台的唯一帧数据入口）
+   * 恢复一次**已收尾**的评估会话（工作台持久化恢复的唯一入口）
+   *
+   * ★ 只在 App 启动/登录后由 `AppStore.restoreAssessment()` 调用一次。
+   * ★ 恢复出来的不是 live 会话：`mediaId` 置空、`running=false`，
+   *   于是工作台会按"归档"展示（无取消按钮、无实时进度），文案由页面负责。
+   * ★ 同步把 live 指针/镜像字段写成该会话的快照，避免 `currentTask()` 与
+   *   `analysisErrorOf()` 之类访问器读到半截状态。
+   */
+  public restoreSession(session: AnalysisSessionModel): void {
+    const frames: AnalysisFrameModel[] = session.frames;
+    const lastFrame: AnalysisFrameModel | null =
+      frames.length === 0 ? null : frames[frames.length - 1];
+
+    this.state.sessions = [session];
+    this.state.mediaId = '';
+    this.state.running = false;
+    this.state.socketState = SocketState.idle;
+    this.state.progress = session.progress;
+    this.state.bdiScore = session.score;
+    this.state.frameCount = session.frameCount;
+    this.state.lastFrame = lastFrame;
+    this.state.vlmText = session.vlmText;
+    this.state.finalScore = session.score;
+    this.state.errorMsg = session.errorMsg;
+
+    this.log.i(
+      `恢复上一次评估 · mediaId=${session.mediaId} status=${session.status as number}`
+    );
+  }
+
+  /**
+   * **按素材归档的全部会话**（工作台分析区的唯一帧数据入口）
    * ★ 返回的就是 `@Trace` 的那个数组本身：页面在 `@Computed` 里读它，
    *   每帧整体替换引用时会自动失效重算，不依赖窗口层的同步时机。
    */
