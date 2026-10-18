@@ -46,11 +46,13 @@ async def upload_image(
         await process_uploaded_image_with_mtcnn(dest)
 
     # Create DB record
+    # ★ 只存文件名，不存绝对路径：depression.db 会随仓库/备份在 Windows 与 Linux
+    #   之间搬动，绝对路径一换机器就失效（见 media_paths.py 的说明）。
     asset = MediaAsset(
         name=file.filename or unique_name,
         uploader_name=_user.username,
         patient=patient_name or None,
-        file_path=str(dest),
+        file_path=unique_name,
         type=media_type,
         duration=None,
         thumbnail_url="",

@@ -1,5 +1,4 @@
 import base64
-from pathlib import Path
 
 import cv2
 import numpy as np
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from config import FRAMES_PER_BATCH
 from database import get_db
 from deps import get_current_user
+from media_paths import media_file_name, resolve_media_path
 from models import DiagnosisReport, MediaAsset, User
 from schemas import (
     AnalysisRequest,
@@ -35,8 +35,9 @@ async def list_media(
 
     items: list[MediaItemOut] = []
     for a in assets:
-        # Windows 路径为反斜杠，不能用 split('/')；统一取文件名用于 /media/<name>
-        fname = Path(a.file_path).name if a.file_path else ""
+        # DB 里可能是 Windows 反斜杠路径 / 别的机器上的绝对路径；
+        # 统一交给 media_file_name（POSIX 的 Path.name 不认反斜杠，会返回整条字符串）
+        fname = media_file_name(a.file_path)
         items.append(MediaItemOut(
             id=str(a.id),
             name=a.name,
@@ -67,12 +68,13 @@ async def delete_media(
     if not asset:
         raise HTTPException(status_code=404, detail="资源不存在")
 
-    file_path = Path(asset.file_path)
+    # 记录里的路径可能来自别的机器；按文件名回到本机 MEDIA_DIR 找真实文件
+    file_path = resolve_media_path(asset.file_path)
     await db.execute(delete(DiagnosisReport).where(DiagnosisReport.media_id == pk))
     await db.execute(delete(MediaAsset).where(MediaAsset.id == pk))
     await db.commit()
 
-    if file_path.is_file():
+    if file_path is not None:
         try:
             file_path.unlink()
         except OSError:
