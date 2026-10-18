@@ -36,6 +36,8 @@ class MediaAsset(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # 上传该素材的账号名；历史数据可能为 NULL
+    uploader_name: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     file_path: Mapped[str] = mapped_column(String(512), nullable=False)
     type: Mapped[MediaType] = mapped_column(SAEnum(MediaType), nullable=False)
     thumbnail_url: Mapped[str] = mapped_column(String(512), default="")

@@ -48,7 +48,9 @@ async def list_reports(
     db: AsyncSession = Depends(get_db),
     _user: User = Depends(get_current_user),
 ):
-    base = select(DiagnosisReport, MediaAsset.name, MediaAsset.type).join(
+    base = select(
+        DiagnosisReport, MediaAsset.name, MediaAsset.type, MediaAsset.uploader_name
+    ).join(
         MediaAsset, DiagnosisReport.media_id == MediaAsset.id
     )
 
@@ -73,6 +75,7 @@ async def list_reports(
             media_id=row.DiagnosisReport.media_id,
             media_name=row.name,
             media_type=row.type.value,
+            uploader_name=row.uploader_name,
             bdi_score=row.DiagnosisReport.bdi_score,
             severity=row.DiagnosisReport.severity.value,
             detected_at=row.DiagnosisReport.detected_at.strftime("%Y-%m-%d %H:%M:%S"),
@@ -123,7 +126,9 @@ async def get_stats(
 
     # Recent reports (top 10)
     recent_q = (
-        select(DiagnosisReport, MediaAsset.name, MediaAsset.type)
+        select(
+            DiagnosisReport, MediaAsset.name, MediaAsset.type, MediaAsset.uploader_name
+        )
         .join(MediaAsset, DiagnosisReport.media_id == MediaAsset.id)
         .order_by(DiagnosisReport.detected_at.desc())
         .limit(10)
@@ -136,6 +141,7 @@ async def get_stats(
             media_id=row.DiagnosisReport.media_id,
             media_name=row.name,
             media_type=row.type.value,
+            uploader_name=row.uploader_name,
             bdi_score=row.DiagnosisReport.bdi_score,
             severity=row.DiagnosisReport.severity.value,
             detected_at=row.DiagnosisReport.detected_at.strftime("%Y-%m-%d %H:%M:%S"),

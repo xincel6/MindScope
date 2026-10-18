@@ -50,8 +50,6 @@ export interface MediaItemOutDto {
   url: string;
   duration?: number;
   created_at: string;
-  /** 所属患者名 · 空串表示未命名 */
-  patient?: string;
 }
 
 /** GET /api/media/list · 响应体 */
@@ -65,13 +63,6 @@ export interface UploadImageOutDto {
   name: string;
   type: string;
   url: string;
-  /** 上传时一并提交的患者名（后端回显） */
-  patient?: string;
-}
-
-/** PATCH /api/media/{id}/patient · 请求体 · 给素材命名/改所属患者 */
-export interface UpdatePatientReqDto {
-  patient: string;
 }
 
 // ───────────────────────────── 报告 ─────────────────────────────
@@ -93,6 +84,7 @@ export interface ReportListItemDto {
   media_id: number;
   media_name: string;
   media_type: string;
+  uploader_name?: string | null;
   bdi_score: number;
   severity: string;
   detected_at: string;

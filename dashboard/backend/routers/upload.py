@@ -42,6 +42,7 @@ async def upload_image(
     # Create DB record
     asset = MediaAsset(
         name=file.filename or unique_name,
+        uploader_name=_user.username,
         file_path=str(dest),
         type=media_type,
         duration=None,

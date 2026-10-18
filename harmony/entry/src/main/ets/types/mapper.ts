@@ -147,8 +147,7 @@ export class Mapper {
       thumbnailUrl: toText(dto.thumbnail_url, ''),
       url: toText(dto.url, ''),
       duration: dto.duration === undefined || dto.duration === null ? null : dto.duration,
-      createdAt: toText(dto.created_at, ''),
-      patient: toText(dto.patient, '')
+      createdAt: toText(dto.created_at, '')
     };
     return item;
   }
@@ -179,8 +178,7 @@ export class Mapper {
       thumbnailUrl: '',
       url: toText(dto.url, ''),
       duration: null,
-      createdAt: formatDateLocal(now),
-      patient: toText(dto.patient, '')
+      createdAt: formatDateLocal(now)
     };
     return item;
   }
@@ -220,6 +218,7 @@ export class Mapper {
       mediaId: normalizeMediaId(dto.media_id),
       mediaName: toText(dto.media_name, ''),
       mediaType: toMediaType(dto.media_type),
+      uploaderName: toText(dto.uploader_name, ''),
       bdiScore: toNumber(dto.bdi_score, 0),
       severity: toSeverity(dto.severity),
       detectedAt: toText(dto.detected_at, ''),
@@ -393,7 +392,6 @@ export class Mapper {
     row['thumbnail_url'] = item.thumbnailUrl;
     row['duration'] = item.duration === null ? null : item.duration;
     row['created_at'] = item.createdAt;
-    row['patient'] = item.patient;
     return row;
   }
 
@@ -407,8 +405,7 @@ export class Mapper {
       thumbnailUrl: toText(row['thumbnail_url'] as string | null, ''),
       url: toText(row['file_path'] as string | null, ''),
       duration: rawDuration === undefined || rawDuration === null ? null : toNumber(rawDuration as number, 0),
-      createdAt: toText(row['created_at'] as string | null, ''),
-      patient: toText(row['patient'] as string | null, '')
+      createdAt: toText(row['created_at'] as string | null, '')
     };
     return item;
   }
@@ -435,6 +432,7 @@ export class Mapper {
       mediaId: normalizeMediaId(toText(row['media_id'] as string | null, '')),
       mediaName: toText(row['media_name'] as string | null, ''),
       mediaType: toMediaType(toText(row['media_type'] as string | null, 'image')),
+      uploaderName: '',
       bdiScore: toNumber(row['bdi_score'] as number, 0),
       severity: toSeverity(toText(row['severity'] as string | null, 'none')),
       detectedAt: toText(row['detected_at'] as string | null, ''),
@@ -498,11 +496,8 @@ export class Mapper {
     return notes;
   }
 
-  /**
-   * 单行快照表的 payload 列 → 字符串
-   * 统计快照与工作台评估快照都使用 `payload` 列；由调用方再 JSON.parse。
-   */
-  public static payloadFromRow(row: DbRow): string {
+  /** 统计快照行 → payload 字符串（由调用方再 JSON.parse 成 StatsModel） */
+  public static statsPayloadFromRow(row: DbRow): string {
     return toText(row['payload'] as string | null, '');
   }
 }

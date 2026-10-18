@@ -5,7 +5,7 @@
  * ```ts
  * const param = new MediaPickerPageParam();
  * param.onPickRequest = async () => { ... };   // 窗口层打开系统选择器
- * param.onUpload = async () => { ... };        // 窗口层上传并出栈回工作台
+ * param.onUpload = async () => { ... };        // 窗口层上传并跳转详情页
  * param.pickedName = 'interview.mp4';
  * ```
  *
@@ -22,7 +22,7 @@
  * 现在：
  *   ① `MediaPickerPageParam` 是 `@ObservedV2`（见 `types/PageParams.ets` 的说明），
  *      选完素材立刻能看到预览、按钮变成「开始分析」、错误文案能显示；
- *   ② **选到素材就自动接着上传并回到工作台**（`requestPick → submit`），
+ *   ② **选到素材就自动接着上传并进详情页**（`requestPick → submit`），
  *      用户的心智链路"选完即开始分析"不用再点第二次；
  *   ③ 主按钮保留：上传失败时它就是**重试**入口（此时 `hasPicked` 仍为 true）。
  *
@@ -63,7 +63,7 @@ export struct MediaPickerPage {
   /**
    * 点「选择素材」· 交给窗口层开系统选择器
    *
-   * ★ 选到素材后**立刻**接着走 `submit()`（上传 + 出栈回工作台）。
+   * ★ 选到素材后**立刻**接着走 `submit()`（上传 + 进详情页）。
    *   `submitting` 必须先落回 false 再调 `submit()`，否则会被它自己的 `busy` 挡掉。
    * ★ 用户取消（回调返回 false）则什么都不做：取消不是错误，不能弹红字。
    */
@@ -86,7 +86,7 @@ export struct MediaPickerPage {
       });
   }
 
-  /** 点「开始分析」· 交给窗口层上传 + 返回工作台 */
+  /** 点「开始分析」· 交给窗口层上传 + 跳转 */
   private submit(): void {
     if (this.busy) {
       return;

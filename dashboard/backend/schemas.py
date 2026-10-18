@@ -96,6 +96,7 @@ class ReportListItem(BaseModel):
     media_id: int
     media_name: str
     media_type: str
+    uploader_name: Optional[str] = None
     bdi_score: float
     severity: str
     detected_at: str

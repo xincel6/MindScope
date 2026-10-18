@@ -29,7 +29,6 @@ export class MediaTable {
   public static readonly colThumbnailUrl: string = 'thumbnail_url';
   public static readonly colDuration: string = 'duration';
   public static readonly colCreatedAt: string = 'created_at';
-  public static readonly colPatient: string = 'patient';
 
   /** 建表语句 · 列顺序与 DbSchema.createTables 的数组一致 */
   public static readonly createSql: string = `CREATE TABLE IF NOT EXISTS ${MediaTable.tableName} (
@@ -39,8 +38,7 @@ export class MediaTable {
     ${MediaTable.colFilePath} TEXT NOT NULL DEFAULT '',
     ${MediaTable.colThumbnailUrl} TEXT NOT NULL DEFAULT '',
     ${MediaTable.colDuration} INTEGER,
-    ${MediaTable.colCreatedAt} TEXT NOT NULL DEFAULT '',
-    ${MediaTable.colPatient} TEXT NOT NULL DEFAULT ''
+    ${MediaTable.colCreatedAt} TEXT NOT NULL DEFAULT ''
   )`;
 }
 
@@ -89,36 +87,6 @@ export class StatsCacheTable {
   )`;
 }
 
-/**
- * 工作台评估快照表 · 单行 KV（key='latest'）
- *
- * 存「当前任务 + 该素材最终分析会话」的整包 JSON：
- *   · 当前任务：mediaId / name / type / status / score / error；
- *   · 会话：分数、逐帧（人脸 base64 + 16×16 热度矩阵）、曲线分数、VLM、时间。
- *
- * ★ 为什么整包 JSON 而不是拆列：会话是嵌套结构（frames / scores / heatmap），
- *   拆表会引入 4~5 张关联表，收益只有"能按列查询"——而这里只按单行整体读写。
- * ★ 为什么放 RDB 而不是 preferences：一帧人脸 base64 约 5–15KB，30 帧加上
- *   热度矩阵接近 0.5MB，超出 preferences 适合的小配置体量。
- * ★ 只保存**已收尾**（done）的评估；running 态不落盘，避免重启后出现永远 42% 的幽灵任务。
- */
-export class WorkbenchAssessmentTable {
-  public static readonly tableName: string = 'workbench_assessment';
-
-  public static readonly colKey: string = 'cache_key';
-  public static readonly colPayload: string = 'payload';
-  public static readonly colUpdatedAt: string = 'updated_at';
-
-  /** 固定主键 */
-  public static readonly keyLatest: string = 'latest';
-
-  public static readonly createSql: string = `CREATE TABLE IF NOT EXISTS ${WorkbenchAssessmentTable.tableName} (
-    ${WorkbenchAssessmentTable.colKey} TEXT PRIMARY KEY NOT NULL,
-    ${WorkbenchAssessmentTable.colPayload} TEXT NOT NULL DEFAULT '',
-    ${WorkbenchAssessmentTable.colUpdatedAt} INTEGER NOT NULL DEFAULT 0
-  )`;
-}
-
 /** 索引语句 · 报告表按媒体/时间检索是高频路径 */
 export class DbIndex {
   public static readonly createSqlList: string[] = [
@@ -132,12 +100,7 @@ export class DbIndex {
 export class DbSchema {
   /** 全部建表语句，顺序即执行顺序 */
   public static createTableSqlList(): string[] {
-    return [
-      MediaTable.createSql,
-      ReportTable.createSql,
-      StatsCacheTable.createSql,
-      WorkbenchAssessmentTable.createSql
-    ];
+    return [MediaTable.createSql, ReportTable.createSql, StatsCacheTable.createSql];
   }
 
   /** 全部索引语句 */

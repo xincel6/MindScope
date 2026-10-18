@@ -56,6 +56,8 @@ export class ReportStore extends BaseStore {
   @Trace loadingMore: boolean = false;
   @Trace errorMsg: string = '';
   @Trace lastSyncAt: number = 0;
+  /** 是否已经完整拉取当前筛选条件下的全部报告（防止历史页静默漏素材） */
+  @Trace allLoaded: boolean = false;
 
   // ────────────────── 单例 ──────────────────
 
@@ -122,6 +124,34 @@ export class ReportStore extends BaseStore {
     this.page = 1;
     this.beginLoad();
     await this.loadPage(1, false);
+    this.allLoaded = this.items.length >= this.total;
+  }
+
+  /**
+   * 拉取当前筛选条件下的全部报告
+   *
+   * 历史报告页需要完整时间线；后端单页上限为 100，这里按页追加，
+   * 并以“本页没有新增”作为离线/异常时的止损条件。
+   */
+  public async loadAllPages(): Promise<void> {
+    this.allLoaded = false;
+    this.pageSize = 100;
+    this.page = 1;
+    this.beginLoad();
+    await this.loadPage(1, false);
+
+    let pages: number = 1;
+    while (this.hasMore && pages < 50) {
+      const before: number = this.items.length;
+      await this.loadPage(this.page + 1, true);
+      pages++;
+      if (this.items.length === before) {
+        break;
+      }
+    }
+    this.loading = false;
+    this.loadingMore = false;
+    this.allLoaded = this.items.length >= this.total;
   }
 
   /** 加载下一页并**追加**（上拉加载更多） */
@@ -143,6 +173,13 @@ export class ReportStore extends BaseStore {
     this.severityFilter = severity;
     this.mediaTypeFilter = mediaType;
     await this.refresh();
+  }
+
+  /** 应用筛选并拉取全部结果（历史报告页） */
+  public async applyFilterAndLoadAll(severity: string, mediaType: string): Promise<void> {
+    this.severityFilter = severity;
+    this.mediaTypeFilter = mediaType;
+    await this.loadAllPages();
   }
 
   /** 清除筛选并重新拉取 */
@@ -217,6 +254,7 @@ export class ReportStore extends BaseStore {
     this.loadingMore = false;
     this.errorMsg = '';
     this.lastSyncAt = 0;
+    this.allLoaded = false;
   }
 
   /** 实现 BaseStore */

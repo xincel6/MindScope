@@ -1,9 +1,9 @@
 /**
- * ScoreTrendChart · 逐帧评分曲线（工作台分析区的情绪曲线）
+ * ScoreTrendChart · 逐帧评分曲线（工作台的实时曲线 / 分析详情页的情绪曲线）
  *
  * 数据契约：父页面传一个 `number[]`（本次分析逐帧 BDI 分数）
  *   · 工作台：`AppStore.analysisSessionOf(当前任务 id).scores`
- *   · 分析区：`AnalysisChartModel.buildCurveView().points`
+ *   · 分析详情页：`AnalysisChartModel.buildCurveView().points`
  *     —— 那里已经把"图片素材只有 1 个分数"的情形分流成直线形态（本组件只负责 ≥2 点的折线）
  *
  * 网页端对应：`dashboard/src/components/right-panel/EmotionCurve.vue`
