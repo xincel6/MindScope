@@ -53,7 +53,11 @@ async def _safe_close(ws: WebSocket) -> None:
 
 
 async def _verify_ws_token(ws: WebSocket) -> Optional[User]:
-    token = ws.query_params.get("token")
+    # ★ token 不再放 URL（?token=…），改由子协议头携带：
+    #   客户端握手时发送 Sec-WebSocket-Protocol: auth.<jwt>
+    #   服务端校验通过后 accept(subprotocol=…) 回显同一子协议，完成握手。
+    #   这样 token 不进入访问日志 / 代理日志 / 反向代理的 URL 记录。
+    token = _token_from_subprotocol(ws)
     if not token:
         return None
     try:
@@ -69,14 +73,29 @@ async def _verify_ws_token(ws: WebSocket) -> Optional[User]:
     return None
 
 
+def _token_from_subprotocol(ws: WebSocket) -> Optional[str]:
+    """从 Sec-WebSocket-Protocol 头里解析 `auth.<jwt>` 形态的子协议。"""
+    header = ws.headers.get("sec-websocket-protocol")
+    if not header:
+        return None
+    # 客户端可能一次声明多个子协议（逗号分隔），逐个找 `auth.` 前缀的那个
+    for part in header.split(","):
+        proto = part.strip()
+        if proto.startswith("auth."):
+            return proto[len("auth."):]
+    return None
+
+
 @router.websocket("/ws/analysis")
 async def ws_analysis(ws: WebSocket):
+    token = _token_from_subprotocol(ws)
     user = await _verify_ws_token(ws)
-    if not user:
+    if not user or not token:
         await ws.close(code=1008, reason="Unauthorized")
         return
 
-    await ws.accept()
+    # 回显同一子协议，完成握手（否则部分客户端会因子协议未被确认而断开）
+    await ws.accept(subprotocol=f"auth.{token}")
 
     # 等客户端发来首条带 media id 的消息。
     #   - 心跳 {"type": "ping"} 之类的无关消息直接跳过，不打断等待

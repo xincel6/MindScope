@@ -49,9 +49,11 @@ export function useWebSocket(callbacks: WsCallbacks) {
             ? `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}`
             : base.replace(/^http/i, 'ws')
         const token = getStoredToken()
-        const qs = token ? `?token=${encodeURIComponent(token)}` : ''
 
-        const socket = new WebSocket(`${wsOrigin}/ws/analysis${qs}`)
+        // ★ token 不再拼进 URL（避免泄漏到访问日志/代理日志），改用子协议头携带：
+        //   Sec-WebSocket-Protocol: auth.<jwt>，服务端校验后回显同一子协议完成握手。
+        const protocols = token ? [`auth.${token}`] : undefined
+        const socket = new WebSocket(`${wsOrigin}/ws/analysis`, protocols)
         ws = socket
 
         return await new Promise<boolean>((resolve) => {

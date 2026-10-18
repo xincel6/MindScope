@@ -4,7 +4,8 @@
  * 真实交互时序（docs/鸿蒙端网络层与类型共享方案.md 第 1.2 节）：
  * ```
  * ① HTTP POST /api/upload/image            → 拿到 media_id
- * ② WS   ws://host:8000/ws/analysis?token=<JWT>
+ * ② WS   ws://host:8000/ws/analysis   +   Sec-WebSocket-Protocol: auth.<JWT>
+ *        ★ token 走子协议头，不落 URL 日志；服务端校验后回显同一子协议完成握手
  *        ★ 服务端 accept 后只等 15 秒，客户端必须在 on('open') 里立刻发 {"id":"<media_id>"}
  * ③ ◀ {"type":"status","message":"analysis_started","task_id":...}
  * ④ ◀ AnalysisFrame × N   ★★ 帧消息【没有 type 字段】
@@ -201,8 +202,17 @@ export class AnalysisSocket {
     });
 
     const url: string = ApiConfig.analysisWsUrl();
-    Logger.i(`WS 连接中 · ${url.split('?')[0]}`);
-    socket.connect(url, (err: BusinessError, ok: boolean) => {
+    Logger.i(`WS 连接中 · ${url}`);
+
+    // ★ token 走子协议（Sec-WebSocket-Protocol: auth.<jwt>），不拼进 URL。
+    //   鸿蒙 SDK 的 WebSocketRequestOptions 提供专门的 `protocol` 字段（API 12+），
+    //   用它比往 header 里塞 Sec-WebSocket-Protocol 更可靠。
+    const subprotocol: string = ApiConfig.wsSubprotocol();
+    const options: webSocket.WebSocketRequestOptions = {
+      protocol: subprotocol
+    };
+
+    socket.connect(url, options, (err: BusinessError, ok: boolean) => {
       if (err !== undefined && err !== null && err.code !== undefined && err.code !== 0) {
         Logger.e('WS 连接失败', err as Object);
         this.setState(SocketState.closed);
