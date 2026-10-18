@@ -22,7 +22,7 @@
  */
 
 import { MediaType } from './enums';
-import { CurrentTaskModel, RecentMediaModel, ReportListItemModel } from './model';
+import { CurrentTaskModel, MediaItemModel, RecentMediaModel, ReportListItemModel } from './model';
 
 /** 全部页面参数的基类 · 让"页面参数"在类型上有一个共同祖先，便于统一签名与调试 */
 export class PageParam {
@@ -269,6 +269,59 @@ export class TabPageParam extends PageParam {
    * 供页面执行"返回""下一步跳转"等动作；为 null 时页面按钮降级为不可用。
    */
   public pathStack: NavPathStack | null = null;
+}
+
+/**
+ * 素材库页参数（`pages/MediaLibraryPage.ets`）· 在页签公共参数上追加素材数据与动作回调
+ *
+ * ★ 数据与动作全部由窗口层（`pages/MainPage.ets`）从 `AppStore` 取好后注入，
+ *   页面**不 import 任何 store**，只读参数 + 调回调。
+ */
+@ObservedV2
+export class MediaLibraryPageParam extends TabPageParam {
+  // ── 数据（只读展示）──
+  //
+  // ★ 这些字段会在页面**挂载之后**被窗口层改写（上传/删除/重命名/切患者筛选都会刷新列表），
+  //   而 `@Param` 只按引用感知对象、不跟踪普通字段，所以数据字段必须 `@Trace`
+  //   —— 与 `MediaPickerPageParam` / 工作台参数同一条 BUG-10/11 判据。
+
+  /** 视频素材列表（已按「患者 + 类型」筛好，页面直接 ForEach） */
+  @Trace public videos: MediaItemModel[] = [];
+
+  /** 图片素材列表（已按「患者 + 类型」筛好） */
+  @Trace public images: MediaItemModel[] = [];
+
+  /** 去重后的患者名列表（含「未命名」占位）· 顶部筛选器用 */
+  @Trace public patients: string[] = [];
+
+  /** 当前选中的患者名（空串 = 全部患者） */
+  @Trace public selectedPatient: string = '';
+
+  /** 当前选中的素材 id（空串 = 未选中） */
+  @Trace public selectedMediaId: string = '';
+
+  /** 是否正在分析中 */
+  @Trace public analyzing: boolean = false;
+
+  // ── 动作回调 ──
+
+  /** 点「上传」· 窗口层负责调起相册选择器并上传（内部弹患者命名输入框） */
+  public onUpload: () => void = () => {};
+
+  /** 点某个素材 · 窗口层负责触发分析并打开分析详情 */
+  public onOpenMedia: (mediaId: string) => void = (mediaId: string) => {};
+
+  /** 点删除 · 窗口层负责二次确认 + 调删除接口 */
+  public onDelete: (mediaId: string) => void = (mediaId: string) => {};
+
+  /** 点「重试」· 窗口层负责重新拉取素材列表 */
+  public onRetry: () => void = () => {};
+
+  /** 切换患者筛选 · 窗口层负责改筛选并刷新列表 */
+  public onSelectPatient: (patient: string) => void = (patient: string) => {};
+
+  /** 给素材命名/改所属患者 · 窗口层负责弹输入框 + 调重命名接口 */
+  public onRename: (mediaId: string) => void = (mediaId: string) => {};
 }
 
 /**
