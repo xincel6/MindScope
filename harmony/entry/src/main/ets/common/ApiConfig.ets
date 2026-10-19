@@ -17,6 +17,7 @@ import { preferences } from '@kit.ArkData';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { TOKEN_TTL_MS } from '../types/Index';
 import { Logger } from './Logger';
+import { SecureTokenStore } from './SecureTokenStore';
 
 /** preferences 中的键名 · 与后端物理字段风格保持一致（snake_case），便于与 RDB 表对照 */
 class PrefKey {
@@ -125,13 +126,32 @@ export class ApiConfig {
     try {
       const host: preferences.ValueType = await pref.get(PrefKey.host, ApiConfig.host);
       const port: preferences.ValueType = await pref.get(PrefKey.port, ApiConfig.port);
-      const token: preferences.ValueType = await pref.get(PrefKey.token, '');
       const savedAt: preferences.ValueType = await pref.get(PrefKey.tokenSavedAt, 0);
       ApiConfig.host = host as string;
       ApiConfig.port = port as number;
-      ApiConfig.token = token as string;
+
+      // ── 令牌：优先安全存储（Asset Store Kit）──
+      let token: string = await SecureTokenStore.get();
+
+      if (token.length === 0) {
+        // 兼容升级前的旧数据：明文 token 可能还躺在 preferences 里。
+        // 读到就立刻搬到安全存储，并删掉明文副本（一次性迁移，之后不再回写）。
+        const legacy: preferences.ValueType = await pref.get(PrefKey.token, '');
+        if (typeof legacy === 'string' && legacy.length > 0) {
+          token = legacy as string;
+          const moved: boolean = await SecureTokenStore.put(token);
+          if (moved) {
+            await pref.delete(PrefKey.token);
+            await pref.flush();
+            Logger.i('旧令牌已迁移至安全存储，明文副本已清除');
+          }
+        }
+      }
+
+      ApiConfig.token = token;
       ApiConfig.tokenSavedAt = savedAt as number;
-      Logger.i(`ApiConfig 已加载 · ${ApiConfig.baseUrl()} · token=${ApiConfig.token.length > 0 ? '已就绪' : '空'}`);
+      Logger.i(`ApiConfig 已加载 · ${ApiConfig.baseUrl()} · token=${ApiConfig.token.length > 0 ? '已就绪' : '空'}`
+        + ` · 存储=${SecureTokenStore.isAvailable() ? '安全存储' : 'preferences(降级)'}`);
     } catch (err) {
       Logger.e('ApiConfig.load 失败', err as BusinessError);
     }
@@ -155,16 +175,29 @@ export class ApiConfig {
     }
   }
 
-  /** 写入令牌（同时落盘） */
+  /** 写入令牌 · **优先落安全存储**，不可用时才降级到 preferences */
   public static async saveToken(token: string): Promise<void> {
     ApiConfig.token = token;
     ApiConfig.tokenSavedAt = token.length > 0 ? Date.now() : 0;
+
+    if (token.length === 0) {
+      await ApiConfig.clearToken();
+      return;
+    }
+
+    const stored: boolean = await SecureTokenStore.put(token);
     const pref: preferences.Preferences | null = ApiConfig.pref;
     if (pref === null) {
+      Logger.w('ApiConfig.saveToken：preferences 未注入，令牌仅存在于内存');
       return;
     }
     try {
-      await pref.put(PrefKey.token, token);
+      if (stored) {
+        // 安全存储成功 → 确保 preferences 里不留明文副本（可能来自旧版本的降级写入）
+        await pref.delete(PrefKey.token);
+      } else {
+        await pref.put(PrefKey.token, token);
+      }
       await pref.put(PrefKey.tokenSavedAt, ApiConfig.tokenSavedAt);
       await pref.flush();
     } catch (err) {
@@ -174,11 +207,15 @@ export class ApiConfig {
 
   /**
    * 清空令牌 · **登出就是删本地令牌**（后端没有 logout 接口）
-   * 地址配置保留，只清鉴权相关键。
+   * 地址配置保留，只清鉴权相关键；安全存储与 preferences 两处都要清，
+   * 否则降级期间写下的明文副本会留下来。
    */
   public static async clearToken(): Promise<void> {
     ApiConfig.token = '';
     ApiConfig.tokenSavedAt = 0;
+
+    await SecureTokenStore.remove();
+
     const pref: preferences.Preferences | null = ApiConfig.pref;
     if (pref === null) {
       return;
