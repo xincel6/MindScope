@@ -83,15 +83,17 @@ const storageSrc = readFileSync(STORAGE_PATH, 'utf8');
 const constantSrc = readFileSync(CONSTANT_PATH, 'utf8');
 const holderSrc = readFileSync(HOLDER_PATH, 'utf8');
 
-// ═══════════════ 1. 7 个转场块的序号与计数 ═══════════════
+// ═══════════════ 1. 转场块的序号与计数 ═══════════════
 console.log('1) 工作台转场时间表');
-const orders = [...pageSrc.matchAll(/RevealCard\(\{\s*order:\s*(\d+)/g)].map((m) => Number(m[1]));
-check('工作台有 7 个 RevealCard（最近素材区块已删除）', orders.length === 7,
+const orders = [...pageSrc.matchAll(/RevealCard\(\{\s*order:\s*(\d+(?:\.\d+)?)/g)].map((m) => Number(m[1]));
+check('工作台有 8 个固定块 + 1 个离线条件位（共 9 处 RevealCard）', orders.length === 9,
   `实际 ${orders.length}：${orders.join(',')}`);
-check('order 恰好是 0..6 且不重复', orders.slice().sort((a, b) => a - b).join(',') === '0,1,2,3,4,5,6',
+check('order 唯一：固定块 0..7，离线横幅 0.5', orders.slice().sort((a, b) => a - b).join(',') === '0,0.5,1,2,3,4,5,6,7',
   orders.join(','));
-check('CardTransit.CARDS_WORKBENCH = 7', /CARDS_WORKBENCH: number = 7/.test(transitSrc),
-  '未找到 "CARDS_WORKBENCH: number = 7"');
+check('离线横幅已接入 RevealCard（0.5 条件位）', /RevealCard\(\{\s*order:\s*0\.5\s*\}\)/.test(pageSrc),
+  '未找到 RevealCard({ order: 0.5 })');
+check('CardTransit.CARDS_WORKBENCH = 8（离线 0.5 不额外占位数）', /CARDS_WORKBENCH: number = 8/.test(transitSrc),
+  '未找到 "CARDS_WORKBENCH: number = 8"');
 check('页面有 scrollTopTick 回顶监听', /@Monitor\('pageParam\.scrollTopTick'\)/.test(pageSrc),
   '未找到 @Monitor(\'pageParam.scrollTopTick\')');
 
@@ -218,7 +220,7 @@ for (const file of [HERO_PATH, HEATMAP_PATH, VLM_PATH, RING_PATH, RAIL_PATH]) {
 
 console.log('');
 if (failures === 0) {
-  console.log('PASS 全部通过：7 段错峰、最近素材已移除、评估持久化/恢复链路已接通、详情页仅服务历史报告。');
+  console.log('PASS 全部通过：8 个固定块 + 离线横幅 0.5 错峰、最近素材已移除、评估持久化/恢复链路已接通、详情页仅服务历史报告。');
   process.exit(0);
 }
 console.log(`FAIL 存在 ${failures} 处失败。`);

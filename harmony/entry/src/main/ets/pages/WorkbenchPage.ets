@@ -10,16 +10,17 @@
  * 现在工作台是一张纵向长页；分析内容内联，独立详情页只给历史报告用，也没有最近素材列表：
  * ```
  * 页头（标题 + 问候/日期 + 累计概览 + 刷新）          order 0
- * [离线横幅：仅探活失败时出现]
+ * 离线横幅（仅探活失败时出现）                         order 0.5（条件插入位）
  * 本次评估 hero（素材 / 状态 / 分数环 / 阶段 / 动作）   order 1
  * 开始新的辅助评估                                    order 2
  * 注意力热力图（16×16 + 逐帧列表）                     order 3
  * 情绪曲线                                            order 4
  * 严重度分布                                          order 5
  * 智能解读（VLM）                                      order 6
+ * 诊断意见（本轮新增 · 结论 / 依据 / 医师确认）          order 7
  * ```
- * 3~6 号卡只在"有查看目标"时渲染；没有数据时页面是 hero 空态 + 开始评估，
- * 不会出现四张空卡片堆在一起。
+ * 3~7 号卡只在"有查看目标"时渲染；没有数据时页面是 hero 空态 + 开始评估，
+ * 不会出现五张空卡片堆在一起。
  *
  * ────────────────── 查看目标与持久化 ──────────────────
  * 优先级：**当前任务（含重启后恢复的上一次评估）→ 最新一条报告 → 无**。
@@ -58,9 +59,13 @@ import { AnalysisHeroCard } from '../components/workbench/AnalysisHeroCard';
 import { AnalysisHeatmapCard } from '../components/analysis/AnalysisHeatmapCard';
 import { AnalysisVlmCard } from '../components/analysis/AnalysisVlmCard';
 import {
+  DiagnosisEvidenceModel, DiagnosisOpinionCard, DiagnosisOpinionModel
+} from '../components/analysis/DiagnosisOpinionCard';
+import {
   buildCurveView, buildSeverityView, CurveView, displayFrameCount, latestScore,
   resolveFrames, SeverityView, severityMetaOf
 } from '../components/charts/AnalysisChartModel';
+import { HeatHotspot, HeatmapUtil } from '../components/charts/HeatmapTile';
 import { EmotionCurveCard } from '../components/charts/EmotionCurveCard';
 import { SeverityDistributionCard } from '../components/charts/SeverityDistributionCard';
 
@@ -129,6 +134,20 @@ function percentText(ratio: number): string {
     return '100%';
   }
   return `${Math.round(ratio * 100)}%`;
+}
+
+/**
+ * 热点区域全名 → 短名 · 给诊断意见「依据」行的窄列用
+ * 例：眶周区域（眼轮匝肌）→ 眶周区域；口周区域（降口角肌）→ 口周区域
+ * ★ 只截「区域」二字之前的部分，不改 HeatmapUtil 的解剖学命名，
+ *   避免两处文案口径漂移。
+ */
+function shortRegion(region: string): string {
+  const cut: number = region.indexOf('区域');
+  if (cut < 0) {
+    return region;
+  }
+  return `${region.substring(0, cut)}区域`;
 }
 
 @ComponentV2
@@ -649,6 +668,193 @@ export struct WorkbenchPage {
     return '本次分析没有生成文字解读';
   }
 
+  // ══════════════════ 诊断意见取数（只读投影，组件不碰 store）══════════════════
+
+  /** 最后一帧 · 面部线索取它的热力图 */
+  @Computed
+  get latestFrame(): AnalysisFrameModel | null {
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null || own.frames.length === 0) {
+      return null;
+    }
+    return own.frames[own.frames.length - 1];
+  }
+
+  /** Top-2 注意力热点 · 与热力图卡共用同一套纯函数（口径不会分叉） */
+  @Computed
+  get topHotspots(): HeatHotspot[] {
+    const frame: AnalysisFrameModel | null = this.latestFrame;
+    if (frame === null || frame.heatmapData.length === 0) {
+      return [];
+    }
+    return HeatmapUtil.hotspots(frame.heatmapData, 2);
+  }
+
+  /** 「依据」行的面部线索文案 */
+  @Computed
+  get facialClue(): string {
+    const spots: HeatHotspot[] = this.topHotspots;
+    if (spots.length === 0) {
+      return '本机未保留逐帧面部数据';
+    }
+    let text: string = `${shortRegion(spots[0].region)} ${spots[0].percent}%`;
+    if (spots.length > 1 && spots[1].region !== spots[0].region) {
+      text += ` / ${shortRegion(spots[1].region)} ${spots[1].percent}%`;
+    }
+    return text;
+  }
+
+  /** 初稿里的面部短句 · 「口周区域（18.3%）」 */
+  @Computed
+  get topRegionPhrase(): string {
+    const spots: HeatHotspot[] = this.topHotspots;
+    if (spots.length === 0) {
+      return '';
+    }
+    return `${shortRegion(spots[0].region)}（${spots[0].percent}%）`;
+  }
+
+  /** 本素材逐帧评分的极差 · 无帧时为 0 */
+  @Computed
+  get scoreSpan(): number {
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null || own.frames.length === 0) {
+      return 0;
+    }
+    let min: number = own.frames[0].bdiScore;
+    let max: number = min;
+    for (let i = 1; i < own.frames.length; i++) {
+      const value: number = own.frames[i].bdiScore;
+      if (value < min) {
+        min = value;
+      }
+      if (value > max) {
+        max = value;
+      }
+    }
+    return max - min;
+  }
+
+  /** 时序依据：帧数 + 波动 + 稳定度（图片不编造时序） */
+  @Computed
+  get trendClue(): string {
+    if (this.focusMediaType === MediaType.image) {
+      return '单次推理 · 无时序数据';
+    }
+    const own: AnalysisSessionModel | null = this.session;
+    if (own === null || own.frames.length === 0) {
+      return '本机未保留逐帧时序数据';
+    }
+    const count: number = displayFrameCount(own, MediaType.video);
+    const span: number = this.scoreSpan;
+    let stability: string = '整体平稳';
+    if (span > 7) {
+      stability = '波动明显';
+    } else if (span > 3) {
+      stability = '轻度波动';
+    }
+    return `${count} 帧 · 波动 ${span.toFixed(1)} 分 · ${stability}`;
+  }
+
+  /** 是否已出分、可写诊断意见 */
+  @Computed
+  get opinionReady(): boolean {
+    return this.status === TaskStatus.done && this.score > 0;
+  }
+
+  /** 诊断意见空态说明 */
+  @Computed
+  get opinionEmptyHint(): string {
+    if (this.status === TaskStatus.running) {
+      return this.focusMediaType === MediaType.image
+        ? '正在对图片做单次推理，完成后自动生成诊断意见初稿'
+        : '正在逐帧分析，完成后自动生成诊断意见初稿';
+    }
+    if (this.status === TaskStatus.failed) {
+      return '本次分析中断，重新分析后可生成诊断意见';
+    }
+    if (this.focus === null) {
+      return '等待分析数据';
+    }
+    if (this.status === TaskStatus.none) {
+      return '尚未开始分析，完成后自动生成诊断意见初稿';
+    }
+    if (this.score <= 0) {
+      return '本次分析没有产生有效评分，暂无法生成诊断意见';
+    }
+    return '分析完成后生成诊断意见';
+  }
+
+  /** 签名医师（未登录时用中性称谓，不冒充真实姓名） */
+  @Computed
+  get doctorName(): string {
+    const name: string = this.app.username();
+    return name.length > 0 ? name : '当前医师';
+  }
+
+  /** 模型初稿 · 分数 + 面部线索 + 时序 + 档位建议，一段话可编辑 */
+  @Computed
+  get opinionDraft(): string {
+    if (!this.opinionReady) {
+      return '';
+    }
+    const scoreLine: string = `BDI-II 得分 ${this.score.toFixed(1)} 分（${this.severityLabel}）`;
+    const faceLine: string = this.topRegionPhrase.length > 0
+      ? `面部注意力主要集中于${this.topRegionPhrase}`
+      : '本机未保留逐帧面部线索';
+    const trendLine: string = this.focusMediaType === MediaType.image
+      ? '图片为单次推理，无时序数据'
+      : this.trendClue;
+    return `综合本次评估，${scoreLine}；${faceLine}；${trendLine}。` +
+      `${this.severityMeta.advice}需结合临床访谈、睡眠与社交功能信息综合判断。`;
+  }
+
+  /** 判断依据三行（量表 / 面部 / 时序） */
+  @Computed
+  get opinionEvidence(): DiagnosisEvidenceModel[] {
+    const list: DiagnosisEvidenceModel[] = [];
+    const scoreRow: DiagnosisEvidenceModel = {
+      label: '量表评分',
+      value: `${this.score.toFixed(1)} 分 · ${this.severityLabel}`
+    };
+    const faceRow: DiagnosisEvidenceModel = {
+      label: '面部线索',
+      value: this.facialClue
+    };
+    const trendRow: DiagnosisEvidenceModel = {
+      label: '时序特征',
+      value: this.trendClue
+    };
+    list.push(scoreRow);
+    list.push(faceRow);
+    list.push(trendRow);
+    return list;
+  }
+
+  /** 诊断意见卡投影 */
+  @Computed
+  get opinionModel(): DiagnosisOpinionModel {
+    const current: AnalysisFocusModel | null = this.focus;
+    return {
+      mediaId: current === null ? '' : current.mediaId,
+      status: this.status,
+      progress: this.progress,
+      ready: this.opinionReady,
+      mediaName: current === null ? '' : current.mediaName,
+      scoreText: this.scoreText,
+      severityLabel: this.severityLabel,
+      severityColor: this.severityColor,
+      conclusion: this.opinionReady
+        ? `综合量表评分与面部线索，本次评估结果为「${this.severityLabel}」，需医师结合临床访谈复核。`
+        : '',
+      evidence: this.opinionEvidence,
+      aiDraft: this.opinionDraft,
+      doctorName: this.doctorName,
+      timeText: this.timeText,
+      emptyHint: this.opinionEmptyHint
+    };
+  }
+
   /** hero 的只读展示投影 · 组件只负责画（见 AnalysisHeroCard） */
   @Computed
   get heroModel(): WorkbenchHeroModel {
@@ -897,6 +1103,18 @@ export struct WorkbenchPage {
     }
   }
 
+  /**
+   * 诊断意见卡（本轮新增）
+   * ★ 放在智能解读之后：证据（图表 / 解读）→ 结论（意见），顺序符合临床阅片习惯，
+   *   也不会让原有 3–6 号卡的 order 全部改号。
+   */
+  @Builder
+  opinionSection() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      DiagnosisOpinionCard({ model: this.opinionModel })
+    }
+  }
+
   build() {
     Column() {
       Scroll(this.scroller) {
@@ -906,9 +1124,15 @@ export struct WorkbenchPage {
             this.pageHeader()
           }
 
-          // ── 离线横幅：只在探活失败后出现（不占 order）──
+          // ── 离线横幅：只在探活失败后出现（0.5 = 插在页头与 hero 之间的条件位）──
+          // ★ 用 0.5 而不是把 1~7 全部改号：离线是偶发态，若占一个整数槽位，
+          //   在线时 hero 之后整页会凭空多等一个 stepMs（110ms），切页签的离场等待
+          //   也会被 CARDS_WORKBENCH 一起拉长；小数位只让横幅自己在 55ms 处错峰，
+          //   其余卡片的节拍与在线路径完全不变。
           if (this.showOfflineBanner) {
-            this.offlineBanner()
+            RevealCard({ order: 0.5 }) {
+              this.offlineBanner()
+            }
           }
 
           // ── 本次评估 hero（1 号位）──
@@ -921,7 +1145,7 @@ export struct WorkbenchPage {
             this.startSection()
           }
 
-          // ── 分析区：没有查看目标时整段不渲染（避免四张空卡片）──
+          // ── 分析区：没有查看目标时整段不渲染（避免五张空卡片）──
           if (this.hasFocus) {
             RevealCard({ order: 3 }) {
               this.heatmapSection()
@@ -934,6 +1158,9 @@ export struct WorkbenchPage {
             }
             RevealCard({ order: 6 }) {
               this.vlmSection()
+            }
+            RevealCard({ order: 7 }) {
+              this.opinionSection()
             }
           }
         }
