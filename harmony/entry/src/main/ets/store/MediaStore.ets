@@ -41,6 +41,9 @@ export class MediaStore extends BaseStore {
   /** 最近一次成功上传的素材 · 供窗口层拿到 id 去开分析会话 */
   @Trace lastUploaded: MediaItemModel | null = null;
 
+  /** 当前患者名筛选（空串 = 全部患者） */
+  @Trace patientFilter: string = '';
+
   // ────────────────── 单例 ──────────────────
 
   private static instance: MediaStore | null = null;
@@ -77,6 +80,58 @@ export class MediaStore extends BaseStore {
   /** 图片数量 */
   public imageCount(): number {
     return this.countByType(MediaType.image);
+  }
+
+  /**
+   * 去重后的患者名列表（含「未命名」占位，空串归为"未命名"）
+   * ★ UI 顶部筛选器直接用；顺序按首次出现，稳定不跳。
+   */
+  public patientOptions(): string[] {
+    const out: string[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const p: string = this.items[i].patient;
+      const label: string = p.length > 0 ? p : '未命名';
+      if (!this.containsString(out, label)) {
+        out.push(label);
+      }
+    }
+    return out;
+  }
+
+  /** 当前患者筛选（空串 = 全部） */
+  public patientFilterValue(): string {
+    return this.patientFilter;
+  }
+
+  /** 设置患者筛选（空串 = 全部患者） */
+  public setPatientFilter(patient: string): void {
+    this.patientFilter = patient;
+  }
+
+  /** 应用了「患者 + 类型」双重筛选后的列表（UI 直接吃） */
+  public filteredItems(type: MediaType): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const patient: string = this.patientFilter;
+    for (let i = 0; i < this.items.length; i++) {
+      const item: MediaItemModel = this.items[i];
+      if (item.type !== type) {
+        continue;
+      }
+      // 患者筛选：空串 = 全部；否则按「未命名」或具体名字匹配
+      if (patient.length > 0) {
+        const itemPatient: string = item.patient.length > 0 ? item.patient : '未命名';
+        if (itemPatient !== patient) {
+          continue;
+        }
+      }
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 是否已筛选患者（用于顶部显示「清除筛选」） */
+  public hasPatientFilter(): boolean {
+    return this.patientFilter.length > 0;
   }
 
   /** 视频数量 */
@@ -202,14 +257,49 @@ export class MediaStore extends BaseStore {
    *   所以这里不按类型分流；类型由响应里的 `type` 字段决定（服务端按扩展名判定）。
    */
   public async uploadMedia(file: UploadFileSpec): Promise<MediaItemModel | null> {
+    const dto: UploadImageOutDto = await MediaApi.uploadMedia(file);
+    return this.commitUpload(dto, '');
+  }
+
+  /** 上传素材并附带患者名（供素材库患者命名用）· 返回整条模型便于窗口层拿 id */
+  public async uploadMediaWithPatient(file: UploadFileSpec, patient: string): Promise<MediaItemModel | null> {
+    const dto: UploadImageOutDto = await MediaApi.uploadImageWithPatient(file, patient);
+    return this.commitUpload(dto, patient);
+  }
+
+  /** 上传图片（旧签名兼容）· 语义等价于 `uploadMedia` 的图片场景 */
+  public async uploadImage(file: UploadFileSpec): Promise<ActionResultModel> {
+    const item: MediaItemModel | null = await this.uploadMedia(file);
+    if (item === null) {
+      return MediaStore.fail(this.errorMsg.length > 0 ? this.errorMsg : '上传失败');
+    }
+    return MediaStore.ok('上传成功');
+  }
+
+  /** 上传图片并附带患者名（供素材库患者命名用） */
+  public async uploadImageWithPatient(file: UploadFileSpec, patient: string): Promise<ActionResultModel> {
+    const item: MediaItemModel | null = await this.uploadMediaWithPatient(file, patient);
+    if (item === null) {
+      return MediaStore.fail(this.errorMsg.length > 0 ? this.errorMsg : '上传失败');
+    }
+    return MediaStore.ok('上传成功');
+  }
+
+  /**
+   * 上传收尾的公共实现：拿到 dto → 补字段 → 入 store + 镜像表 → 返回整条模型
+   * ★ `patient` 为空串表示不命名；后端若未回显 patient 则用入参补齐。
+   */
+  private async commitUpload(dto: UploadImageOutDto, patient: string): Promise<MediaItemModel | null> {
     this.beginLoad();
     try {
-      const dto: UploadImageOutDto = await MediaApi.uploadMedia(file);
       const item: MediaItemModel = Mapper.toUploadedMedia(dto, new Date());
+      if (item.patient.length === 0) {
+        item.patient = patient;
+      }
       this.prependLocal(item);
       await StorageManager.mediaDao().save(item);
       this.endLoadOk();
-      this.log().i(`素材已上传 · id=${item.id} type=${item.type as string}`);
+      this.log().i(`素材已上传 · id=${item.id} type=${item.type as string} · patient=${item.patient}`);
       // ★ 返回整条模型而不是 ActionResultModel：窗口层要拿 id 去开分析会话
       this.lastUploaded = item;
       return item;
@@ -221,13 +311,20 @@ export class MediaStore extends BaseStore {
     }
   }
 
-  /** 保留旧名字（上一轮的调用方/文档都用它），语义等价于 `uploadMedia` 的图片场景 */
-  public async uploadImage(file: UploadFileSpec): Promise<ActionResultModel> {
-    const item: MediaItemModel | null = await this.uploadMedia(file);
-    if (item === null) {
-      return MediaStore.fail(this.errorMsg.length > 0 ? this.errorMsg : '上传失败');
+  /** 给素材命名/改所属患者 · 服务端成功后同步更新本地镜像与内存 */
+  public async renamePatient(mediaId: string, patient: string): Promise<ActionResultModel> {
+    const normalized: string = normalizeMediaId(mediaId);
+    try {
+      await MediaApi.updatePatient(normalized, patient);
+      await StorageManager.mediaDao().updatePatient(normalized, patient);
+      this.patchPatientLocal(normalized, patient);
+      this.log().i(`素材患者名已更新 · ${normalized} → ${patient}`);
+      return MediaStore.ok('已命名');
+    } catch (err) {
+      const apiErr = toApiError(err as Object);
+      this.log().e(`更新患者名失败 · ${normalized}`, err as Object);
+      return MediaStore.fail(apiErr.message);
     }
-    return MediaStore.ok('上传成功');
   }
 
   /** 实现 BaseStore：清空内存（磁盘缓存由 StorageManager.clearBusinessCache 负责） */
@@ -235,6 +332,7 @@ export class MediaStore extends BaseStore {
     this.items = [];
     this.current = null;
     this.typeFilter = null;
+    this.patientFilter = '';
     this.loading = false;
     this.errorMsg = '';
     this.lastSyncAt = 0;
@@ -256,6 +354,55 @@ export class MediaStore extends BaseStore {
       }
     }
     return total;
+  }
+
+  /** 字符串数组是否已包含目标（避免每次写内联循环） */
+  private containsString(list: string[], target: string): boolean {
+    for (let i = 0; i < list.length; i++) {
+      if (list[i] === target) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** 内存中就地更新某条素材的患者名（保持 @Trace 触发 UI 刷新） */
+  private patchPatientLocal(mediaId: string, patient: string): void {
+    const next: MediaItemModel[] = [];
+    for (let i = 0; i < this.items.length; i++) {
+      const item: MediaItemModel = this.items[i];
+      if (item.id === mediaId) {
+        const updated: MediaItemModel = {
+          id: item.id,
+          name: item.name,
+          type: item.type,
+          thumbnailUrl: item.thumbnailUrl,
+          url: item.url,
+          duration: item.duration,
+          createdAt: item.createdAt,
+          patient: patient
+        };
+        next.push(updated);
+      } else {
+        next.push(item);
+      }
+    }
+    this.items = next;
+    // 同步当前选中详情（若有）
+    const current: MediaItemModel | null = this.current;
+    if (current !== null && current.id === mediaId) {
+      const updatedCurrent: MediaItemModel = {
+        id: current.id,
+        name: current.name,
+        type: current.type,
+        thumbnailUrl: current.thumbnailUrl,
+        url: current.url,
+        duration: current.duration,
+        createdAt: current.createdAt,
+        patient: patient
+      };
+      this.current = updatedCurrent;
+    }
   }
 
   /** 新上传的条目置顶（列表按创建时间倒序，与服务端一致） */

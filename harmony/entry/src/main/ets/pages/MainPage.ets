@@ -12,37 +12,44 @@
  *  ① **一个 Navigation 一个栈**：主界面与登录流各有独立 `NavPathStack`，
  *     分支切换时旧栈自然销毁，所以不存在"返回键回到登录页"的问题。
  *  ② **页签用 `replacePathByName` 切换**：栈深恒定为 1，底部导航来回点也不会堆积历史；
- *     二级页面（素材选择 / 分析详情）用 `pushPathByName`，返回键即回到当前页签。
+ *     二级页面（素材选择 / 历史报告详情）用 `pushPathByName`，返回键即回到当前页签。
  *  ③ **页面参数由这里注入**：每个页的 `*PageParam` 都带上 `pathStack`（二级页还带动作回调），
  *     于是子页面既能执行"返回/下一步"，又完全不需要碰 UI 上下文 API 或 store。
  *  ④ **本文件与 `Index.ets` 是仅有的两个"窗口层"**：只有它们允许 import store、
  *     发网络请求、操作路由栈；页面组件一律只吃参数。
+ *     ★ 唯一例外：工作台直接读 `AppStore` 的实时会话（探活/WS 逐帧是异步到达的，
+ *       经页面参数无法可靠刷新，BUG-10/11）；它仍然**只通过参数回调写动作**。
  *
  * ★ 参数对象全部**构造一次 + 只改字段**（`@Param` 按引用比对，
  *   每次 build 都 new 会把子树入参整体重置并触发冗余重建）。
  *
- * ★ 二级页面不随页签销毁：压入 `mediaPicker` / `analysisDetail` 时，
- *   工作台仍在栈底存活，所以从详情页返回后页签与滚动位置都还在。
+ * ★ 二级页面不随页签销毁：压入 `mediaPicker` 时工作台仍在栈底存活；
+ *   上传完成后选择页出栈，工作台 hero 直接显示新任务的实时进度。
+ *   ★ 工作台的分析内容内联在主页面；独立分析详情页只服务历史报告（点报告卡进入）。
  */
 
-import { bundleManager } from '@kit.AbilityKit';
+import { bundleManager, common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import { UiTheme } from '../common/UiTheme';
 import { CardTransit } from '../common/CardTransit';
+import { ApiConfig } from '../common/ApiConfig';
+import { Logger } from '../common/Logger';
 import { AppStore } from '../store/AppStore';
 import {
-  ActionResultModel, CurrentTaskModel, MediaItemModel, MediaType, PickedMediaModel,
-  RecentMediaModel, ReportListItemModel, UserModel
+  ActionResultModel, MediaItemModel, MediaType, PickedMediaModel, ReportListItemModel, UserModel
 } from '../types/Index';
 import { UploadFileSpec } from '../network/HttpClient';
 import {
-  AnalysisDetailPageParam, MainPageParam, MainTab, MediaPickerPageParam, ProfilePageParam,
-  ReportsPageParam, TabPageParam, WorkbenchPageParam
+  AnalysisDetailPageParam, MainPageParam, MainTab, MediaLibraryPageParam, MediaPickerPageParam,
+  ProfilePageParam, ReportsPageParam, TabPageParam, WorkbenchPageParam
 } from '../types/PageParams';
 import {
   ANALYSIS_DETAIL_ROUTE, MAIN_TABS, MEDIA_PICKER_ROUTE, mainTabIndexOf, mainTabLabel,
   MainTabMeta
 } from './PageRoutes';
 import { MediaPicker, PickResult } from '../common/MediaPicker';
+import { PatientNameDialog } from '../components/PatientNameDialog';
 import { WorkbenchPage } from './WorkbenchPage';
 import { MediaLibraryPage } from './MediaLibraryPage';
 import { ReportsPage } from './ReportsPage';
@@ -50,9 +57,6 @@ import { StatsPage } from './StatsPage';
 import { ProfilePage } from './ProfilePage';
 import { MediaPickerPage } from './MediaPickerPage';
 import { AnalysisDetailPage } from './AnalysisDetailPage';
-
-/** 工作台「最近使用的素材」展示条数（用户指定两条） */
-const RECENT_MEDIA_LIMIT: number = 2;
 
 /**
  * 页签胶囊的高度与圆角
@@ -85,7 +89,7 @@ export struct MainPage {
   // ── 页面参数对象（构造一次，之后只改字段）──
 
   private workbenchParam: WorkbenchPageParam = new WorkbenchPageParam();
-  private mediaParam: TabPageParam = new TabPageParam();
+  private mediaParam: MediaLibraryPageParam = new MediaLibraryPageParam();
   private reportsParam: ReportsPageParam = new ReportsPageParam();
   private statsParam: TabPageParam = new TabPageParam();
   private profileParam: ProfilePageParam = new ProfilePageParam();
@@ -95,14 +99,28 @@ export struct MainPage {
   /** 动作回调是否已挂载（只挂一次，避免每次同步都新建闭包） */
   private actionsAttached: boolean = false;
 
+  /** 素材库动作回调是否已挂载（只挂一次） */
+  private mediaActionsAttached: boolean = false;
+
   /** 素材选择页当前选中的素材（窗口层持有，页面只读投影字段） */
   private picked: PickedMediaModel | null = null;
+
+  /** 素材库当前选中的素材 id（空串 = 未选中） */
+  @Local selectedMediaId: string = '';
+
+  /** 素材库删除进行中的素材 id（空串 = 无） */
+  @Local deletingMediaId: string = '';
+
+  /** 患者命名对话框控制器 · 必须由页面持有（局部变量会被回收，close 会崩） */
+  private patientDialogCtrl: CustomDialogController | null = null;
 
   /** 「我的」页展示的应用版本（只读一次，缓存）· 空串表示没取到 */
   private versionLabel: string = '';
 
   /** 转场进行中标志 · 挡住连点，避免两轮"离场→换页→入场"叠在一起 */
   private transitBusy: boolean = false;
+
+  private readonly log = Logger.scope('MainPage');
 
   // ══════════════════ 生命周期 ══════════════════
 
@@ -182,6 +200,10 @@ export struct MainPage {
     if (tab === MainTab.profile) {
       return CardTransit.CARDS_PROFILE;
     }
+    if (tab === MainTab.reports) {
+      return CardTransit.CARDS_REPORTS;
+    }
+    // 素材库尚未挂 RevealCard：沿用 2 个等待位（与目标常量 CARDS_MEDIA 同值）
     return CardTransit.CARDS_PLACEHOLDER;
   }
 
@@ -226,8 +248,7 @@ export struct MainPage {
       return;
     }
     if (tab === MainTab.media) {
-      param.busy = app.mediaLoading;
-      param.errorMsg = app.mediaError;
+      this.syncMediaParam();
       return;
     }
     if (tab === MainTab.reports) {
@@ -276,18 +297,312 @@ export struct MainPage {
   /**
    * 工作台参数投影
    *
-   * ★ 工作台的**展示数据不再经参数传递** —— 它直接订阅 `AppStore`（响应式）。
-   *   原因见 `WorkbenchPage` 文件头：探活与 WS 进度都是异步到达的，
-   *   而经 `navDestination` 传参时，改字段不会让已挂载页面收到新值。
+   * ★ 工作台的**分析展示数据不再经参数传递** —— 它直接订阅 `AppStore` 的 `@Trace`
+   *   会话（原因见 `WorkbenchPage` 文件头：探活与 WS 逐帧都是异步到达的）。
    *   这里只剩下"注入路由栈引用"这一件事。
    *
-   * ★ 分析详情页也不再需要在这里同步：它的实时数据全部从
-   *   `AppStore.analysisSessionOf(mediaId)` 读（旧 `syncDetailParam()` 已删除，
-   *   那个方法只在切页签时被调用，WS 收帧不会触发，正是 BUG-15 的根因）。
+   * ★ scrollTopTick / refreshing 不在这里同步：它们是用户动作触发的（上传完成、点刷新），
+   *   由 `uploadPicked` / `refreshWorkbench` 直接写，页面经 @ObservedV2 + @Trace
+   *   收到变更，不依赖切页签时的参数投影。
    */
   private syncWorkbenchParam(param: WorkbenchPageParam): void {
     const stack: NavPathStack | null = this.navStack;
     param.pathStack = stack;
+  }
+
+  // ══════════════════ 素材库页参数与动作（患者命名）══════════════════
+
+  /**
+   * 把 store 的实时状态写进素材库页参数（数据字段 + 动作回调）
+   * 回调只挂一次，数据字段每次刷新都改写。
+   */
+  private syncMediaParam(): void {
+    const param: MediaLibraryPageParam = this.mediaParam;
+    if (!this.mediaActionsAttached) {
+      this.mediaActionsAttached = true;
+      this.attachMediaActions(param);
+    }
+    const app: AppStore = AppStore.get();
+    param.activeTab = MainTab.media;
+    param.pathStack = this.navStack;
+    param.busy = app.mediaLoading;
+    param.errorMsg = app.mediaError;
+    param.videos = this.collectMedia(MediaType.video);
+    param.images = this.collectMedia(MediaType.image);
+    param.patients = app.patientOptions();
+    param.selectedPatient = app.patientFilter();
+    param.selectedMediaId = this.selectedMediaId;
+    param.analyzing = app.analyzing;
+  }
+
+  /** 从门面取某类型的素材列表（已按患者筛选，并解析 URL 后返回新数组） */
+  private collectMedia(type: MediaType): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const items: MediaItemModel[] = AppStore.get().filteredMediaItems(type);
+    for (let i = 0; i < items.length; i++) {
+      const src: MediaItemModel = items[i];
+      // 复制一份并把相对路径解析成绝对地址，页面拿到即可直接喂给 Image
+      const item: MediaItemModel = {
+        id: src.id,
+        name: src.name,
+        type: src.type,
+        thumbnailUrl: ApiConfig.resolveMediaUrl(src.thumbnailUrl),
+        url: ApiConfig.resolveMediaUrl(src.url),
+        duration: src.duration,
+        createdAt: src.createdAt,
+        patient: src.patient
+      };
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 挂载素材库页的动作回调（只执行一次） */
+  private attachMediaActions(param: MediaLibraryPageParam): void {
+    param.onUpload = (): void => {
+      this.startUploadFlow();
+    };
+    param.onOpenMedia = (mediaId: string): void => {
+      this.openMedia(mediaId);
+    };
+    param.onDelete = (mediaId: string): void => {
+      this.confirmDeleteMedia(mediaId);
+    };
+    param.onRetry = (): void => {
+      this.retryLoadMedia();
+    };
+    param.onSelectPatient = (patient: string): void => {
+      this.selectPatient(patient);
+    };
+    param.onRename = (mediaId: string): void => {
+      this.startRenameFlow(mediaId);
+    };
+  }
+
+  /** 切换患者筛选 */
+  private selectPatient(patient: string): void {
+    AppStore.get().setPatientFilter(patient);
+    this.refreshAfterAction();
+  }
+
+  /**
+   * 上传流程：先弹患者命名输入框（可跳过），再调起相册选择器。
+   * 选完文件后带上患者名一起上传。
+   */
+  private startUploadFlow(): void {
+    this.promptPatientName('', '为素材命名所属患者', (patient: string) => {
+      this.pickAndUpload(patient);
+    });
+  }
+
+  /** 重命名流程：弹输入框回填当前患者名，确认后调 renamePatient */
+  private startRenameFlow(mediaId: string): void {
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    const current: string = item === null ? '' : item.patient;
+    this.promptPatientName(current, '修改素材所属患者', async (patient: string) => {
+      const res: ActionResultModel = await AppStore.get().renamePatient(mediaId, patient);
+      this.refreshAfterAction();
+      this.toast(res.message);
+    });
+  }
+
+  /**
+   * 弹患者名输入框（自定义对话框）
+   *
+   * ★ controller 必须由页面持有：`@CustomDialog` 组件内部的 `controller` 在 V2 页面里
+   *   取不到注入值，在对话框内部 close 会抛
+   *   `TypeError: Cannot read property close of undefined` 并把应用打崩（真机实测）。
+   *   所以确认/取消都回调到页面，由页面统一 `closePatientDialog()`。
+   */
+  private promptPatientName(initial: string, title: string, onConfirm: (patient: string) => void): void {
+    this.patientDialogCtrl = new CustomDialogController({
+      builder: PatientNameDialog({
+        title: title,
+        initial: initial,
+        onConfirm: (patient: string): void => {
+          this.closePatientDialog();
+          onConfirm(patient);
+        },
+        onCancel: (): void => {
+          this.closePatientDialog();
+        }
+      }),
+      autoCancel: true,
+      alignment: DialogAlignment.Center
+    });
+    this.patientDialogCtrl.open();
+  }
+
+  /** 关闭患者命名对话框 · 先把字段置空，避免重复点击时二次 close */
+  private closePatientDialog(): void {
+    const ctrl: CustomDialogController | null = this.patientDialogCtrl;
+    this.patientDialogCtrl = null;
+    if (ctrl !== null) {
+      ctrl.close();
+    }
+  }
+
+  /** 上传：调起系统相册选择器，选中后带上患者名走 MediaStore 上传 */
+  private async pickAndUpload(patient: string): Promise<void> {
+    try {
+      const picker: photoAccessHelper.PhotoViewPicker = new photoAccessHelper.PhotoViewPicker();
+      const options: photoAccessHelper.PhotoSelectOptions = new photoAccessHelper.PhotoSelectOptions();
+      options.MIMEType = photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE;
+      options.maxSelectNumber = 1;
+      const result: photoAccessHelper.PhotoSelectResult = await picker.select(options);
+      const uris: string[] = result.photoUris;
+      if (uris.length === 0) {
+        return;
+      }
+      const uri: string = uris[0];
+      const file: UploadFileSpec = this.buildUploadSpec(uri);
+      const res: ActionResultModel = patient.length > 0
+        ? await AppStore.get().media().uploadImageWithPatient(file, patient)
+        : await AppStore.get().media().uploadImage(file);
+      this.refreshAfterAction();
+      this.toast(res.message);
+    } catch (err) {
+      this.log.e('选择或上传素材失败', err as Object);
+      this.refreshAfterAction();
+      this.toast('上传失败，请重试');
+    }
+  }
+
+  /** 从相册 URI 构造上传文件描述（copy 到沙箱后再传，规避跨应用访问权限） */
+  private buildUploadSpec(uri: string): UploadFileSpec {
+    let filePath: string = uri;
+    let fileName: string = 'upload.jpg';
+    let mimeType: string = 'image/jpeg';
+    try {
+      const context: Context = this.getUIContext().getHostContext() as Context;
+      const source: fileIo.File = fileIo.openSync(uri, fileIo.OpenMode.READ_ONLY);
+      const namePart: string = this.extractName(uri);
+      fileName = namePart.length > 0 ? namePart : 'upload.jpg';
+      mimeType = this.inferMime(namePart);
+      const destPath: string = `${(context as common.UIAbilityContext).cacheDir}/${fileName}`;
+      const dest: fileIo.File = fileIo.openSync(
+        destPath, fileIo.OpenMode.READ_WRITE | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC
+      );
+      const stat: fileIo.Stat = fileIo.statSync(source.fd);
+      const buf: ArrayBuffer = new ArrayBuffer(stat.size);
+      fileIo.readSync(source.fd, buf);
+      fileIo.writeSync(dest.fd, buf);
+      fileIo.closeSync(source);
+      fileIo.closeSync(dest);
+      filePath = destPath;
+    } catch (err) {
+      this.log.e('复制上传文件到沙箱失败，退回原始 URI', err as Object);
+    }
+    const spec: UploadFileSpec = {
+      filePath: filePath,
+      fileName: fileName,
+      mimeType: mimeType
+    };
+    return spec;
+  }
+
+  /** 从 URI 里抽取文件名（取最后一段，去掉查询串） */
+  private extractName(uri: string): string {
+    const clean: string = uri.split('?')[0];
+    const parts: string[] = clean.split('/');
+    return parts.length > 0 ? parts[parts.length - 1] : '';
+  }
+
+  /** 按扩展名推断 MIME */
+  private inferMime(name: string): string {
+    const lower: string = name.toLowerCase();
+    if (lower.endsWith('.png')) {
+      return 'image/png';
+    }
+    if (lower.endsWith('.webp')) {
+      return 'image/webp';
+    }
+    if (lower.endsWith('.gif')) {
+      return 'image/gif';
+    }
+    if (lower.endsWith('.mp4')) {
+      return 'video/mp4';
+    }
+    return 'image/jpeg';
+  }
+
+  /**
+   * 打开素材 · 登记当前任务 → 起 WS → 切到工作台看内联分析
+   *
+   * ★ 工作台重构后分析内容内联在主页面，不再有独立详情页；
+   *   点素材后直接把用户送到工作台，hero 会立刻显示这次分析的实时进度。
+   * ★ 先 `setCurrentTask` 再 `startAnalysis`：否则 WS 首帧可能早于任务登记，
+   *   工作台就看不到「当前任务」的进度（与上传链路同一个顺序约束）。
+   */
+  private openMedia(mediaId: string): void {
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    if (item === null) {
+      this.refreshAfterAction();
+      return;
+    }
+    this.selectedMediaId = item.id;
+    const app: AppStore = AppStore.get();
+    app.setCurrentTask(item.id, item.name, item.type);
+    app.startAnalysis(item.id);
+    this.refreshAfterAction();
+    this.pushTab(MainTab.workbench);
+  }
+
+  /** 删除素材 · 二次确认后调 MediaStore.deleteMedia */
+  private confirmDeleteMedia(mediaId: string): void {
+    if (this.deletingMediaId.length > 0) {
+      return;
+    }
+    const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
+    const name: string = item === null ? '该素材' : item.name;
+    this.getUIContext().showAlertDialog({
+      title: '删除素材',
+      message: `确定删除「${name}」吗？删除后不可恢复。`,
+      primaryButton: {
+        value: '取消',
+        action: (): void => {}
+      },
+      secondaryButton: {
+        value: '删除',
+        fontColor: UiTheme.danger,
+        action: (): void => {
+          this.doDeleteMedia(mediaId);
+        }
+      }
+    });
+  }
+
+  /** 执行删除 */
+  private async doDeleteMedia(mediaId: string): Promise<void> {
+    this.deletingMediaId = mediaId;
+    try {
+      const res: ActionResultModel = await AppStore.get().media().deleteMedia(mediaId);
+      this.refreshAfterAction();
+      this.toast(res.message);
+    } catch (err) {
+      this.log.e('删除素材失败', err as Object);
+      this.refreshAfterAction();
+      this.toast('删除失败，请重试');
+    } finally {
+      this.deletingMediaId = '';
+    }
+  }
+
+  /** 重试加载素材 */
+  private async retryLoadMedia(): Promise<void> {
+    await AppStore.get().refreshMedia();
+    this.refreshAfterAction();
+  }
+
+  /** 素材库动作收尾统一：tick + 同步素材库参数 */
+  private refreshAfterAction(): void {
+    this.tick = this.tick + 1;
+    this.syncMediaParam();
+  }
+
+  /** 轻提示 */
+  private toast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message });
   }
 
   // ══════════════════ 动作实现（★ 只有本文件与 Index 允许碰 store）══════════════════
@@ -301,19 +616,18 @@ export struct MainPage {
 
     // ── 工作台 ──
     this.workbenchParam.onRefresh = () => {
-      this.refreshHealth();
+      this.refreshWorkbench();
     };
     this.workbenchParam.onSelectMedia = () => {
       this.openMediaPicker();
     };
-    this.workbenchParam.onOpenTask = () => {
-      this.openCurrentTask();
+    // 重新分析：先登记当前任务再起 WS；会话变 live 后工作台自动切到实时数据
+    this.workbenchParam.onReanalyze = (mediaId: string, mediaName: string, mediaType: MediaType) => {
+      this.reanalyzeMedia(mediaId, mediaName, mediaType);
     };
-    this.workbenchParam.onViewAll = () => {
-      this.pushTab(MainTab.reports);
-    };
-    this.workbenchParam.onSelectRecent = (mediaId: string) => {
-      this.openRecentDetail(mediaId);
+    this.workbenchParam.onCancelAnalysis = () => {
+      AppStore.get().cancelAnalysis();
+      this.refreshUi();
     };
 
     // ── 历史报告页 ──
@@ -327,6 +641,26 @@ export struct MainPage {
     };
     this.reportsParam.onOpenReport = (report: ReportListItemModel) => {
       this.openReportDetail(report);
+    };
+
+    // ── 分析详情页（历史报告查看器）──
+    this.detailParam.onBack = () => {
+      // ★ 只出栈，不停止分析：分析会话挂在 AppStore 上继续跑
+      this.navStack.pop();
+    };
+    this.detailParam.onCancelAnalysis = () => {
+      AppStore.get().cancelAnalysis();
+      this.refreshUi();
+    };
+    this.detailParam.onReanalyze = () => {
+      const param: AnalysisDetailPageParam = this.detailParam;
+      if (param.mediaId.length === 0) {
+        return;
+      }
+      const app: AppStore = AppStore.get();
+      app.setCurrentTask(param.mediaId, param.mediaName, param.mediaType);
+      app.startAnalysis(param.mediaId);
+      this.refreshUi();
     };
 
     // ── 素材选择页 ──
@@ -352,49 +686,68 @@ export struct MainPage {
     this.profileParam.onLogout = async (): Promise<void> => {
       await this.pageParam.onLogout();
     };
-
-    // ── 分析详情页 ──
-    this.detailParam.onBack = () => {
-      // ★ 只出栈，**不停止分析**：分析会话挂在 AppStore 上继续跑，
-      //   用户回到工作台就能看到「当前任务」在推进。
-      this.navStack.pop();
-    };
-    this.detailParam.onCancelAnalysis = () => {
-      AppStore.get().cancelAnalysis();
-      this.refreshUi();
-    };
-    /**
-     * 重新分析当前页的素材
-     *
-     * ★ 适用场景：App 重启后打开历史素材（本机没有逐帧会话）、归档被淘汰、
-     *   或上一次分析失败。重新分析会**覆盖该素材自己那一条会话**，其它素材不受影响。
-     * ★ 页面不需要重新入栈：`analysisLiveMediaId === mediaId` 变真后，
-     *   页面的 `@Computed` 自动切到实时数据。
-     */
-    this.detailParam.onReanalyze = () => {
-      const param: AnalysisDetailPageParam = this.detailParam;
-      if (param.mediaId.length === 0) {
-        return;
-      }
-      const app: AppStore = AppStore.get();
-      // 先登记当前任务（工作台「当前任务」卡片要能看到它），再起 WS。
-      // ★ 失败也不回滚页面：`start()` 已经建好该素材的会话，
-      //   连接层的错误会通过会话的 errorMsg 显示在页面里（带「重新分析」可再试）。
-      app.setCurrentTask(param.mediaId, param.mediaName, param.mediaType);
-      app.startAnalysis(param.mediaId);
-      this.refreshUi();
-    };
   }
 
   /** 探活 · 写回服务状态并刷新界面 */
   private refreshHealth(): void {
     AppStore.get().checkHealth()
-      .then((result: ActionResultModel) => {
+      .then(() => {
         this.refreshUi();
       })
       .catch(() => {
         this.refreshUi();
       });
+  }
+
+  /**
+   * 工作台刷新 · 探活 + 统计/报告/媒体全量刷新
+   *
+   * 工作台现在同时展示概览与最新评估（当前任务或报告回退），只探活会让页面数据陈旧；
+   * 所以按钮的语义升级为"刷新主页数据"。`refreshing` 写进页面参数，
+   * 页头按钮与离线横幅的「重试」共用同一个忙碌态。
+   * ★ 顺序：先探活（决定离线横幅），再并行拉数据；任一失败由各 store 自己兜底，
+   *   这里只负责在结束时把忙碌态复位。
+   */
+  private refreshWorkbench(): void {
+    const app: AppStore = AppStore.get();
+    this.workbenchParam.refreshing = true;
+    this.refreshUi();
+
+    app.checkHealth()
+      .then((): Promise<void[]> => {
+        const tasks: Promise<void>[] = [
+          app.refreshStats(),
+          app.refreshReports(),
+          app.refreshMedia()
+        ];
+        return Promise.all(tasks);
+      })
+      .then(() => {
+        this.workbenchParam.refreshing = false;
+        this.refreshUi();
+      })
+      .catch(() => {
+        this.workbenchParam.refreshing = false;
+        this.refreshUi();
+      });
+  }
+
+  /**
+   * 重新分析一条素材
+   *
+   * ★ 适用场景：App 重启后打开历史素材（本机没有逐帧会话）、归档被淘汰、
+   *   或上一次分析失败。重新分析会**覆盖该素材自己那一条会话**，其它素材不受影响。
+   * ★ 先登记当前任务再起 WS：工作台 hero 的「当前任务」与阶段轨要立刻看到它；
+   *   `start()` 成功后会建好该素材的会话，页面按会话自动切到实时数据。
+   */
+  private reanalyzeMedia(mediaId: string, mediaName: string, mediaType: MediaType): void {
+    if (mediaId.length === 0) {
+      return;
+    }
+    const app: AppStore = AppStore.get();
+    app.setCurrentTask(mediaId, mediaName, mediaType);
+    app.startAnalysis(mediaId);
+    this.refreshUi();
   }
 
   /**
@@ -436,14 +789,16 @@ export struct MainPage {
   }
 
   /**
-   * 上传已选素材 → 记录当前任务 → 启动 WS 分析 → 跳到分析详情页
+   * 上传已选素材 → 记录当前任务 → 启动 WS 分析 → **出栈回工作台**
    *
    * 顺序不能变：**先记当前任务再启动分析**，否则 WS 的第一帧可能在任务登记之前到达，
    * `syncCurrentTask()` 会因为"还没有任务"而直接返回，工作台就看不到进度。
    *
-   * ★ 跳转用 `replacePathByName`（不是 `pushPathByName`）：上传成功后选择页的使命就结束了，
-   *   把它**换成**详情页，栈深仍是 2 —— 用户从详情页按返回是回到工作台（计划 §3 的链路），
-   *   而不是回到选择页对着同一份素材再点一次「开始分析」（那会重复上传、重复起分析）。
+   * ★ 本轮（主页重构）不再跳转分析详情页：选择页的使命结束后直接 `pop()` 回工作台，
+   *   工作台 hero 立刻显示新任务的实时进度。这样"上传 → 看到分析"只隔一次出栈，
+   *   用户也不会落在一个需要再按返回的详情页上。
+   * ★ 出栈前先清空工作台 focus：否则上一次固定在历史素材上的查看目标会挡住新任务。
+   * ★ 栈深回到 1 时（用户已按返回）不再 pop，避免误弹工作台/别的页签。
    */
   private async uploadPicked(): Promise<boolean> {
     const media: PickedMediaModel | null = this.picked;
@@ -487,85 +842,35 @@ export struct MainPage {
     // ① 任务登记（先于 WS：否则第一帧可能在任务登记之前到达，工作台就看不到进度）
     app.setCurrentTask(uploaded.id, uploaded.name, uploaded.type);
 
-    // ② 启动分析（WS）。失败也不阻断跳转 —— 详情页会把错误显示出来
+    // ② 启动分析（WS）。失败也不阻断返回 —— 工作台 hero 会把错误显示出来
+    //    （带「重新分析该素材」出口）；选择页仍会先把错误写进参数。
     const started: ActionResultModel = app.startAnalysis(uploaded.id);
     if (!started.ok) {
       this.pickerParam.errorMsg = started.message;
     }
 
-    // ③ 详情页参数：只写"入栈那一刻就确定"的素材元信息。
-    //    ★ 实时数据（进度/分数/帧/档位/VLM）由页面自己从 AppStore 的会话读，
-    //      窗口层不再抄参数（旧的 syncDetailParam 已删除，见文件头）。
-    this.detailParam.mediaId = uploaded.id;
-    this.detailParam.mediaName = uploaded.name;
-    this.detailParam.mediaType = uploaded.type;
-    this.detailParam.reportScore = 0;
-    this.detailParam.reportTime = '';
+    // ③ 新任务的 hero 在页面顶部：递增回顶信号，出栈后工作台自动滚回顶部
+    this.workbenchParam.scrollTopTick = this.workbenchParam.scrollTopTick + 1;
     this.refreshUi();
 
-    // ④ 选择页 → 详情页（替换，不是压栈）；选中态清掉，避免残留素材被重复上传
+    // ④ 选择页使命结束：出栈回工作台（不再有独立分析详情页）
+    //    选中态清掉，避免残留素材被重复上传。
     this.picked = null;
     // ★ 上传是异步的：这段等待里用户可能已经按返回把选择页弹掉了（甚至切到别的页签）。
-    //   栈深回到 1 说明最上层已经不是选择页，此时再 replace 会把**工作台/别的页签**换掉，
-    //   所以只在"选择页仍压在上面"时才做替换。分析已经在跑，用户可以照常从
-    //   工作台「当前任务」卡片进入详情页 —— 不跳转也不会丢失这次分析。
+    //   栈深回到 1 说明最上层已经不是选择页，此时再 pop 会把**工作台/别的页签**弹掉，
+    //   所以只在"选择页仍压在上面"时才出栈。分析已经在跑，用户回到工作台照样能看到进度。
     if (this.navStack.size() > 1) {
-      this.navStack.replacePathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
+      this.navStack.pop();
     }
     return true;
   }
 
-  /** 从工作台点「当前任务」回到分析详情页（实时数据由页面订阅 store 得到） */
-  private openCurrentTask(): void {
-    const task: CurrentTaskModel | null = AppStore.get().currentTask();
-    if (task === null) {
-      return;
-    }
-    this.detailParam.mediaId = task.mediaId;
-    this.detailParam.mediaName = task.mediaName;
-    this.detailParam.mediaType = task.mediaType;
-    this.detailParam.reportScore = task.bdiScore;
-    this.detailParam.reportTime = '';
-    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, this.detailParam);
-  }
-
   /**
-   * 从「最近使用的素材」打开某条素材的分析详情
+   * 从历史报告卡片打开一条已保存报告
    *
-   * ★ 参数里只放**报告侧**的冻结值（分数 / 时间）+ 素材元信息；
-   *   逐帧热力图与曲线由页面按 `mediaId` 去会话归档里取：
-   *     · 本机跑过这条素材（会话还在）→ 直接显示它自己的帧；
-   *     · 本机没有（App 重启过 / 归档被淘汰）→ 提示"本机未保留逐帧数据"，
-   *       并给「重新分析」按钮（`onReanalyze`）。
-   * ★ 绝不再用"当前任务"的数据顶替被点的素材 —— 那正是
-   *   「点开 A 却看到 B 的热力图」的根因（BUG-14）。
+   * ★ 工作台重构后分析内容已经内联到主页面；这个详情页现在只服务历史报告：
+   *   展示该素材的报告快照，本机若还保留逐帧会话则展示逐帧结果，否则给「重新分析」。
    */
-  private openRecentDetail(mediaId: string): void {
-    const app: AppStore = AppStore.get();
-    const recent: RecentMediaModel[] = app.recentMedia(RECENT_MEDIA_LIMIT);
-    let hit: RecentMediaModel | null = null;
-    for (let i = 0; i < recent.length; i++) {
-      if (recent[i].mediaId === mediaId) {
-        hit = recent[i];
-        break;
-      }
-    }
-    if (hit === null) {
-      // 列表已变（例如刚被刷新掉）：退回工作台，不跳一个空页面
-      this.refreshUi();
-      return;
-    }
-
-    const param: AnalysisDetailPageParam = this.detailParam;
-    param.mediaId = hit.mediaId;
-    param.mediaName = hit.name;
-    param.mediaType = hit.type;
-    param.reportScore = hit.bdiScore;
-    param.reportTime = hit.detectedAt;
-    this.navStack.pushPathByName(ANALYSIS_DETAIL_ROUTE, param);
-  }
-
-  /** 从历史报告卡片打开一条已保存报告，复用分析详情页的既有展示 */
   private openReportDetail(report: ReportListItemModel): void {
     const param: AnalysisDetailPageParam = this.detailParam;
     param.mediaId = report.mediaId;
@@ -588,7 +893,7 @@ export struct MainPage {
    * 分发器 · 按路由名渲染对应的 NavDestination
    *
    * ★ 页签分支**只按路由名判断**，不再看 `selectedTab`：
-   *   因为二级页面（素材选择/分析详情）入栈时 `selectedTab` 仍是当前页签，
+   *   因为二级页面（本轮只剩素材选择）入栈时 `selectedTab` 仍是当前页签，
    *   用页签做判据会把二级页渲染成页签页（这是个很容易埋进去的 bug）。
    * ★ `param` 的静态类型在官方签名里是 `unknown`，而 ArkTS 禁止 `unknown`/`any`
    *   （`arkts-no-any-unknown`），所以这里用 ArkTS 提供的动态类型 `ESObject` 承接；
@@ -602,29 +907,24 @@ export struct MainPage {
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)
+    } else if (name === MainTab.workbench && param instanceof WorkbenchPageParam) {
+      NavDestination() {
+        // ★ 工作台接收**整个参数对象**：动作回调之外，参数里还承载 scrollTopTick/refreshing
+        //   这些"挂载后仍会变化"的字段（@ObservedV2 + @Trace，见 WorkbenchPageParam）。
+        //   展示数据仍由页面直接订阅 `AppStore`（异步逐帧到达，传参无法可靠刷新）。
+        WorkbenchPage({ pageParam: param as WorkbenchPageParam })
+      }
+      .hideTitleBar(true)
+      .backgroundColor(UiTheme.pageBackground)
+    } else if (name === MainTab.media && param instanceof MediaLibraryPageParam) {
+      NavDestination() {
+        MediaLibraryPage({ pageParam: param as MediaLibraryPageParam })
+      }
+      .hideTitleBar(true)
+      .backgroundColor(UiTheme.pageBackground)
     } else if (name === ANALYSIS_DETAIL_ROUTE && param instanceof AnalysisDetailPageParam) {
       NavDestination() {
         AnalysisDetailPage({ pageParam: param as AnalysisDetailPageParam })
-      }
-      .hideTitleBar(true)
-      .backgroundColor(UiTheme.pageBackground)
-    } else if (name === MainTab.workbench && param instanceof WorkbenchPageParam) {
-      NavDestination() {
-        // ★ 工作台只接收**动作回调**：它的展示数据直接订阅 `AppStore`
-        //   （原因见 WorkbenchPage 文件头：异步到达的数据经 navDestination 传参不可靠）
-        WorkbenchPage({
-          onRefresh: param.onRefresh,
-          onSelectMedia: param.onSelectMedia,
-          onOpenTask: param.onOpenTask,
-          onViewAll: param.onViewAll,
-          onSelectRecent: param.onSelectRecent
-        })
-      }
-      .hideTitleBar(true)
-      .backgroundColor(UiTheme.pageBackground)
-    } else if (name === MainTab.media && param instanceof TabPageParam) {
-      NavDestination() {
-        MediaLibraryPage({ pageParam: param as TabPageParam })
       }
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)

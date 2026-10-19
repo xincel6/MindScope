@@ -18,6 +18,8 @@ from pathlib import Path
 
 from fastapi.responses import FileResponse
 
+from backup_db import backup_database
+from config import DATABASE_PATH
 from main import app  # 复用现有后端应用
 
 # 前端打包产物目录：backend 的上级目录下的 dist/
@@ -43,6 +45,31 @@ async def serve_spa(full_path: str):
 if __name__ == "__main__":
     import uvicorn
 
+    # ★ 启动前先备份一次（热备，不中断）：部署/清库/迁移之前总有一份可回滚的快照。
+    #   DB_BACKUP_ON_START=0 可关闭（例如 CI 里反复冷启动）。
+    if os.getenv("DB_BACKUP_ON_START", "1") != "0":
+        try:
+            snapshot = backup_database()
+            if snapshot is not None:
+                print(f"[serve_all] 启动前已备份数据库 → {snapshot}")
+        except Exception as exc:  # 备份失败不能挡住服务启动
+            print(f"[serve_all] 启动前备份失败（不影响启动）：{exc}")
+    print(f"[serve_all] 数据库：{DATABASE_PATH}")
+
+    from config import SSL_CERTFILE, SSL_KEYFILE
+
     host = os.getenv("HOST", "127.0.0.1")   # 默认仅本机（安全）；临时开放用 HOST=0.0.0.0
     port = int(os.getenv("PORT", "8000"))
-    uvicorn.run(app, host=host, port=port)
+
+    # HTTPS：证书路径从环境变量读（SSL_CERTFILE / SSL_KEYFILE，见 config.py）。
+    # 两个都配置时才启用 TLS；否则保持纯 HTTP（默认）。
+    if SSL_CERTFILE and SSL_KEYFILE:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            ssl_certfile=SSL_CERTFILE,
+            ssl_keyfile=SSL_KEYFILE,
+        )
+    else:
+        uvicorn.run(app, host=host, port=port)

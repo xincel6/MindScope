@@ -147,7 +147,8 @@ export class Mapper {
       thumbnailUrl: toText(dto.thumbnail_url, ''),
       url: toText(dto.url, ''),
       duration: dto.duration === undefined || dto.duration === null ? null : dto.duration,
-      createdAt: toText(dto.created_at, '')
+      createdAt: toText(dto.created_at, ''),
+      patient: toText(dto.patient, '')
     };
     return item;
   }
@@ -178,7 +179,8 @@ export class Mapper {
       thumbnailUrl: '',
       url: toText(dto.url, ''),
       duration: null,
-      createdAt: formatDateLocal(now)
+      createdAt: formatDateLocal(now),
+      patient: toText(dto.patient, '')
     };
     return item;
   }
@@ -392,6 +394,7 @@ export class Mapper {
     row['thumbnail_url'] = item.thumbnailUrl;
     row['duration'] = item.duration === null ? null : item.duration;
     row['created_at'] = item.createdAt;
+    row['patient'] = item.patient;
     return row;
   }
 
@@ -405,7 +408,8 @@ export class Mapper {
       thumbnailUrl: toText(row['thumbnail_url'] as string | null, ''),
       url: toText(row['file_path'] as string | null, ''),
       duration: rawDuration === undefined || rawDuration === null ? null : toNumber(rawDuration as number, 0),
-      createdAt: toText(row['created_at'] as string | null, '')
+      createdAt: toText(row['created_at'] as string | null, ''),
+      patient: toText(row['patient'] as string | null, '')
     };
     return item;
   }
@@ -496,8 +500,11 @@ export class Mapper {
     return notes;
   }
 
-  /** 统计快照行 → payload 字符串（由调用方再 JSON.parse 成 StatsModel） */
-  public static statsPayloadFromRow(row: DbRow): string {
+  /**
+   * 单行快照表的 payload 列 → 字符串
+   * 统计快照与工作台评估快照都使用 `payload` 列；由调用方再 JSON.parse。
+   */
+  public static payloadFromRow(row: DbRow): string {
     return toText(row['payload'] as string | null, '');
   }
 }

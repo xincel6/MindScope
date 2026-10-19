@@ -12,6 +12,7 @@
  */
 
 import { MediaType, SeverityLevel, TaskStatus } from './enums';
+import { UiConstant } from './constant';
 
 // ───────────────────────────── 鉴权 ─────────────────────────────
 
@@ -49,6 +50,8 @@ export interface MediaItemModel {
   duration: number | null;
   /** "YYYY-MM-DD" */
   createdAt: string;
+  /** 所属患者名 · 空串表示未命名 */
+  patient: string;
 }
 
 // ───────────────────────────── 报告 ─────────────────────────────
@@ -293,9 +296,140 @@ export interface CurrentTaskModel {
 }
 
 /**
- * 工作台「最近使用的素材」一行
+ * 工作台当前**正在查看**的分析目标
  *
- * ★ 数据是**两个 store 拼出来的**，后端没有这个接口：
+ * ────────────────── 为什么需要它 ──────────────────
+ * 工作台已经变成"主页面 + 分析区"：它既要显示当前任务，也要允许用户点
+ * 「最近使用的素材」就地查看某条历史分析。这条"当前看的是谁"的投影如果
+ * 只放在页面局部状态里，切页签回来会丢；如果只放在窗口层又无法可靠地
+ * 让已挂载页面刷新（BUG-10/11）。所以它作为 `WorkbenchPageParam` 上的
+ * `@Trace` 字段存在，由窗口层写、页面读。
+ *
+ * ★ 它**不是**新数据源：分数/时间来自报告，实时数据仍从
+ *   `AppStore.analysisSessionOf(mediaId)` 取。
+ */
+export interface AnalysisFocusModel {
+  mediaId: string;
+  mediaName: string;
+  mediaType: MediaType;
+  /** 报告回落分数（0 = 没有报告） */
+  reportScore: number;
+  /** 报告时间 "YYYY-MM-DD HH:mm:ss"（空串 = 没有报告时间） */
+  reportTime: string;
+}
+
+/**
+ * 工作台 hero（本次评估）的**只读展示投影**
+ *
+ * ★ 由 `WorkbenchPage` 从 focus + session + currentTask + AppStore 算好后
+ *   一次性传给 `AnalysisHeroCard`；组件本身不 import store，也不做业务判断。
+ * ★ 全部是扁平字段：避免 `@Builder` 按值传参导致"一半新一半旧"（BUG-19）。
+ */
+export interface WorkbenchHeroModel {
+  /** 是否有可展示的分析目标（false = 空态） */
+  hasFocus: boolean;
+  /** 正在加载评估记录（只在没有任何焦点时可能为 true） */
+  loading: boolean;
+
+  // ── 素材身份 ──
+  mediaId: string;
+  mediaName: string;
+  mediaType: MediaType;
+  /** 首帧照片地址（空串 → 组件画「图/视」占位块） */
+  firstFrameUrl: string;
+  /** 来源标签：当前任务 / 历史分析 / 最近一次评估 */
+  sourceLabel: string;
+  /** 时间文案（报告时间或"本次分析"） */
+  timeText: string;
+
+  // ── 分数与档位 ──
+  /** 当前分数（0 = 未出分） */
+  score: number;
+  /** 分数文案（'--' / '11.7'） */
+  scoreText: string;
+  /** score / 63，0–1 */
+  scoreRatio: number;
+  /** 档位中文标签（未出分时为空串） */
+  severityLabel: string;
+  /** 档位色（未出分时为中性色） */
+  severityColor: string;
+
+  // ── 状态与进度 ──
+  status: TaskStatus;
+  /** 状态文案（分析中 42% / 已完成 / 分析失败 / 未开始） */
+  statusLabel: string;
+  statusColor: string;
+  /** 分析进度 0–1 */
+  progress: number;
+  progressText: string;
+  /** 阶段下标 0 上传 / 1 逐帧推理 / 2 汇总评分 */
+  stageIndex: number;
+  stageFailed: boolean;
+  /** 是否显示「上传 → 逐帧推理 → 汇总评分」（只有当前任务显示） */
+  showStageRail: boolean;
+  /** focus 是否就是当前 live 会话 */
+  isLive: boolean;
+  /** 素材是否图片（决定文案与是否画逐帧列表） */
+  isImage: boolean;
+  /** 帧数文案 */
+  frameCountText: string;
+  /** 推理耗时文案（空串 = 不显示） */
+  inferenceText: string;
+
+  // ── 说明与动作 ──
+  /** hero 右栏的一句话说明 */
+  hintText: string;
+  /** 错误文案（空串 = 不显示） */
+  errorMsg: string;
+  /** 是否可点「重新分析该素材」 */
+  canReanalyze: boolean;
+  /** 是否可点「取消分析」 */
+  canCancel: boolean;
+}
+
+/** hero 的 `@Param` 默认值 · 避免组件侧再写一遍空对象字面量 */
+export function emptyWorkbenchHeroModel(): WorkbenchHeroModel {
+  const empty: WorkbenchHeroModel = {
+    hasFocus: false,
+    loading: false,
+    mediaId: '',
+    mediaName: '',
+    mediaType: MediaType.image,
+    firstFrameUrl: '',
+    sourceLabel: '',
+    timeText: '',
+    score: 0,
+    scoreText: '--',
+    scoreRatio: 0,
+    severityLabel: '',
+    severityColor: UiConstant.textSecondaryColor,
+    status: TaskStatus.none,
+    statusLabel: '未开始',
+    statusColor: UiConstant.textSecondaryColor,
+    progress: 0,
+    progressText: '0%',
+    stageIndex: 0,
+    stageFailed: false,
+    showStageRail: false,
+    isLive: false,
+    isImage: true,
+    frameCountText: '',
+    inferenceText: '',
+    hintText: '',
+    errorMsg: '',
+    canReanalyze: false,
+    canCancel: false
+  };
+  return empty;
+}
+
+/**
+ * 工作台 hero 的「最新报告」回退投影
+ *
+ * ★ 「最近使用的素材」列表已按用户要求删除（页面过长），本模型现在只服务
+ *   一个场景：首次安装/尚未持久化评估时，hero 用报告列表首条兜底，
+ *   避免主页面重新变空。页面上不再渲染多条列表。
+ * ★ 数据仍是**两个 store 拼出来的**（后端没有这个接口）：
  *   分数/档位来自 `reportItems`（按 detected_at 倒序），
  *   缩略图/文件名来自 `mediaItems`（按 mediaId 关联）。
  *   所以 mediaItems 缺失时（离线且无缓存）缩略图为空串，UI 必须能降级。
@@ -317,6 +451,42 @@ export interface RecentMediaModel {
   scoreRatio: number;
   /** "YYYY-MM-DD HH:mm:ss" */
   detectedAt: string;
+}
+
+// ───────────────────────────── 工作台评估持久化 ─────────────────────────────
+
+/**
+ * 工作台「当前评估」的持久化载荷（`workbench_assessment` 单行 JSON）
+ *
+ * 保存时机：一次分析**收尾（done）**之后。恢复时机：下次启动/登录后
+ * （校验 `userKey`，避免换号串数据）。
+ *
+ * 包含两部分：
+ *   · 当前任务元信息（媒体名/类型/状态/分数/错误）；
+ *   · 该素材的最终会话（帧、热度矩阵、曲线分数、VLM、时间）——
+ *     这样重启后 hero、热力图、曲线、严重度分布、智能解读都能原样恢复。
+ *
+ * ★ 只保存 done：running 态不落盘，避免重启后出现"永远 42%"的幽灵任务。
+ * ★ `version` 留给未来载荷结构变更；版本不匹配时直接丢弃，不做半解析。
+ */
+export interface WorkbenchAssessmentModel {
+  /** 载荷版本（当前 1） */
+  version: number;
+  /** 归属用户（用 id 字符串；换号时校验并丢弃） */
+  userKey: string;
+  /** 落盘时刻（毫秒） */
+  savedAt: number;
+
+  // ── 当前任务元信息 ──
+  mediaId: string;
+  mediaName: string;
+  mediaType: MediaType;
+  status: TaskStatus;
+  score: number;
+  error: string;
+
+  /** 该素材的最终分析会话 · null = 只恢复报告分数，没有逐帧数据 */
+  session: AnalysisSessionModel | null;
 }
 
 // ───────────────────────────── 素材选择 ─────────────────────────────

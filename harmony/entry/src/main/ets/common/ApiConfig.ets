@@ -9,8 +9,9 @@
  *     ② 运行期：设置页走 `AppStore.changeServer(host, port)` → 落到 `saveHost`（已持久化，重装才会丢）
  *   ★ 后端已监听 0.0.0.0（systemd 用户服务 `mindscope.service`），客户端换地址不必动服务端。
  *
- * ★ 令牌在内存里留一份副本：WebSocket 的 token **只能走 query 参数**，
- *   而拼接 wsUrl 是同步调用，不能每次去 await preferences。
+ * ★ 令牌在内存里留一份副本：WebSocket 的 token 通过**子协议头**携带
+ *   （`Sec-WebSocket-Protocol: auth.<jwt>`，见 `wsSubprotocol()`），
+ *   而拼装是同步调用，不能每次去 await preferences。
  */
 
 import { preferences } from '@kit.ArkData';
@@ -73,15 +74,25 @@ export class ApiConfig {
 
   /**
    * WebSocket 完整地址
-   * ★ token 只能放在 query 里（后端 `ws.query_params.get("token")`），不能放 header
+   * ★ token 不再放 query（?token=…），改用子协议头携带（见 `wsSubprotocol()`）。
+   *   这样 token 不会进入访问日志 / 代理日志 / 反向代理的 URL 记录。
    */
   public static analysisWsUrl(): string {
     const base: string = ApiConfig.wsBase();
+    return `${base}/ws/analysis`;
+  }
+
+  /**
+   * WebSocket 子协议 · 形如 `auth.<jwt>`，用于在握手时通过
+   * `Sec-WebSocket-Protocol` 头携带 token（后端 `ws.headers.get("sec-websocket-protocol")`）。
+   * token 为空时返回空串（调用方不应带子协议头）。
+   */
+  public static wsSubprotocol(): string {
     const token: string = ApiConfig.token;
     if (token.length === 0) {
-      return `${base}/ws/analysis`;
+      return '';
     }
-    return `${base}/ws/analysis?token=${encodeURIComponent(token)}`;
+    return `auth.${token}`;
   }
 
   /**

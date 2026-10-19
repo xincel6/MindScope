@@ -862,7 +862,7 @@ HTTP 401  {"error":{"message":"请使用正确的api key进行请求","code":"in
 
 ### 登录时不知道用户名密码
 
-数据库 `depression.db` 里是**原作者的真实使用记录**（8 个账号、98 条诊断报告），不是演示用假数据。你可以直接**注册一个新账号**使用。
+数据库运行库 `dashboard/backend/depression.db` 在**首次启动时**从 `demo/depression.db`（演示种子：8 个账号 / 130 条报告）自动复制而来，不是演示用假数据。你可以直接**注册一个新账号**使用。
 
 若希望干净起步，可备份后清空数据表。**先关掉服务**，再执行：
 
@@ -870,6 +870,9 @@ HTTP 401  {"error":{"message":"请使用正确的api key进行请求","code":"in
 copy depression.db depression.db.bak
 venv\Scripts\python.exe -c "import sqlite3;c=sqlite3.connect('depression.db');c.execute('DELETE FROM diagnosis_reports');c.execute('DELETE FROM media_assets');c.commit();print('已清空')"
 ```
+
+> 也可以直接 `venv\Scripts\python.exe backup_db.py`：热备份到 `backups\`（服务运行中也能用），
+> 清空/迁移前先跑一次更稳妥。运行库与 `backups\` 都不进版本库（见 `.gitignore`）。
 
 ---
 

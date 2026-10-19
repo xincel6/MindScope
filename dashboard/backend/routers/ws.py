@@ -2,7 +2,6 @@ import asyncio
 import datetime
 import json
 import time
-from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -14,7 +13,7 @@ from database import async_session
 from models import MediaAsset, DiagnosisReport, SeverityLevel, User
 from services.frame_processor import process_media
 from services.vlm import call_vlm_image, call_vlm_video
-from config import MEDIA_DIR
+from media_paths import media_file_name, resolve_media_path
 
 router = APIRouter()
 
@@ -53,7 +52,11 @@ async def _safe_close(ws: WebSocket) -> None:
 
 
 async def _verify_ws_token(ws: WebSocket) -> Optional[User]:
-    token = ws.query_params.get("token")
+    # ★ token 不再放 URL（?token=…），改由子协议头携带：
+    #   客户端握手时发送 Sec-WebSocket-Protocol: auth.<jwt>
+    #   服务端校验通过后 accept(subprotocol=…) 回显同一子协议，完成握手。
+    #   这样 token 不进入访问日志 / 代理日志 / 反向代理的 URL 记录。
+    token = _token_from_subprotocol(ws)
     if not token:
         return None
     try:
@@ -69,14 +72,29 @@ async def _verify_ws_token(ws: WebSocket) -> Optional[User]:
     return None
 
 
+def _token_from_subprotocol(ws: WebSocket) -> Optional[str]:
+    """从 Sec-WebSocket-Protocol 头里解析 `auth.<jwt>` 形态的子协议。"""
+    header = ws.headers.get("sec-websocket-protocol")
+    if not header:
+        return None
+    # 客户端可能一次声明多个子协议（逗号分隔），逐个找 `auth.` 前缀的那个
+    for part in header.split(","):
+        proto = part.strip()
+        if proto.startswith("auth."):
+            return proto[len("auth."):]
+    return None
+
+
 @router.websocket("/ws/analysis")
 async def ws_analysis(ws: WebSocket):
+    token = _token_from_subprotocol(ws)
     user = await _verify_ws_token(ws)
-    if not user:
+    if not user or not token:
         await ws.close(code=1008, reason="Unauthorized")
         return
 
-    await ws.accept()
+    # 回显同一子协议，完成握手（否则部分客户端会因子协议未被确认而断开）
+    await ws.accept(subprotocol=f"auth.{token}")
 
     # 等客户端发来首条带 media id 的消息。
     #   - 心跳 {"type": "ping"} 之类的无关消息直接跳过，不打断等待
@@ -133,11 +151,15 @@ async def ws_analysis(ws: WebSocket):
         await _safe_close(ws)
         return
 
-    # Build full path（DB 可能存绝对路径或 Windows 反斜杠路径）
-    fp = Path(asset.file_path)
-    media_path = fp if fp.is_file() else MEDIA_DIR / fp.name
-    if not media_path.exists():
-        await _safe_send_json(ws, {"type": "error", "message": f"File not found: {media_path}"})
+    # DB 里的 file_path 可能是别的机器上的绝对路径（Windows 反斜杠 / macOS 路径），
+    # 统一交给 media_paths 解析：先认原路径，再回到本机 MEDIA_DIR 按文件名找。
+    media_path = resolve_media_path(asset.file_path)
+    if media_path is None:
+        missing = media_file_name(asset.file_path) or asset.file_path
+        await _safe_send_json(
+            ws,
+            {"type": "error", "message": f"源文件不存在：{missing}（服务器 media 目录里没有找到，请重新上传该素材）"},
+        )
         await _safe_close(ws)
         return
 

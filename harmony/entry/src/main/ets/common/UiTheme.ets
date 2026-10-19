@@ -139,7 +139,7 @@ export class UiTheme {
   /** 辅助说明（仅字段级标注使用，不承载正文信息） */
   public static readonly fontSizeCaption: number = 12;
 
-  /** 重要分数 · 大字号（分析详情页的 hero 分数） */
+  /** 重要分数 · 大字号（工作台分析区 hero 的分数） */
   public static readonly fontSizeMetric: number = 32;
 
   /**

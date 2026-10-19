@@ -40,7 +40,7 @@ export class StatsCacheDao extends BaseDao<string> {
       + ` WHERE ${StatsCacheTable.colKey} = ?`;
     const args: relationalStore.ValueType[] = [StatsCacheTable.keyLatest];
     const rows: DbRow[] = await this.queryRows(sql, args);
-    return rows.length === 0 ? '' : Mapper.statsPayloadFromRow(rows[0]);
+    return rows.length === 0 ? '' : Mapper.payloadFromRow(rows[0]);
   }
 
   // ────────────────── 内部实现（全部下压）──────────────────
@@ -55,6 +55,6 @@ export class StatsCacheDao extends BaseDao<string> {
 
   /** 解码结果就是 payload 字符串 */
   protected decodeRow(row: DbRow): string {
-    return Mapper.statsPayloadFromRow(row);
+    return Mapper.payloadFromRow(row);
   }
 }

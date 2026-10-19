@@ -67,7 +67,30 @@ JWT_SECRET_KEY = _require_secret("JWT_SECRET_KEY")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24 * 7)))  # default 7 days
 MEDIA_DIR = BASE_DIR / "media"
-DATABASE_URL = f"sqlite+aiosqlite:///{BASE_DIR / 'depression.db'}"
+
+
+def _resolve_path(raw: str, default: Path) -> Path:
+    """解析可配置路径：空值用默认；相对路径按 backend 目录解析（与启动目录无关）。"""
+    value = (raw or "").strip()
+    if not value:
+        return default
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = (BASE_DIR / path).resolve()
+    return path
+
+
+# ── 数据库（★ 线上请用 DATABASE_PATH 指到仓库外，见 docs/Linux服务端部署指南.md）──
+# 为什么要可配置：`depression.db` 曾经**被 git 跟踪**，服务器每次 `git pull` /
+# `git reset` 都会拿仓库里的旧快照覆盖线上库 —— 2026-10-18 那次部署就因此
+# 丢掉了注册账号和报告（BUG-26）。现在仓库里只放 `demo/depression.db` 种子，
+# 运行库不进版本库；线上再把 DATABASE_PATH 指到仓库外，git 就再也碰不到它。
+DEMO_DB_PATH = BASE_DIR / "demo" / "depression.db"
+DATABASE_PATH = _resolve_path(os.getenv("DATABASE_PATH", ""), BASE_DIR / "depression.db")
+DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
+
+# 启动前自动备份目录（`backup_db.py` 与 serve_all.py 共用；不进版本库）
+BACKUP_DIR = _resolve_path(os.getenv("DB_BACKUP_DIR", ""), BASE_DIR / "backups")
 
 # Frame processing
 FRAMES_PER_BATCH = 24
@@ -92,4 +115,18 @@ LLM_API_PATH = os.getenv("LLM_API_PATH", "/maas/v1/messages")
 LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-v4-flash")
 
 # CORS
-CORS_ORIGINS = ["*"]
+# ★ 默认只允许同源（空列表 = 不加 CORS 白名单，跨域请求一律拒绝）。
+#   需要额外允许的前端来源通过环境变量配置，逗号分隔，例如：
+#     CORS_ORIGINS=http://localhost:5173,http://192.168.0.10:5173
+#   注意：不要再用 "*"——它无法与 allow_credentials=True 共存，等于把认证放开。
+CORS_ORIGINS = [
+    o.strip()
+    for o in os.getenv("CORS_ORIGINS", "").split(",")
+    if o.strip()
+]
+
+# HTTPS / TLS
+# ★ 证书文件由运维放置（本地可用自签证书），这里只读配置，源码不硬编码证书。
+#   两个都配置了才会启用 TLS；缺任一则保持纯 HTTP。
+SSL_CERTFILE = os.getenv("SSL_CERTFILE", "")
+SSL_KEYFILE = os.getenv("SSL_KEYFILE", "")

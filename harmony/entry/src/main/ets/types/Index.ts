@@ -29,8 +29,8 @@ export {
 // ── Wire DTO（唯一允许 snake_case 的一层）──
 export {
   LoginReqDto, RegisterReqDto, TokenOutDto, UserOutDto, MediaItemOutDto, MediaListOutDto,
-  UploadImageOutDto, ReportOutDto, ReportListItemDto, ReportListOutDto, BdiTrendPointDto,
-  StatsOutDto, AnalysisReqDto, AnalysisResDto, FaceB64ReqDto, FaceAnalyzeOutDto,
+  UploadImageOutDto, UpdatePatientReqDto, ReportOutDto, ReportListItemDto, ReportListOutDto,
+  BdiTrendPointDto, StatsOutDto, AnalysisReqDto, AnalysisResDto, FaceB64ReqDto, FaceAnalyzeOutDto,
   AnalysisFrameDto, WsInboundDto, HealthOutDto, ErrorBodyDto
 } from './dto';
 
@@ -39,7 +39,8 @@ export {
   UserModel, SessionModel, MediaItemModel, DiagnosisReportModel, ReportListItemModel,
   ReportMediaGroupModel, ReportPageModel, ReportFilterModel, BdiTrendPointModel, StatsModel, SeverityBucketModel,
   AnalysisFrameModel, AnalysisSessionModel, FaceAnalyzeModel, HealthModel, ActionResultModel,
-  MediaOptionModel, DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel
+  MediaOptionModel, DiagnosisReportNotes, CurrentTaskModel, RecentMediaModel, PickedMediaModel,
+  AnalysisFocusModel, WorkbenchHeroModel, emptyWorkbenchHeroModel, WorkbenchAssessmentModel
 } from './model';
 
 // ── 映射器 ──

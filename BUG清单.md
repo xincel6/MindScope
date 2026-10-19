@@ -1,11 +1,14 @@
-# 工作台 Bug 清单（本轮 · 已全部修复）
+# MindScope 鸿蒙端 · Bug 清单（截至 2026-10-18）
 
-> 面向后续接手本项目的 AI / 开发者。
-> 逐条给出**现象 → 根因 → 修法 → 涉及文件 → 防复发规则**。
+> 文档状态：**现行活文档** ｜ 更新时间：2026-10-18
+> 面向后续接手本项目的 AI / 开发者。逐条给出**现象 → 根因 → 修法 → 涉及文件 → 防复发规则**。
 > 每条都是真机上出现的真实缺陷，不是推测。
 >
-> 相关计划与交付说明：`docs/工作台本轮实现计划.md`
-> 修改范围：`harmony/`（鸿蒙端）。**未改 Web 端 `dashboard/` 与后端。**
+> 编号说明：按“发现轮次”追加，**不是严格按数字顺序排列**；BUG-16 ~ 18 在历史记录中空缺。
+> 当前进度见 [鸿蒙端开发进度](docs/鸿蒙端开发进度.md)，时间线见 [交付记录](docs/交付记录.md)。
+>
+> 相关计划与交付说明（已归档）：`docs/归档/需求与计划/工作台本轮实现计划.md`
+> 修改范围：`harmony/`（鸿蒙端）为主；个别轮次涉及本地后端源码（已在条目内注明）。
 
 ---
 
@@ -34,22 +37,35 @@
 
 ## 概览
 
+### 全部条目索引
+
 | # | 现象 | 根因分类 | 状态 |
 |---|---|---|---|
-| BUG-01 | 卡片一碰就变长（点一下 / 长按 / 拖动都会）；后期表现为"卡片初始高度过长" | ① 响应式几何反馈环 ② `position()` 不脱离布局流 | ✅ 已修（改用原生按压反馈，见 BUG-01 末节） |
+| BUG-01 | 卡片一碰就变长 / 初始高度过长 | 响应式几何反馈环 + `position()` 不脱离布局流 | ✅ 已修（改用原生按压） |
 | BUG-02 | 点「最近使用的素材」里任意一条，整块一起播动画 | 组件分层设计 | ✅ 已修 |
-| BUG-03 | 点单条素材没进分析详情页，而是跳到了历史报告页（与「查看全部」行为相同） | 点击冒泡被外层吞掉 | ✅ 已修 |
-| BUG-04 | 涟漪第二次点击"看不见"（动画在跑但圆是全透明的） | 动画状态未复位 | ✅ 已修（随手绘涟漪一起撤回） |
-| BUG-05 | 查看历史素材时，页面会被「当前任务」的数据反复覆盖 | 实时/快照两种数据源未分离 | ✅ 已修 |
-| BUG-06 | 全局背景改纯白后，登录页输入框看不见边界 | 主题变更的连带影响 | ✅ 已修 |
-| BUG-07 | 工作台卡片整片空白，页面只剩区块标题 | 百分比高度在 AUTO 父容器下塌陷 | ✅ 已修 |
-| BUG-08 | 卡片视觉改用共享 `AttributeModifier` 后存在整片不渲染风险 | ArkUI 属性修饰器 | ✅ 已回退 |
-| BUG-09 | 投影色用 8 位 `#RRGGBBAA`，预览器可能判为非法导致组件不渲染 | ArkUI 色值类型 | ✅ 已修 |
-| BUG-10 | 点刷新后「服务在线」状态不更新，切页签再回来才变 | 异步数据经 `navDestination` 传参不更新已挂载页面 | ✅ 已修 |
-| BUG-11 | 「选择图库素材」里选完图片，停在素材选择页、界面毫无变化 —— 等于没选 | 参数类非 `@ObservedV2`（挂载后改字段不刷新）+ 选完没有再往前走一步 | ✅ 已修（本轮） |
-| BUG-12 | 选完图片上传立刻报「网络不可达：Failed to open or read local data…」 | 把相册 URI 当成本地路径交给 `http` 上传（2300026）＋ 该错误被误分类成网络问题 | ✅ 已修（本轮） |
+| BUG-03 | 点单条素材跳到历史报告页，而不是分析页 | 点击冒泡被外层吞掉 | ✅ 已修 |
+| BUG-04 | 涟漪第二次点击“看不见” | 动画状态未复位 | ✅ 已修（随手绘涟漪撤回） |
+| BUG-05 | 查看历史素材时被「当前任务」数据反复覆盖 | 实时 / 快照数据源未分离 | ✅ 已修 |
+| BUG-06 | 全局背景改纯白后输入框看不见边界 | 主题变更连带影响 | ✅ 已修 |
+| BUG-07 | 工作台卡片整片空白，只剩区块标题 | 百分比高度在 AUTO 父容器下塌陷 | ✅ 已修 |
+| BUG-08 | 共享 `AttributeModifier` 后存在整片不渲染风险 | ArkUI 属性修饰器 | ✅ 已回退 |
+| BUG-09 | 投影色用 8 位 `#RRGGBBAA` 可能被判非法 | ArkUI 色值类型（后续证伪：真因是共享 `AttributeModifier`） | ✅ 已修 |
+| BUG-10 | 刷新后「服务在线」状态不更新 | 异步数据经 `navDestination` 传参不刷新已挂载页 | ✅ 已修 |
+| BUG-11 | 选完图片停在选择页，等于没选 | 参数类非 `@ObservedV2` + 交互少一跳 | ✅ 已修 |
+| BUG-12 | 选完图片上传报「网络不可达 2300026」 | 相册 URI 当本地路径 + 错误误分类 | ✅ 已修 |
+| BUG-13 | 图片被推成 10 帧，退出再看只剩 1 帧 | 服务端伪造帧数 + 端上无“图片 = 单帧”语义 | ✅ 已修 |
+| BUG-14 | 换素材后所有历史热力图都变成最近那个人 | 全局最新一帧兜底 + 单份缓冲 | ✅ 已修（按 `mediaId` 归档） |
+| BUG-15 | 分析完成档位标签 / 智能解读不出现 | 实时数据走页面参数，挂载后不再回填 | ✅ 已修 |
+| BUG-16~18 | 历史记录空缺（无对应条目） | — | — |
+| BUG-19 | 当前任务卡照片 / 档位 / 进度条停在创建那一刻 | `@Builder` 按值传参 | ✅ 已修 |
+| BUG-20 | 登录失败后按钮永远停在「登录中…」 | 失败路径没复位 `loading` | ✅ 已修 |
+| BUG-21 | 登录错误文案不出现 | 参数类不可观察（与 BUG-11 同根） | ✅ 已修 |
+| BUG-22 | 登录页按返回键整屏纯白 | 根页面被弹出后 Navigation 露出空根内容 | ✅ 已修 |
+| BUG-23 | 分析完成后热力图 / 帧数不刷新 | `@Computed` 首次求值未读到 `@Trace sessions` | ✅ 已修 |
+| BUG-24 | 患者命名对话框按“确定”崩溃 | V2 页面里 `@CustomDialog` 内部 controller 取不到注入值 | ✅ 已修 |
 
-编译验证：`bash harmony/scripts/build.sh` → **BUILD SUCCESSFUL**。
+> 详细条目按轮次分组在下面各节；编号顺序与正文顺序不一致，按上表定位即可。
+> 编译验证基线：`bash harmony/scripts/build.sh` → **BUILD SUCCESSFUL**（2026-10-18）。
 
 ---
 
@@ -878,7 +894,8 @@ build() {
 
 # 登录重构 / 开屏页 / 我的页 · 本轮新增（BUG-20 / 21 / 22）
 
-> 需求与交付：`我的页面搭建方案prompt.md`、`docs/本轮交付说明-登录重构与我的页.md`。
+> 需求与交付：`docs/归档/需求与计划/我的页面搭建方案prompt.md`、
+> `docs/归档/交付说明/本轮交付说明-登录重构与我的页.md`。
 > 本轮**不是**"照着需求画界面"就完事：三条缺陷全部是装机实测跑出来的，
 > 两条只有真机才看得见（BUG-20 的按钮卡死、BUG-22 的白屏）。
 
@@ -1024,5 +1041,206 @@ private handleFailure(err: Object) {
 | 6 | 登录页按返回键 | 仍是登录页（不再白屏） | ✅ `back_after.jpeg`（BUG-22 验证点） |
 
 编译：`bash harmony/scripts/build.sh` → `BUILD SUCCESSFUL`（`CompileArkTS` 真跑）。
+
+---
+
+# 工作台重构轮 · 新增缺陷（BUG-23）
+
+## BUG-23 · 分析完成后热力图 / 帧数不刷新
+
+**现象**
+分析跑完后，hero 的分数在涨，但热力图、逐帧列表、帧数停在进入页面时的那一帧；
+切页签再回来 / 重新打开页面后才变成最新结果。
+
+**根因**
+`AppStore.analysisSessionOf()` 在桥接器为 `null` 时**提前 return**，页面 `@Computed session`
+首次求值没有读到 `@Trace sessions` 这个源；后续写入会话不会让这个 Computed 失效。
+桥接器是在第一次 `startAnalysis()` 时才创建的，而页面挂载早于它。
+
+**修法**
+`AppStore` 构造函数里**提前创建**桥接器（只建对象，不建立 WS 连接），
+保证页面第一次读会话时就能读到 `@Trace` 数组；`analysisSessionsOf()` 返回该数组**本身**，不做拷贝。
+
+**防复发规则**
+> **`@Computed` 里“没有数据”也要先读一次 `@Trace` 源，不能提前 return。**
+> 没有依赖就没有失效；等数据到了也不会重算。这是 BUG-10/11/15/21 同一条根因的又一变体。
+
+**涉及文件**：`store/AppStore.ets`、`store/AnalysisStateHolder.ets`、`pages/WorkbenchPage.ets`
+
+---
+
+# 素材库恢复轮 · 新增缺陷（BUG-24）
+
+## BUG-24 · 患者命名对话框按“确定”崩溃
+
+**现象**
+素材库 → 上传 / 重命名 → 患者命名对话框，点「确定」应用直接退出：
+`TypeError: Cannot read property close of undefined`。
+
+**根因**
+对话框是 `@CustomDialog`，内部声明 `controller?: CustomDialogController` 并调用 `this.controller.close()`。
+在 V2 页面（`@ComponentV2` / `@ObservedV2` 参数）里，这个字段**没有拿到注入值**，
+调用 `close()` 时 `this.controller` 是 `undefined`。
+
+**修法**
+由**页面持有** `CustomDialogController`；对话框只保留语法要求的 `controller?: CustomDialogController`
+声明，**不再调用它**；确认 / 取消都通过回调交回页面，由页面统一 `close()`。
+
+**防复发规则**
+> **V2 页面 + `@CustomDialog`：不要在对话框内部操作 controller。**
+> 生命周期归页面，对话框只负责收集输入与回调。
+
+**涉及文件**：`components/PatientNameDialog.ets`、`pages/MainPage.ets`、`pages/MediaLibraryPage.ets`
+
+---
+
+## 2026-10-18 复跑验证
+
+```text
+bash harmony/scripts/build.sh                 → BUILD SUCCESSFUL
+node harmony/scripts/test-workbench-layout.mjs → PASS
+node harmony/scripts/test-analysis-detail.mjs  → PASS
+node harmony/scripts/test-heatmap-strip.mjs    → PASS
+node harmony/scripts/test-heatmap-colormap.mjs → PASS
+```
+
+> 其中 `test-workbench-layout.mjs` 已按“分析详情页保留、仅从历史报告进入”的现行架构更新，
+> 不再断言“详情页已删除”。
+
+---
+
+# 逐帧数据粒度轮 · 新增缺陷（BUG-25）
+
+## BUG-25 · 「逐帧热力图」一整列全是同一帧
+
+**现象**
+工作台 / 分析详情页的「逐帧热力图（视频切分视图）」里，24 格的人脸、热力颜色、BDI 全部一样；
+主图下方写「已固定第 211 帧 · BDI 18.4」，而每格都是 18.4。
+同一段视频的情绪曲线也很像一条条水平台阶。
+
+**实测（改前，样本视频 `anonymous_001.mp4`，采样 60 帧）**
+
+```text
+messages        : 72        ← 实际只有 60 帧，多出 12 条
+frame_id range  : 1..60  unique=60  duplicate ids=12
+distinct heats  : 3         ← 一批 24 帧共用 1 张
+distinct scores : 3         ← 3 批各 1 个段级分数
+```
+
+**根因（四条叠加，前三条在服务端）**
+
+1. `services/inference.py` 把 12 个时间 token 的注意力在**时间维取平均**成 1 张 →
+   一批 24 帧共用同一张 16×16 热力图。
+2. 模型输出的是**整段 clip 级**分数，`scores = [score] * 24` 广播给整批 →
+   批内 24 帧分数必然相同（这本身是模型口径，UI 必须按“段级”解释）。
+3. `services/frame_processor.py` 尾批补帧时把**补出来的副本也发送**，且用补齐后的长度
+   倒推起点（`frame_id - 24 + 1`）→ 12 条重复帧 + 帧号错位；
+   客户端 `frameCount` 因此是 72 而不是 60。
+4. 客户端 `HeatmapViewModel` 超出渲染上限时**只保留最后 24 帧**，而服务端一批正好 24 帧 →
+   整列天然就是同一批；`AnalysisStateHolder` 收尾时又**从头部切**到 30 帧，
+   连"切分视图"该有的时间跨度也没了。
+
+**修法**
+
+| 层 | 改动 |
+|---|---|
+| 推理 | 按时间 token 拆出 **12 张**热力图（每个覆盖 2 帧），**整批全局归一化**（时间上强弱可比），不再时间平均 |
+| 帧流 | 尾批：补帧只用于模型输入；**只发真实帧**，起点按真实帧数倒推（`services/frame_plan.py`） |
+| 端上列表 | 超出 24 格时按时间**均匀抽取（含首尾）**；收尾裁剪改成**均匀抽稀**到 30 帧 |
+| 文案 | 「每 24 帧推理一次」「热力图每 2 帧一张」，标题由“共 N 帧”改为“均匀抽取 N 格” |
+
+**改后实测（同一视频，同一个探针）**
+
+```text
+messages        : 60        ← 与真实采样帧数一致
+frame_id range  : 1..60  unique=60  duplicate ids=0
+distinct heats  : 30        ← 12 + 12 + 尾批 6
+distinct scores : 3         ← 段级语义，未变（这是模型事实）
+```
+
+**防复发规则**
+> **界面的展示粒度不得细于服务端的数据粒度。**
+> 看到“逐帧”两个字时先问：这个字段是每帧算出来的，还是每 N 帧算一次广播下来的？
+> 是后者就按“段”写文案、按段做交互，**不要用画满一屏的重复格子假装逐帧**。
+>
+> 补帧（padding）只允许进入模型输入，**绝不进入发送循环**；帧号一律用真实帧数倒推。
+
+**涉及文件**
+`dashboard/backend/services/inference.py`、`services/frame_processor.py`、`services/frame_plan.py`（新增）、
+`routers/media.py`、`tests/test_frame_stream.py`（新增）、
+`harmony/entry/src/main/ets/components/charts/HeatmapViewModel.ets`、
+`store/AnalysisStateHolder.ets`、`components/analysis/AnalysisHeatmapCard.ets`、
+`pages/AnalysisDetailPage.ets`、`harmony/scripts/test-heatmap-strip.mjs`
+
+---
+
+## 2026-10-18 逐帧粒度轮 · 复跑验证
+
+```text
+dashboard/backend: venv\Scripts\python.exe -m unittest discover -s tests → 24 tests OK
+dashboard/backend: venv\Scripts\python.exe import main                   → import OK（11 routes）
+端到端探针（真实 MTCNN + LMTformer + 样本视频）                          → 72 → 60 条，热力图 3 → 30 张
+bash harmony/scripts/build.sh                                            → BUILD SUCCESSFUL
+node harmony/scripts/test-heatmap-strip.mjs                              → PASS（含新增抽稀 / 归档断言）
+node harmony/scripts/test-heatmap-colormap.mjs                           → PASS
+node harmony/scripts/test-analysis-detail.mjs                            → PASS
+node harmony/scripts/test-workbench-layout.mjs                           → PASS
+```
+
+---
+
+# 数据库隔离轮 · 新增缺陷（BUG-26）
+
+## BUG-26 · 部署一次，线上账号与报告被仓库快照覆盖
+
+**现象**
+2026-10-18 15:00 左右，`xincell` / `712098opa` 登录报 401（10-17 实测同一对账号可登录）。
+实测：`xincell1013` / `712098opa` 仍能登录（id=8），但 `GET /api/stats` 变成
+**130 条报告 / 11 条素材 / 严重度 37·21·72 / 最新 2026-10-15 22:53:19**，
+与仓库里 10-16 提交的 `dashboard/backend/depression.db` **逐项一致**；
+而文档记录 10-17 时服务器是「≥13 用户 / 140 报告」。`xincell`（10-16 注册，id=12）消失。
+
+**根因**
+`depression.db` 当时**被 git 跟踪**。服务端在 14:19 之后的那次重新部署（OpenAPI 里已出现
+当天 14:19 才提交的 `/api/media/{patient}` 路由）执行了 `git pull` / `git reset` / 重新 clone，
+仓库里的旧快照直接覆盖了线上库。
+**数据在仓库工作树内 = 任何一次"重置代码"都可能变成"重置数据"。**
+
+**修法**
+| 层 | 改动 |
+|---|---|
+| 仓库 | 演示库改名为 `dashboard/backend/demo/depression.db`（种子）；运行库 `backend/depression.db` 与 `backups/` 加入 `.gitignore` |
+| 启动 | `database.ensure_database()`：运行库不存在时复制种子，存在则**绝不覆盖** |
+| 配置 | `DATABASE_PATH` / `DB_BACKUP_DIR` 环境变量；相对路径按 backend 目录解析 |
+| 备份 | 新增 `backup_db.py`（sqlite3 backup API 热备，保留最近 N 份）；`serve_all.py` **启动前自动备份** |
+| 部署文档 | Linux 指南新增 3.4.1：库移出仓库、systemd 环境变量、备份/恢复、`git pull` 更新流程 |
+| 测试 | `tests/test_db_maintenance.py`：种子只复制一次、已有库不被覆盖、备份可读、轮转保留最新 |
+
+**防复发规则**
+> **线上数据目录不得位于仓库工作树内。** 代码可以随时 reset，数据不行。
+> 部署"更新"只允许 `git pull`（数据在仓库外）；出现冲突时**先备份、再人工处理**，
+> 绝不用 `git checkout .` / `git reset --hard` 把冲突抹掉。
+> 任何"清库 / 重置 / 迁移"操作前，先跑一次 `python backup_db.py`，并确认备份文件可打开。
+
+> 已丢的数据只能从服务器上的旧文件恢复：找旧部署目录、`*.db.bak`、`git stash`，
+> 或 `backups/` 里的历史快照；找不到就只能重新注册账号（`xincell` 用户名已空出）。
+
+**涉及文件**
+`dashboard/backend/config.py`、`database.py`、`backup_db.py`（新增）、`serve_all.py`、
+`tests/test_db_maintenance.py`（新增）、`.gitignore`、`.env.example`、
+`README.md`、`docs/Linux服务端部署指南.md`、`docs/Windows复现部署指南.md`、
+`dashboard/backend/demo/depression.db`（由 `backend/depression.db` 改名）
+
+---
+
+## 2026-10-18 数据库隔离轮 · 复跑验证
+
+```text
+dashboard/backend: unittest discover -s tests              → 30 tests OK
+首次启动（无运行库）→ 自动从 demo 种子复制               → 8 users / 130 reports
+backup_db.py                                              → backups/depression-20261018-152112.db
+                                                            快照可读：8 users / 130 reports
+git status                                                → 运行库与 backups/ 均不再出现
+```
 
 

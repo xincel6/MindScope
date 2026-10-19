@@ -30,12 +30,16 @@ export const REGISTER_ROUTE: string = 'register';
  * 素材选择页路由名（工作台二级页）
  * ★ 二级页面用 `pushPathByName` 入栈，系统返回键即可回到工作台，
  *   所以页面**不需要**自己实现"返回上一页"的栈操作。
+ * ★ 上传成功后窗口层直接 `pop()` 回工作台。
  */
 export const MEDIA_PICKER_ROUTE: string = 'mediaPicker';
 
 /**
- * 分析详情页路由名（工作台二级页）
- * ★ 本轮它是**占位页**（图表组件未实现），但进度的数据是真的（走 WS）。
+ * 分析详情页路由名（历史报告查看器）
+ *
+ * ★ 工作台重构后，**实时/本次评估**的分析内容内联在主页面，不再走这个页面；
+ *   它现在只从「历史报告」卡片进入：展示该素材的报告快照，
+ *   本机若还保留逐帧会话就展示逐帧结果。保留独立页是为了不让历史报告丢失查看入口。
  */
 export const ANALYSIS_DETAIL_ROUTE: string = 'analysisDetail';
 

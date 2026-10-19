@@ -37,6 +37,7 @@ class MediaItemOut(BaseModel):
     thumbnail_url: str
     url: str
     duration: Optional[int] = None
+    patient: Optional[str] = None
     created_at: str
 
     model_config = {"from_attributes": True}
@@ -44,6 +45,11 @@ class MediaItemOut(BaseModel):
 
 class MediaListOut(BaseModel):
     items: list[MediaItemOut]
+
+
+class PatientUpdateIn(BaseModel):
+    """PUT /api/media/{media_id}/patient 的请求体；空串 / null 表示清除患者名"""
+    patient: Optional[str] = None
 
 
 # --- Analysis ---

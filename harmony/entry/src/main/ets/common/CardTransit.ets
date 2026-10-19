@@ -98,8 +98,15 @@ export class CardTransit {
   /** 入场时的纵向起始偏移（vp）· 轻微上浮，避免只有单一横向语言 */
   static readonly riseY: number = 12;
 
-  /** 各页面参与转场的组件个数 · 必须与该页里 `order` 的数量一致 */
-  static readonly CARDS_WORKBENCH: number = 4;
+  /**
+   * 工作台（主页）：页头 0 / 本次评估 hero 1 / 开始评估 2 / 热力图 3 /
+   * 情绪曲线 4 / 严重度分布 5 / 智能解读 6 / 诊断意见 7
+   * ★ 「最近使用的素材」区块已按用户要求删除，序号从 0 连续排到 7（本轮新增诊断意见卡）。
+   *   必须与该页里 `RevealCard({ order })` 的**最大序号 + 1** 一致：
+   *   3~7 号卡在没有查看目标时不渲染，但 order 固定不变，所以这里始终按 8 算。
+   *   少算一个，最后一个组件的动画会被换页切在尾巴上。
+   */
+  static readonly CARDS_WORKBENCH: number = 8;
 
   /**
    * 统计页：页头 0 / 核心卡 1 / 三张 KPI 小卡 2·3·4 / 环形图 5 / 折线 6
@@ -108,7 +115,24 @@ export class CardTransit {
    */
   static readonly CARDS_STATS: number = 7;
 
+  /**
+   * 历史报告页：页头 0 / 筛选栏 1 / 列表区整块 2
+   *
+   * ★ 列表里的每张报告卡**不计入**这里：它们只播入场（各自按列表下标错峰），
+   *   离场由列表区整块承担（卡片 `_playExit: false`）。若把卡片数量算进来，
+   *   几十张卡会让等待时间膨胀到几秒，切页签会明显卡住。
+   */
+  static readonly CARDS_REPORTS: number = 3;
+
   static readonly CARDS_PLACEHOLDER: number = 2;
+
+  /**
+   * 素材库页的**目标**转场位：页头+上传 0 / 筛选+Tab 1（素材网格是滚动内容，不参与转场）
+   *
+   * ★ 当前页面尚未挂 `RevealCard`，`MainPage.cardCountOf()` 仍走 `CARDS_PLACEHOLDER`（同为 2）；
+   *   等页面接入逐块动画后，再把 `cardCountOf()` 改为返回本常量。
+   */
+  static readonly CARDS_MEDIA: number = 2;
 
   static readonly CARDS_PROFILE: number = 3;
 

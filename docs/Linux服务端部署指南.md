@@ -6,6 +6,7 @@
 > 代码本身**不需要为 Linux 改动**：已核实无 Windows 专属 API、无硬编码绝对路径、全部路径基于
 > `Path(__file__).resolve().parent` 推导，`DATABASE_URL` 在 Linux 上会自动得到
 > `sqlite+aiosqlite:////.../backend/depression.db`（四斜杠绝对路径，SQLAlchemy 要求的形式）。
+> 线上可用环境变量 `DATABASE_PATH` 把库指到**仓库外**（见 3.4.1，强烈建议）。
 
 ---
 
@@ -111,6 +112,59 @@ VLM / LLM 密钥：
 - **填了** → 分析结束后会调用云端大模型生成中文诊断文本（需要外网）。
 - **不填** → 分析与评分、报告落库、统计面板全部正常，只是缺少 VLM 语义化解读文本
   （`services/vlm.py` 与 `llm.py` 会静默跳过，不会报错）。
+
+### 3.4.1 数据目录与备份（线上必做）
+
+**背景**：2026-10-18 的一次部署把线上库换成了仓库里的旧快照，注册账号与十余条报告丢失（BUG-26）。
+根因是 `depression.db` 当时**被 git 跟踪**，`git pull` / `git reset` / 重新 clone 都会用仓库版本覆盖它。
+
+现在仓库里只保留**演示种子** `dashboard/backend/demo/depression.db`；运行库首次启动时自动复制出来，
+默认路径 `dashboard/backend/depression.db` 已加入 `.gitignore`。线上再把它移到**仓库外**：
+
+```bash
+sudo mkdir -p /var/lib/mindscope/backups
+sudo chown -R "$USER" /var/lib/mindscope
+
+# 把当前线上库挪出仓库（只需做一次；先停服务）
+sudo systemctl stop mindscope 2>/dev/null || true
+mv /opt/MindScope/dashboard/backend/depression.db /var/lib/mindscope/depression.db
+```
+
+在 `.env` 里写死（相对路径会按 backend 目录解析，仍建议写绝对路径）：
+
+```ini
+DATABASE_PATH=/var/lib/mindscope/depression.db
+DB_BACKUP_DIR=/var/lib/mindscope/backups
+```
+
+`serve_all.py` **每次启动前自动热备份**一份到 `DB_BACKUP_DIR`（保留最近 10 份；
+`DB_BACKUP_ON_START=0` 可关闭）。也可以手动跑：
+
+```bash
+cd /opt/MindScope/dashboard/backend
+venv/bin/python backup_db.py                 # → /var/lib/mindscope/backups/depression-YYYYmmdd-HHMMSS.db
+venv/bin/python backup_db.py --keep 20       # 保留 20 份
+```
+
+恢复（**先停服务**，别在进程写入时覆盖）：
+
+```bash
+sudo systemctl stop mindscope
+cp /var/lib/mindscope/backups/depression-20261018-153000.db /var/lib/mindscope/depression.db
+sudo systemctl start mindscope
+```
+
+以后更新代码（数据在仓库外，git 碰不到）：
+
+```bash
+cd /opt/MindScope
+git pull --ff-only
+dashboard/backend/venv/bin/pip install -r dashboard/backend/requirements.txt   # 依赖有变时
+sudo systemctl restart mindscope      # 启动前会自动备份一次
+```
+
+> ⚠ **不要用 `git reset --hard` / `git checkout .` 去"解决冲突"**：以前那次数据被覆盖，
+> 正是从这里进去的。库文件不在仓库里之后，冲突源也就不存在了。
 
 ### 3.5 启动
 
@@ -236,6 +290,9 @@ WorkingDirectory=/opt/MindScope/dashboard/backend
 Environment=KMP_DUPLICATE_LIB_OK=TRUE
 Environment=HOST=0.0.0.0
 Environment=PORT=8000
+# ★ 数据在仓库外：部署/更新代码永远碰不到线上库（见 3.4.1）
+Environment=DATABASE_PATH=/var/lib/mindscope/depression.db
+Environment=DB_BACKUP_DIR=/var/lib/mindscope/backups
 EnvironmentFile=/opt/MindScope/dashboard/backend/.env
 ExecStart=/opt/MindScope/dashboard/backend/venv/bin/python serve_all.py
 Restart=always
