@@ -68,6 +68,25 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRE_MINUTES", str(60 * 24 * 7)))  # default 7 days
 MEDIA_DIR = BASE_DIR / "media"
 
+# ── SMTP 发信（邮箱验证码）─────────────────────────────────────────────────
+# ★ 密码位放的是 QQ 邮箱的「授权码」，不是 QQ 密码；授权码由
+#   mail.qq.com → 设置 → 账号与安全 → 开启 IMAP/SMTP 服务 生成，只显示一次。
+# ★ 未配置（SMTP_HOST / SMTP_USER / SMTP_PASSWORD 任一为空）时，发码接口
+#   返回 503 并提示"服务端未配置邮件服务"，**不会**静默跳过 —— 否则用户
+#   以为收到验证码，实际什么也没发，注册流程会莫名卡住。
+SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
+SMTP_USE_SSL = os.getenv("SMTP_USE_SSL", "true").strip().lower() in ("1", "true", "yes")
+SMTP_USER = os.getenv("SMTP_USER", "").strip()
+SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "").strip()
+SMTP_FROM = os.getenv("SMTP_FROM", "").strip() or SMTP_USER
+SMTP_FROM_NAME = os.getenv("SMTP_FROM_NAME", "MindScope").strip()
+
+
+def smtp_configured() -> bool:
+    """SMTP 三要素是否齐全（缺任一即视为未配置）。"""
+    return bool(SMTP_HOST and SMTP_USER and SMTP_PASSWORD)
+
 
 def _resolve_path(raw: str, default: Path) -> Path:
     """解析可配置路径：空值用默认；相对路径按 backend 目录解析（与启动目录无关）。"""

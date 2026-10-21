@@ -67,3 +67,26 @@ class DiagnosisReport(Base):
     )
     inference_time_ms: Mapped[float] = mapped_column(Float, default=0.0)
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+
+class EmailVerification(Base):
+    """邮箱验证码 · 注册时证明"你控制这个邮箱"的一次性凭据。
+
+    ★ 存的是 `sha256(email:code)` 单向哈希，**绝不存明文验证码**：
+      库文件一旦泄露，明文码会让人直接注册任意邮箱的账号。
+    ★ `attempts` 累计失败次数，满 5 次由服务层把记录标记为 consumed（作废），
+      防止把 5 分钟有效期当成暴力破解窗口。
+    ★ `consumed` 一码一用：校验通过立即置位，重放同样的码会因查不到有效记录而失败。
+    """
+
+    __tablename__ = "email_verifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    consumed: Mapped[bool] = mapped_column(default=False, nullable=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime, default=datetime.datetime.utcnow, index=True
+    )
+    expires_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=False)

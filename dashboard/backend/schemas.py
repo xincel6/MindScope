@@ -5,9 +5,22 @@ from typing import Optional
 
 # --- Auth ---
 class UserRegister(BaseModel):
+    """注册请求 · 邮箱验证码为必填项（2026-10-21 起强制）。
+
+    旧客户端只传 username/password/email 会收到 422 —— 这是刻意的：
+    邮箱是这个医疗数据项目唯一的账号找回通道，不放行未验证注册。
+    """
+
     username: str
     password: str
-    email: Optional[str] = None
+    email: str
+    verification_code: str
+
+
+class SendCodeIn(BaseModel):
+    """POST /api/auth/send-code 的请求体 · 只需要邮箱。"""
+
+    email: str
 
 
 class UserLogin(BaseModel):
