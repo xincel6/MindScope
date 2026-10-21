@@ -156,8 +156,25 @@ export class UiTheme {
   /** 品牌图标占位边长 */
   public static readonly logoSize: number = 96;
 
-  /** 底部页签栏高度 */
-  public static readonly tabBarHeight: number = 56;
+  /**
+   * 底部页签栏高度
+   *
+   * ★ 从 56 提到 64：本轮页签从"纯文字"改成"图标在上、文字在下"，
+   *   竖直方向要装下 胶囊 28 + 间距 4 + 14fp 行高约 20 = 52；56 只剩 2vp 余量，
+   *   文字换行或字重一变就会顶到栏边。
+   */
+  public static readonly tabBarHeight: number = 64;
+
+  /** 底部页签图标边长 · 24 网格的图标缩到 22，与 14fp 标签并排后一栏仍是标准高度 */
+  public static readonly tabIconSize: number = 22;
+
+  /**
+   * 选中态"图标胶囊"的宽 / 高（Material 3 导航栏写法：底色只罩图标，不罩文字）
+   * ★ 56×28 对 22×22 的图标：四周留出内边距，底色块才不像"把图标贴了张色纸"。
+   * ★ 圆角取高度一半即胶囊形（与进度条同一套取法）。
+   */
+  public static readonly tabIconPillWidth: number = 56;
+  public static readonly tabIconPillHeight: number = 28;
 
   /** 占位页图标底圆直径 */
   public static readonly emptyIconSize: number = 72;
@@ -215,26 +232,89 @@ export class UiTheme {
   /** 卡片按压反馈的过渡时长（毫秒）· 比涟漪更短，手感才"跟手" */
   public static readonly pressDuration: number = 120;
 
-  // ────────────────── 开屏页（本轮新增）──────────────────
+  // ────────────────── 品牌 / 待机页 / 登录页（2026-10-21 待机页与登录页重构）──────────────────
 
   /**
-   * 开屏页图标边长
-   * ★ 比登录页的 96 大一号：开屏时屏幕上只有这一个元素，太小会显得"页面没加载完"。
+   * 品牌标记的宽高比（`media/brand_mark.png` 原图 885 x 727 ≈ 1.217）
+   * ★ 只给宽度、高度用 `aspectRatio` 推：换 logo 时不必同时改两处数字，
+   *   父容器再窄也不会把标记压扁。
    */
-  public static readonly splashLogoSize: number = 112;
-
-  /** 开屏页图标圆角 · 与边长同比放大（96→20 的比例） */
-  public static readonly splashLogoRadius: number = 24;
-
-  /** 开屏页产品名 "MindScope" 字号 */
-  public static readonly fontSizeSplashTitle: number = 30;
+  public static readonly brandMarkAspect: number = 1.217;
 
   /**
-   * 开屏页最短展示时长（毫秒）
-   * ★ 为什么需要：引导流程在缓存命中时可能 200ms 就结束，
-   *   不留一个下限的话开屏页只会闪一下（比不显示更难看）。
+   * 品牌底色（直接从应用图标本身取色）
+   * ★ 待机页整屏就是这层竖向渐变：标记图是从图标里抠出来的白色部分，
+   *   把它铺回同色底，屏幕上看到的就是启动图标本身 —— 这是"图标即品牌"的那一步。
    */
-  public static readonly splashMinDurationMs: number = 1100;
+  public static readonly brandStart: string = '#22B49C';
+  public static readonly brandEnd: string = '#0C7A69';
+
+  /** 品牌色上的文字与次级元素 */
+  public static readonly onBrand: string = '#FFFFFF';
+  public static readonly onBrandMuted: string = '#CCF2EA';
+  public static readonly onBrandLine: string = '#33FFFFFF';
+
+  /**
+   * 品牌区（图标 + "MindScope" + 产品名）
+   * ★★ 待机页与登录页**必须共用这一组数字**：转场时图标是从待机页原位
+   *    "长"成登录页那一份的，任何一边差 1vp，用户就能看见图标跳一下。
+   */
+  public static readonly heroLogoWidth: number = 152;
+  public static readonly heroTitleSize: number = 26;
+  public static readonly heroProductSize: number = 14;
+  /** 品牌区顶边（待机页固定在这里；登录页从同一个位置起、入场末尾再上提） */
+  public static readonly heroTop: number = 156;
+  /**
+   * 品牌区"上提"后的顶边（登录页入场最后一拍的终点）
+   *
+   * ★ 用户要求：「动画的最后让白屏向上拉动，让图标上移」。位移量 = 156 - 96 = 60vp，
+   *   与白层上提量一致 —— 品牌区与白层**整体上移**，两者之间的间距保持不变，
+   *   所以看起来是"整页被往上提了一格"，而不是间距被压扁。
+   */
+  public static readonly heroTopLifted: number = 96;
+  /**
+   * 待机页图标的起始比例：登录页 = 1（`heroLogoWidth` = 152 的实尺寸），
+   * 待机页 = 0.84（约 128）
+   *
+   * ★ 用户要的"图标慢慢放大直到与登录页相同"就落在这一个数字上：待机页显示 0.84，
+   *   切页前由 `Index.releaseStandby` 在**待机页上**先放大到 1，随后白层才盖上来。
+   * ★ 两页共用同一个**布局盒**（`heroLogoWidth`），只缩画出来的图形 ——
+   *   这样图标是"就地长大"，下面的 MindScope/产品名纹丝不动，转场看不出接缝。
+   * ★ 0.84 而不是更小的值：待机页单独停留时图标要**够大**（实测 0.76 时用户反馈太小）。
+   */
+  public static readonly heroLogoStart: number = 0.84;
+  /** 图标放大 + 白层上滑的总时长 */
+  public static readonly heroEnterMs: number = 520;
+
+  /** 待机页底部状态行（"正在准备…"） */
+  public static readonly standbyStatusSize: number = 14;
+  public static readonly standbyStatusBottom: number = 104;
+
+  /**
+   * 待机页最短展示时长（毫秒）
+   * ★ 缓存命中时引导 200ms 就结束了，不留一个下限的话待机页只会闪一下（比不显示更难看）。
+   */
+  public static readonly standbyMinDurationMs: number = 700;
+
+  /** 登录页白色表单层的顶边 · 落在品牌区下方（品牌区底边约 340） */
+  public static readonly loginSheetTop: number = 372;
+  /**
+   * 白层"上提"后的顶边（登录页入场最后一拍的终点）
+   *
+   * ★ 与 `heroTopLifted` 同位移（372 → 312，也是 60vp）：白层顶边往上走 60vp，
+   *   表单区就凭空多出 60vp —— 原来"对半分"的观感被打破，白层占到屏幕约 2/3。
+   * ★ 注意：这里改的是**白层在布局里的顶边**（占位 `Row` 的高度），不是 translate。
+   *   用 translate 的话底边会跟着抬起、露出 60vp 的青绿。
+   */
+  public static readonly loginSheetTopLifted: number = 312;
+  /** 白层顶部圆角 · 比卡片的 16 更大，才像"从下面盖上来的抽屉" */
+  public static readonly loginSheetRadius: number = 28;
+  /** 登录页标题字号 */
+  public static readonly loginTitleSize: number = 24;
+  /** 白层上滑入场的时长 */
+  public static readonly sheetEnterMs: number = 460;
+  /** 入场末尾"整页上提"的时长 · 比上滑短一档，收尾要干净 */
+  public static readonly sheetLiftMs: number = 420;
 
   // ────────────────── 失败弹窗（本轮新增）──────────────────
 

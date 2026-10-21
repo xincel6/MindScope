@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- 选择素材 · 空态（"加一张图"，与 tab 栏的相册图标区分开：这里是动作、那里是页签身份）
+       颜色烤进文件：主色 #0D9488（UiTheme.primary），放在 fillSoft 浅薄荷底上 -->
+  <g fill="none" stroke="#0D9488" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 相框 -->
+    <rect x="2.6" y="6.2" width="14.8" height="12.2" rx="2.4"/>
+    <!-- 框内山形 -->
+    <path d="M5.2 15.9 L8.5 12.2 L11.2 15.0 L12.7 13.3 L15.0 15.9"/>
+    <!-- 加号（右上角） -->
+    <path d="M17.6 7.1 H22.4"/>
+    <path d="M20 4.7 V9.5"/>
+  </g>
+  <!-- 太阳 -->
+  <circle cx="6.6" cy="9.5" r="1.15" fill="#0D9488"/>
+</svg>

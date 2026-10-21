@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- 素材类型 · 图片（选中后卡片前的类型图标）
+       颜色烤进文件：主色 #0D9488（UiTheme.primary） -->
+  <g fill="none" stroke="#0D9488" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.6" y="4.6" width="18.8" height="14.8" rx="2.6"/>
+    <path d="M5.4 16.6 L9.6 11.6 L13.0 15.0 L15.2 12.6 L18.6 16.6"/>
+  </g>
+  <circle cx="8.1" cy="9.0" r="1.25" fill="#0D9488"/>
+</svg>

@@ -1,48 +1,79 @@
 /**
  * LoginPage · **登录界面**（纯展示，不含任何业务逻辑）
  *
- * 页面契约（★ 直接传入参数即可展示本页，页面内部不引用任何 store / 变量）：
+ * 页面契约（★ 直接传入参数即可展示本页，页面内部不引用任何 store）：
  * ```ts
  * const param = new LoginPageParam();
- * param.onLogin = async (u, p, e) => { ... };   // 交给窗口层去调 AuthStore
- * param.onRegister = (u, p, e) => { ... };      // 点"注册账号"由窗口层决定怎么跳
+ * param.onLogin = async (u, p, e) => { ... };   // 窗口层去调 AuthStore
+ * param.onRegister = (u, p, e) => { ... };      // 点"立即注册"由窗口层决定怎么跳
  * param.authBusy = AppStore.get().auth().loading;
  * param.authError = AppStore.get().auth().errorMsg;
- * param.authErrorTitle = '登录失败';            // 失败弹窗标题（窗口层按失败类别给）
- * param.authErrorHint  = '服务端已回应 HTTP 401'; // 失败弹窗诊断行
+ * param.authErrorTitle / authErrorHint          // 失败弹窗的标题与诊断行
  * param.serverLabel = '100.122.178.113:8000';   // 底部常驻的服务端地址
  * ```
  *
- * 页面自己只持有三类状态（都属于"表单本地状态"，不是业务数据）：
- *   - 输入框内容：用户名 / 密码 / 是否明文显示密码
- *   - 本地校验提示：`formError`（用 `AuthRule` 先拦一次，省掉一次必然失败的往返）
- *   - 失败弹窗的三行文案（标题 / 主文案 / 诊断行，全部是从参数**抄过来**的）
- * 鉴权结果、错误文案全部来自参数，页面不解析、不判断错误类型。
+ * ══════════════════ 本轮（待机页转场 · 登录页重构）的版式 ══════════════════
+ * ```
+ * ┌──────────────────────────────┐
+ * │        （青绿渐变满屏）        │  ← BrandBackdrop
+ * │                              │
+ * │        （白色标记 +          │  ← BrandHero：布局盒**和待机页完全一致**
+ * │     MindScope / 产品名）      │     图标只在原地由 0.76 放大到 1（`heroLogoStart`）
+ * │                              │
+ * │ ╭──────────────────────────╮ │  ← 白色表单层：从屏幕下方盖上来的"抽屉"
+ * │ │ 登录                      │ │     顶边 = `loginSheetTop`，圆角 28
+ * │ │ 使用已注册的账号继续        │ │
+ * │ │ [用户名]                  │ │
+ * │ │ [密码          显示]      │ │
+ * │ │ [      登录      ]        │ │
+ * │ │  还没有账号？立即注册       │ │
+ * │ │ 服务端 100.122.178.113    │ │
+ * │ ╰──────────────────────────╯ │
+ * └──────────────────────────────┘
+ * ```
  *
- * ══════════════════ 本轮（登录页重构）做了什么 ══════════════════
- * ① **失败一定有"动作"**：任何一次失败（本地校验不过也算）都会弹出
- *    `components/AuthAlert.ets` —— 从屏幕左侧之外弹性撞进来，停在输入框上方；
- *    连续失败会**重放**动画（卸载再挂载），不会因为"文案没变"就毫无反馈。
- * ② **把两类失败分开说**：弹窗的第三行是诊断行，明确写出
- *    "服务端已回应 HTTP 401"（→ 账号密码问题）还是"请求没有到达服务端"（→ 网络/地址问题）。
- * ③ **用户名先去空白再校验**：手机输入法很容易带一个尾随空格，
- *    而服务端是 `username.strip()` 后精确匹配 —— 端上先 trim，两端口径一致。
- * ④ **底部常驻服务端地址**：账号注册在 A 服务器、App 连 B 服务器时，
- *    401 的唯一解释就是"账号不在这一台"，这一行小字让这件事一眼可见。
- * ⑤ 输入框仍然是 `text + onChange` 的受控写法（本轮验证过：值会实时回写到 `@Local`），
- *    密码框保留「显示/隐藏」，因为"看不见自己输了什么"正是密码类 401 最难的排查点。
+ * 这样转场只需要两个动作：图标原地放大 + 白层从下方上滑。
+ * 没有整页缩放、没有交叉淡入，所以不会出现两套版式互相穿透的画面。
+ *
+ * ══════════════════ 交互上保留并加强了什么 ══════════════════
+ * ① **失败一定有"动作"**：任何一次失败（本地校验不过也算）都弹 `AuthAlert`，
+ *    连续失败会卸载再挂载重放动画，不会因为"文案没变"就毫无反馈；
+ * ② **两类失败分开说**：弹窗第三行明确写"服务端已回应 HTTP 401"（账号密码问题）
+ *    还是"请求没有到达服务端"（网络/地址问题）；
+ * ③ 用户名先去空白再校验（服务端是 strip 后精确匹配，两端口径一致）；
+ * ④ 密码框保留「显示/隐藏」，并在键盘上直接按"前往"就能提交（`onSubmit`）；
+ * ⑤ 输入框上方有标签，不再只靠 placeholder —— 填到一半时 placeholder 消失，
+ *    用户会忘记这一栏是用户名还是邮箱。
  */
 
 import { AuthRule } from '../network/AuthApi';
+import { curves } from '@kit.ArkUI';
 import { UiTheme } from '../common/UiTheme';
 import { LoginPageParam } from '../types/PageParams';
-import { AppCard } from '../components/AppCard';
-import { LogoPlaceholder } from '../components/LogoPlaceholder';
+import { BrandBackdrop } from '../components/BrandBackdrop';
+import { BrandHero } from '../components/BrandHero';
 import { ErrorRetryView } from '../components/ErrorRetryView';
 import { AuthAlert } from '../components/AuthAlert';
 
 /** 重放弹窗动画时"先卸载、再挂载"的间隔（ms）· 太短会被合批成同一次渲染 */
 const ALERT_REPLAY_GAP_MS: number = 24;
+
+/**
+ * 白层起跑延迟（毫秒）
+ *
+ * ★ 待机页刚把图标放大完、停 60ms 才切页，本页第一帧就是"图标已到位"的画面。
+ *   白层再等 40ms 起跑，观众能先看清那一下"停住"，然后表单才盖上来。
+ * ★ 不能等太久：超过 100ms 就会被读成"卡了一下"，而不是"故意的停顿"。
+ */
+const SHEET_START_DELAY_MS: number = 40;
+
+/**
+ * "整页上提"相对白层起跑的延迟（毫秒）
+ *
+ * ★ 白层上滑 460ms、上提 420ms，重叠 200ms：先看白层盖上来，盖到一半时整页
+ *   开始往上提，两个动作在结尾几乎同时收住，像一次连贯的落位。
+ */
+const LIFT_START_DELAY_MS: number = 200;
 
 @ComponentV2
 export struct LoginPage {
@@ -61,7 +92,7 @@ export struct LoginPage {
    * 已被用户"收起"的服务端错误快照
    *
    * 场景：服务端返回"用户名或密码错误"后，用户开始改密码，这条报错就该消失
-   * （否则看起来像"我的修改没生效"）。做法是**页面本地记下这条已展示过的文案**，
+   * （否则看起来像"我的修改没生效"）。做法是页面记下这条已展示过的文案，
    * 而不是回头去清 `AuthStore.errorMsg` —— 页面不回写 store，是本工程的纪律。
    */
   @Local dismissedError: string = '';
@@ -72,13 +103,43 @@ export struct LoginPage {
   @Local alertMessage: string = '';
   @Local alertHint: string = '';
 
+  // ── 转场状态 ──
+
+  /**
+   * 图标缩放 · 恒为 1
+   *
+   * ★ 保留这个字段是因为布局盒要以"登录页那一档"为准：待机页只画
+   *   `heroLogoStart`(0.84) 那一档，切页前**已经在待机页上**放大到 1（见
+   *   `Index.growStandbyLogoThenEnter`）。所以登录页接手时图标是最终尺寸，
+   *   这里不再有放大动画 —— 转场只剩"白层盖上来"这一拍。
+   */
+  @Local logoScale: number = 1;
+
+  /** 白层的位移 · 入场时从 +屏幕高度 滑到 0 */
+  @Local sheetOffset: number = 520;
+
+  /**
+   * 品牌区当前顶边 · 入场末尾从 `heroTop`(156) 上提到 `heroTopLifted`(96)
+   * ★ 必须和待机页共用起点（否则切页瞬间图标跳一下），终点才上提。
+   */
+  @Local heroTopNow: number = UiTheme.heroTop;
+
+  /**
+   * 白层当前顶边 · 入场末尾从 `loginSheetTop`(372) 上提到 `loginSheetTopLifted`(312)
+   * ★ 改的是布局高度（占位 `Row`），不是 translate —— translate 会把底边一起抬起。
+   */
+  @Local sheetTopNow: number = UiTheme.loginSheetTop;
+
+  /** 白层内容的淡入值 */
+  @Local sheetOpacity: number = 0;
+
   /** 任一来源的忙碌态 */
   @Computed
   get busy(): boolean {
     return this.pageParam.authBusy || this.submitting;
   }
 
-  /** 展示给用户的错误：本地校验提示优先于服务端返回的错误；已被收起的服务端错误不再显示 */
+  /** 展示给用户的错误：本地校验提示优先；已被收起的服务端错误不再显示 */
   @Computed
   get visibleError(): string {
     if (this.formError.length > 0) {
@@ -94,12 +155,6 @@ export struct LoginPage {
     return this.busy ? '登录中…' : '登录';
   }
 
-  /** 注册入口文案 */
-  @Computed
-  get registerLabel(): string {
-    return this.busy ? '注册中…' : '注册账号';
-  }
-
   /** 底部服务端地址行 · 空串则不显示（避免出现"服务端 "这种半截文案） */
   @Computed
   get serverLine(): string {
@@ -111,6 +166,7 @@ export struct LoginPage {
 
   aboutToAppear(): void {
     this.formError = '';
+    this.playEnter();
     // ★ 冷启动可能带着一条现成的提示（如"登录已过期，请重新登录"）：
     //   它是"用户必须知道"的信息，所以进页面就用同一种弹窗表达一次。
     const preset: string = this.pageParam.authError;
@@ -119,14 +175,48 @@ export struct LoginPage {
     }
   }
 
+  /**
+   * 入场：白层从下方滑上来 → 接着**整页往上提**（用户指定的收尾动作）
+   *
+   * ★ "图标慢慢放大"这一拍**不在这里**：它发生在待机页上
+   *   （`Index.growStandbyLogoThenEnter`）。顺序是：待机页把图标从 0.84 放到 1
+   *   → 停 60ms → 切到本页 → 白层上滑 → 整页上提。
+   * ★ 最后一拍是用户的明确要求：「动画的最后让白屏向上拉动，让图标上移」：
+   *   品牌区顶边 156→96、白层顶边 372→312，**同一位移**，所以两者间距不变，
+   *   观感是"整块版式被往上提了一格"，而表单区白白多出 60vp。
+   * ★ 上提与上滑重叠 200ms 起跑：完全串行会显得拖沓（总时长已经 1.4s 了）。
+   */
+  private playEnter(): void {
+    setTimeout((): void => {
+      this.getUIContext().animateTo({
+        duration: UiTheme.sheetEnterMs,
+        curve: curves.springMotion(0.46, 0.72)
+      }, (): void => {
+        this.sheetOffset = 0;
+      });
+    }, SHEET_START_DELAY_MS);
+
+    setTimeout((): void => {
+      this.getUIContext().animateTo({ duration: 260, curve: Curve.EaseOut }, (): void => {
+        this.sheetOpacity = 1;
+      });
+    }, SHEET_START_DELAY_MS + 120);
+
+    setTimeout((): void => {
+      this.getUIContext().animateTo({ duration: UiTheme.sheetLiftMs, curve: Curve.EaseOut }, (): void => {
+        this.heroTopNow = UiTheme.heroTopLifted;
+        this.sheetTopNow = UiTheme.loginSheetTopLifted;
+      });
+    }, SHEET_START_DELAY_MS + LIFT_START_DELAY_MS);
+  }
+
   // ── 失败弹窗 ──
 
   /**
    * 弹一次失败弹窗
    *
    * ★ 已经显示着的时候不能只改文案：动画已经播完了，用户会觉得"这次没反应"。
-   *   做法是先卸载、隔一帧再挂载 —— 组件重新 `aboutToAppear` 就一定重放动画
-   *   （属性复位由组件自己负责，见 `AuthAlert.playEnter`）。
+   *   做法是先卸载、隔一帧再挂载 —— 组件重新 `aboutToAppear` 就一定重放动画。
    */
   private showAlert(title: string, message: string, hint: string): void {
     this.alertTitle = title.length > 0 ? title : '登录失败';
@@ -159,7 +249,7 @@ export struct LoginPage {
     if (this.busy) {
       return;
     }
-    // ★ 手机输入法容易带尾随空格：服务端是 strip 后精确匹配，端上先去空白，两端口径一致
+    // ★ 手机输入法容易带尾随空格：服务端是 strip 后精确匹配，端上先去空白
     const name: string = this.userName.trim();
     const nameError: string = AuthRule.checkUsername(name);
     if (nameError.length > 0) {
@@ -202,7 +292,7 @@ export struct LoginPage {
     }
   }
 
-  /** 点「注册账号」：登录页与注册页相互独立，跳转交给窗口层 */
+  /** 点「立即注册」：登录页与注册页相互独立，跳转交给窗口层 */
   private goRegister(): void {
     if (this.busy) {
       return;
@@ -213,148 +303,161 @@ export struct LoginPage {
 
   // ── 界面 ──
 
-  /** 表单区（品牌 + 输入 + 两个按钮） */
+  /** 表单里的一个"标签 + 输入框"竖排 */
   @Builder
-  formSection() {
+  fieldLabel(label: string) {
+    Text(label)
+      .fontSize(UiTheme.fontSizeCaption)
+      .fontColor(UiTheme.textSecondary)
+      .width('100%')
+      .textAlign(TextAlign.Start)
+  }
+
+  /** 白色表单层的内容（标题 + 输入 + 按钮） */
+  @Builder
+  sheetBody() {
     Scroll() {
-      Column({ space: UiTheme.gapXl }) {
-        // ── ① 品牌区：图标占位 + 产品名 + 场景说明 ──
-        Column({ space: UiTheme.gapXl }) {
-          LogoPlaceholder()
+      // ★ 行距用 gapM(12) 而不是 gapL(16)：这台机器上白层只有约 480vp 高，
+      //   两个输入框 + 错误行 + 按钮已经填满，用 16 会把登录按钮压到可视区边缘。
+      Column({ space: UiTheme.gapM }) {
+        // ① 标题
+        Column({ space: UiTheme.gapXs }) {
+          Text('登录')
+            .fontSize(UiTheme.loginTitleSize)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(UiTheme.textPrimary)
+            .width('100%')
+            .textAlign(TextAlign.Start)
 
-          Column({ space: UiTheme.gapS }) {
-            Text('抑郁症智能辅助评估')
-              .fontSize(UiTheme.fontSizeTitle)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(UiTheme.textPrimary)
-              .width('100%')
-              .textAlign(TextAlign.Start)
-
-            Text('面向临床与研究场景')
-              .fontSize(UiTheme.fontSizeBody)
-              .fontColor(UiTheme.textSecondary)
-              .width('100%')
-              .textAlign(TextAlign.Start)
-          }
-          .width('100%')
-          .alignItems(HorizontalAlign.Start)
+          Text('使用已注册的账号继续')
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.textSecondary)
+            .width('100%')
+            .textAlign(TextAlign.Start)
         }
         .width('100%')
         .alignItems(HorizontalAlign.Start)
 
-        // ── ② 表单卡片：两个输入框 + 登录 + 注册 ──
-        AppCard({ title: '账号登录', subtitle: '请使用已注册的账号登录系统' }) {
-          Column({ space: UiTheme.gapL }) {
-            // 用户名
-            // ★ 输入框底取 `fillSoft`，不再用 `pageBackground`：页底本轮已从纯白改成浅灰，
-            //   卡内填充块若跟着页底走，就会在白卡里变成一块灰补丁（与卡片同色也一样看不清）。
-            //   浅灰填充自身已经划出边界，再叠一条描边就是双重收边，故一并去掉。
-            TextInput({ placeholder: '请输入用户名', text: this.userName })
-              .type(InputType.Normal)
-              .maxLength(AuthRule.usernameMaxLength)
-              .height(UiTheme.controlHeight)
-              .backgroundColor(UiTheme.fillSoft)
-              .borderRadius(UiTheme.cardRadius)
-              .fontSize(UiTheme.fontSizeBody)
-              .fontColor(UiTheme.textPrimary)
-              .placeholderColor(UiTheme.textSecondary)
-              .enabled(!this.busy)
-              .onChange((value: string) => {
-                this.userName = value;
-                this.onInputChanged();
-              })
+        // ② 用户名
+        this.fieldLabel('用户名')
+        TextInput({ placeholder: '手机号 / 邮箱 / 用户名', text: this.userName })
+          .type(InputType.Normal)
+          .maxLength(AuthRule.usernameMaxLength)
+          .height(UiTheme.controlHeight)
+          .backgroundColor(UiTheme.fillSoft)
+          .borderRadius(UiTheme.buttonRadius)
+          .fontSize(UiTheme.fontSizeBody)
+          .fontColor(UiTheme.textPrimary)
+          .placeholderColor(UiTheme.textSecondary)
+          .enabled(!this.busy)
+          .onChange((value: string) => {
+            this.userName = value;
+            this.onInputChanged();
+          })
 
-            // 密码（默认密文，右侧可切换明文）
-            Row({ space: UiTheme.gapS }) {
-              TextInput({ placeholder: '请输入密码', text: this.userPassword })
-                .type(this.passwordVisible ? InputType.Normal : InputType.Password)
-                .height(UiTheme.controlHeight)
-                .layoutWeight(1)
-                .backgroundColor(UiTheme.fillSoft)
-                .borderRadius(UiTheme.cardRadius)
-                .fontSize(UiTheme.fontSizeBody)
-                .fontColor(UiTheme.textPrimary)
-                .placeholderColor(UiTheme.textSecondary)
-                .enabled(!this.busy)
-                .onChange((value: string) => {
-                  this.userPassword = value;
-                  this.onInputChanged();
-                })
+        // ③ 密码（默认密文，右侧可切换明文；键盘"前往"直接提交）
+        this.fieldLabel('密码')
+        Row({ space: UiTheme.gapS }) {
+          TextInput({ placeholder: '请输入密码', text: this.userPassword })
+            .type(this.passwordVisible ? InputType.Normal : InputType.Password)
+            .height(UiTheme.controlHeight)
+            .layoutWeight(1)
+            .backgroundColor(UiTheme.fillSoft)
+            .borderRadius(UiTheme.buttonRadius)
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.textPrimary)
+            .placeholderColor(UiTheme.textSecondary)
+            .enterKeyType(EnterKeyType.Go)
+            .enabled(!this.busy)
+            .onChange((value: string) => {
+              this.userPassword = value;
+              this.onInputChanged();
+            })
+            .onSubmit(() => {
+              this.submit();
+            })
 
-              // ★ 保留「显示/隐藏」：密码框看不见内容，是 401 最难自查的一环
-              Text(this.passwordVisible ? '隐藏' : '显示')
-                .fontSize(UiTheme.fontSizeBody)
-                .fontColor(UiTheme.accent)
-                .width(44)
-                .textAlign(TextAlign.Center)
-                .onClick(() => {
-                  this.passwordVisible = !this.passwordVisible;
-                })
-            }
-            .width('100%')
-            .alignItems(VerticalAlign.Center)
-
-            // 错误提示（弹窗会消失，这一行保证信息不丢）
-            if (this.visibleError.length > 0) {
-              Text(this.visibleError)
-                .fontSize(UiTheme.fontSizeBody)
-                .fontColor(UiTheme.danger)
-                .width('100%')
-                .textAlign(TextAlign.Start)
-                .maxLines(4)
-                .textOverflow({ overflow: TextOverflow.Ellipsis })
-            }
-
-            // 登录（主按钮）
-            Button(this.submitLabel)
-              .width('100%')
-              .height(UiTheme.controlHeight)
-              .fontSize(UiTheme.fontSizeSection)
-              .fontColor(UiTheme.cardBackground)
-              .backgroundColor(UiTheme.primary)
-              .borderRadius(UiTheme.buttonRadius)
-              .enabled(!this.busy)
-              .onClick(() => {
-                this.submit();
-              })
-
-            // 注册（次按钮 · 跳转独立注册页）
-            Button(this.registerLabel)
-              .width('100%')
-              .height(UiTheme.controlHeight)
-              .fontSize(UiTheme.fontSizeSection)
-              .fontColor(UiTheme.accent)
-              .backgroundColor(Color.Transparent)
-              .borderWidth(1)
-              .borderColor(UiTheme.accent)
-              .borderRadius(UiTheme.buttonRadius)
-              .enabled(!this.busy)
-              .onClick(() => {
-                this.goRegister();
-              })
-          }
-          .width('100%')
+          // ★ 保留「显示/隐藏」：密码框看不见内容，是 401 最难自查的一环
+          Text(this.passwordVisible ? '隐藏' : '显示')
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.primary)
+            .width(44)
+            .height(UiTheme.controlHeight)
+            .textAlign(TextAlign.Center)
+            .onClick(() => {
+              this.passwordVisible = !this.passwordVisible;
+            })
         }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        // ④ 错误提示（弹窗会消失，这一行保证信息不丢）
+        if (this.visibleError.length > 0) {
+          Text(this.visibleError)
+            .fontSize(UiTheme.fontSizeBody)
+            .fontColor(UiTheme.danger)
+            .width('100%')
+            .textAlign(TextAlign.Start)
+            .maxLines(4)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+        }
+
+        // ⑤ 登录（主按钮）
+        Button(this.submitLabel)
+          .width('100%')
+          .height(UiTheme.controlHeight)
+          .fontSize(UiTheme.fontSizeSection)
+          .fontColor(UiTheme.onBrand)
+          .backgroundColor(UiTheme.primary)
+          .borderRadius(UiTheme.buttonRadius)
+          .enabled(!this.busy)
+          .margin({ top: UiTheme.gapXs })
+          .onClick(() => {
+            this.submit();
+          })
+
+        // ★ 「还没有账号？立即注册」搬到了 `sheetFooter`：它留在 Scroll 里时，
+        //   一旦出现行内错误行（"密码至少 6 位"），表单变高就会把它顶出可视区
+        //   （实测被裁掉一半）。放到底部常驻区，任何时候都能点到。
       }
       .width('100%')
+      .alignItems(HorizontalAlign.Start)
       .padding({
         left: UiTheme.pagePadding,
         right: UiTheme.pagePadding,
-        top: UiTheme.pagePadding,
-        bottom: UiTheme.gapXl
+        top: UiTheme.gapM,
+        bottom: UiTheme.gapL
       })
-      .alignItems(HorizontalAlign.Start)
     }
-    .layoutWeight(1)
     .width('100%')
+    .layoutWeight(1)
     .scrollBar(BarState.Off)
     .align(Alignment.Top)
+    .opacity(this.sheetOpacity)
   }
 
-  /** 底部：连接失败的重试出口 + 当前服务端地址 */
+  /** 白层底部：注册入口 + 连接失败的重试出口 + 当前服务端地址 */
   @Builder
-  footerSection() {
+  sheetFooter() {
     Column({ space: UiTheme.gapS }) {
+      // 注册入口常驻在这里（不放进 Scroll）：行内错误行一出现，表单就会变高，
+      // 留在 Scroll 里的入口会被顶出可视区 —— 这是真机上踩到的。
+      Row({ space: UiTheme.gapXs }) {
+        Text('还没有账号？')
+          .fontSize(UiTheme.fontSizeBody)
+          .fontColor(UiTheme.textSecondary)
+
+        Text('立即注册')
+          .fontSize(UiTheme.fontSizeBody)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(UiTheme.primary)
+          .onClick(() => {
+            this.goRegister();
+          })
+      }
+      .width('100%')
+      .justifyContent(FlexAlign.Center)
+
       // 连接失败时的重试出口（规范：网络失败时提供重试按钮）
       if (this.pageParam.retryMessage.length > 0) {
         ErrorRetryView({
@@ -386,30 +489,71 @@ export struct LoginPage {
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
-      // ── 页面本体 ──
+      // ① 品牌底色（铺满，含状态栏）
+      BrandBackdrop()
+
+      // ② 品牌区：起点与待机页**完全一致**（同一个布局盒 + 同一个 heroTop），
+      //   入场末尾由 `heroTopNow` 上提到 heroTopLifted（"图标上移"那一拍）
       Column() {
-        this.formSection()
-        this.footerSection()
+        BrandHero({
+          logoWidth: UiTheme.heroLogoWidth,
+          logoScale: this.logoScale,
+          textOpacity: 1
+        })
+      }
+      .width('100%')
+      .margin({ top: this.heroTopNow })
+
+      // ③ 白层：从 loginSheetTop 铺到底，入场时从下方滑上来
+      Column() {
+        // 品牌区占位（白层不能盖住图标，占位高度就是图标的落脚点）
+        // ★ 高度跟着 `sheetTopNow` 走：入场末尾它变小 60vp，白层顶边就"拉上来"了，
+        //   而底边始终贴着屏幕底，所以表单区实打实多出 60vp。
+        Row()
+          .width('100%')
+          .height(this.sheetTopNow)
+
+        Column() {
+          this.sheetBody()
+          this.sheetFooter()
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .backgroundColor(UiTheme.cardBackground)
+        .borderRadius({ topLeft: UiTheme.loginSheetRadius, topRight: UiTheme.loginSheetRadius })
+        // ★ 必须裁切：圆角只作用在自身背景上，内部 Scroll 的内容仍会画成直角
+        .clip(true)
+        // 白层要盖到导航栏底下，否则导航栏那一条会露出青绿
+        .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.BOTTOM])
       }
       .width('100%')
       .height('100%')
-      .alignItems(HorizontalAlign.Start)
-      .backgroundColor(UiTheme.pageBackground)
+      .translate({ y: this.sheetOffset })
 
-      // ── 失败的弹性警告弹窗（覆盖在最上层，不占布局） ──
-      if (this.alertVisible) {
-        AuthAlert({
-          title: this.alertTitle,
-          message: this.alertMessage,
-          hint: this.alertHint,
-          onClose: () => {
-            this.alertVisible = false;
-          }
-        })
+      // ④ 失败的弹性警告弹窗（覆盖在最上层，不占布局）
+      //
+      // ★ 外面必须再套一层 `.position({x:0,y:0})`：实测直接把它当 Stack 的子节点时，
+      //   它一出现会把**同层兄弟（品牌区、白层）整体往下推**约 104vp，底部的
+      //   "还没有账号？立即注册" 直接被挤出屏幕。`.position` 是绝对定位语义，
+      //   挂上去之后它就完全不参与父级排版，弹窗出现/收起都不再推动下面任何东西。
+      Column() {
+        if (this.alertVisible) {
+          AuthAlert({
+            title: this.alertTitle,
+            message: this.alertMessage,
+            hint: this.alertHint,
+            onClose: () => {
+              this.alertVisible = false;
+            }
+          })
+        }
       }
+      .width('100%')
+      .position({ x: 0, y: 0 })
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(UiTheme.pageBackground)
+    // 兜底底色：万一渐变还没铺上（首帧），也不能闪一下浅灰
+    .backgroundColor(UiTheme.brandEnd)
   }
 }

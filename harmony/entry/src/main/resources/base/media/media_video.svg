@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <!-- 素材类型 · 视频（选中视频后卡片前的类型图标；也用于"播放器下轮实现"的大占位块）
+       颜色烤进文件：主色 #0D9488（UiTheme.primary） -->
+  <g fill="none" stroke="#0D9488" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <!-- 机身 -->
+    <rect x="2.6" y="7.1" width="12.4" height="9.8" rx="2.4"/>
+    <!-- 取景器楔形 -->
+    <path d="M15.2 12.6 L20.6 9.6 V14.6 Z"/>
+  </g>
+</svg>
