@@ -63,6 +63,8 @@
 | BUG-22 | 登录页按返回键整屏纯白 | 根页面被弹出后 Navigation 露出空根内容 | ✅ 已修 |
 | BUG-23 | 分析完成后热力图 / 帧数不刷新 | `@Computed` 首次求值未读到 `@Trace sessions` | ✅ 已修 |
 | BUG-24 | 患者命名对话框按“确定”崩溃 | V2 页面里 `@CustomDialog` 内部 controller 取不到注入值 | ✅ 已修 |
+| BUG-27 | 选完素材**不会自动上传**，必须再点一次「开始分析」 | `@Computed` 的 `busy` 在渲染外读到上一帧缓存值 `true`，把自动上传挡掉 | ✅ 已修 |
+| BUG-28 | 历史报告里视频永远只有「视」字占位，没有首帧图 | `media.py` 用了未导入的 `MEDIA_DIR`，`NameError` 被 `try/except` 静默吞掉 | ✅ 已修 |
 
 > 详细条目按轮次分组在下面各节；编号顺序与正文顺序不一致，按上表定位即可。
 > 编译验证基线：`bash harmony/scripts/build.sh` → **BUILD SUCCESSFUL**（2026-10-18）。
@@ -1242,5 +1244,88 @@ backup_db.py                                              → backups/depression
                                                             快照可读：8 users / 130 reports
 git status                                                → 运行库与 backups/ 均不再出现
 ```
+
+---
+
+## BUG-27 · 选完素材不自动上传（`@Computed` 在渲染外返回缓存值）⭐⭐ BUG-11 的“另一半”
+
+**现象**
+2026-10-21 模拟器实测：选择素材页填好患者名 → 点素材卡片 → 系统相册选图 → 按「完成」。
+页面**确实**出现了预览、「患者：xxx」和「开始分析」按钮（BUG-11 修好的部分没退化），
+**但不上传、不出栈**；必须再手动点一次按钮才发出 `POST /api/upload/image`。
+hilog 对照：`23:44:28.198 相册素材已复制到沙箱` 之后**没有任何 POST**，
+直到 `23:45:03.134` 手动点击才出现唯一一条上传请求。
+
+**根因**
+自动链路是 `requestPick().then(picked => this.submit())`，回调在**渲染之外**执行；
+而 `submit()` 第一行是 `if (this.busy) return`，
+`busy` 是 `@Computed get busy() { return this.pageParam.uploading || this.submitting; }`。
+`@Computed` 只在渲染期刷新 —— 此时它仍是"等待系统选择器"那一帧的缓存值 `true`
+（那一帧 `submitting = true`），于是每一轮自动上传都被它自己挡掉。
+
+实测日志一行证明：
+
+```text
+[MediaPicker] submit busy=true submitting=false uploading=false hasPicked=true
+```
+
+同一个方法体里，原始字段是 `false`，`@Computed` 是 `true`。把 `if (this.busy)` 换成读原始字段的
+`isBusyNow()` 之后，同一位置变成 `busy=false`，POST 立刻发出。
+
+**修法**
+| 位置 | 改动 |
+|---|---|
+| `MediaPickerPage.ets` | 新增 `private isBusyNow(): boolean { return this.submitting \|\| this.pageParam.uploading; }`，`requestPick()` / `submit()` 的判断全改用它 |
+| 同上 | `@Computed busy` 保留，只服务 `build()` 里的 `.enabled(!this.busy)` 与按钮文案 |
+
+**防复发规则**
+> `@Computed` 只给 `build()` 用。事件回调、`then/catch`、`setTimeout` 里判断状态，
+> **一律读原始字段**。与 BUG-23（`@Computed` 首次求值读不到 `@Trace`）是同一族坑，
+> 判断标准只有一条：这段代码**是不是在渲染期**跑的。
+
+**验证（2026-10-21 23:48，模拟器）**
+填 `AutoTest02` → 选图 → 自动 `POST /api/upload/image?patient=AutoTest02` → `← 200`（约 10 s）
+→ `[MediaStore] 素材已上传 · id=61 type=image · patient=AutoTest02`
+→ 自动出栈回工作台并完成推理（BDI 11.7 / 已完成）；服务端库 `media_assets.id=61` 的 `patient` 字段为 `AutoTest02`。
+
+---
+
+## BUG-28 · 视频首帧图永远生成不出来（`MEDIA_DIR` 未导入 + 异常被静默吞掉）
+
+**现象**
+历史报告、素材库里所有视频卡片都只有「视」字占位，没有首帧照片。
+服务器 `media/` 目录有 7 个视频文件，却**一个 `*.thumb.jpg` 都没有**。
+journal 每次 `GET /api/media/list` 都打印：
+
+```text
+thumbnail_url = create_video_thumbnail(video_path, MEDIA_DIR)
+NameError: name 'MEDIA_DIR' is not defined
+生成视频首帧失败 · media_id=55 / 53 / 3
+```
+
+**根因**
+`dashboard/backend/routers/media.py` 的 `list_media()` 用了 `MEDIA_DIR`，
+但文件头只写了 `from config import FRAMES_PER_BATCH`（media.py:10），没有导入 `MEDIA_DIR`。
+334db41「隔离视频封面异常，避免素材列表返回 500」加的 `try/except` 把这个 `NameError`
+吞成了 `thumbnail_url = ''` —— 接口一直 200，封面因此**永远**生成不出来。
+`cv2` 本身没问题：服务器 venv 里直接 `VideoCapture('media/anonymous_001.mp4')` → opened=True、read=True、shape (480,640,3)。
+
+**修法**
+`from config import FRAMES_PER_BATCH, MEDIA_DIR`；服务器同一行同步修改后
+`systemctl --user restart mindscope.service`，再调一次 `GET /api/media/list` 让它按既有逻辑
+懒生成并回写 `media_assets.thumbnail_url`（不是批量脚本，也没有改表结构）。
+
+**验证（2026-10-21 23:49，服务器 + 模拟器）**
+- 服务器：media 55 → `/media/3b706ccd….thumb.jpg`、53 → `/media/5641d024….thumb.jpg`、
+  3 → `/media/anonymous_001.thumb.jpg`，DB 对应行已回写。
+- 模拟器历史报告页：`203_1_Northwind`、`ded9a45a…`、`0d53bffc…` 等视频卡片显示真实首帧封面。
+
+> media id=2「患者B_随访记录.mp4」仍无封面：DB 里 `file_path=/Users/guoshuping/…/patient_b.mp4`
+> 指向服务器不存在的本地路径（`resolve_media_path()` 返回 None），属历史死行，与本次修复无关，
+> 需要单独清理该行或补传文件。
+
+**涉及文件**
+`dashboard/backend/routers/media.py`（**本地与服务器两边都已改，尚未提交**）
+
 
 

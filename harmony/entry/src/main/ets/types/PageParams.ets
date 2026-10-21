@@ -465,8 +465,15 @@ export class MediaPickerPageParam extends PageParam {
     return Promise.resolve(false);
   };
 
-  /** 点「开始上传」· 窗口层调 MediaStore.uploadMedia；返回 true 表示上传成功（已跳转） */
-  public onUpload: () => Promise<boolean> = (): Promise<boolean> => {
+  /**
+   * 点「开始上传」· 窗口层调 MediaStore.uploadMedia；返回 true 表示上传成功（已跳转）
+   *
+   * @param patient 患者姓名（页内输入框的值，已 trim；空串 = 不命名）
+   *    ★ 为什么不放在本参数类里：姓名只在这一页输入、只在提交那一刻用到，
+   *      放页面 `@Local` 即可；而 `@Param` 对象由窗口层持有，页内直接写会让
+   *      "谁拥有输入值"变得含糊（尤其是重进页面要清空的场景）。
+   */
+  public onUpload: (patient: string) => Promise<boolean> = (patient: string): Promise<boolean> => {
     return Promise.resolve(false);
   };
 

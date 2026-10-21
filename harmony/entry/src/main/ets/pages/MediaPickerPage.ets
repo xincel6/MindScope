@@ -5,12 +5,12 @@
  * ```ts
  * const param = new MediaPickerPageParam();
  * param.onPickRequest = async () => { ... };   // 窗口层打开系统选择器
- * param.onUpload = async () => { ... };        // 窗口层上传并出栈回工作台
+ * param.onUpload = async (patient: string) => { ... }; // 窗口层上传（带患者名）并出栈回工作台
  * param.pickedName = 'interview.mp4';
  * ```
  *
- * 布局：① 选择卡片（类型图标用 SVG：加图 / 图片 / 视频）② 已选素材预览 ③ 上传状态（进度 / 错误） ④ 主按钮 ⑤ 格式说明。
- * 页面自己**只有**一个本地状态：`submitting`（回调返回前的兜底防连点）。
+ * 布局：⓪ 患者姓名（可选）① 选择卡片 ② 已选素材预览 ③ 上传状态（进度 / 错误） ④ 主按钮 ⑤ 格式说明。
+ * 页面自己的本地状态只有两个：`submitting`（回调返回前的兜底防连点）与 `patientName`。
  * 其余全部来自参数 —— 因为"选中的素材"属于业务数据，应由窗口层持有。
  *
  * ══════════════════ ★★ 为什么"选完就自动开始"（BUG-11）══════════════════
@@ -26,12 +26,14 @@
  *      用户的心智链路"选完即开始分析"不用再点第二次；
  *   ③ 主按钮保留：上传失败时它就是**重试**入口（此时 `hasPicked` 仍为 true）。
  *
- * ★ 页面的 `busy` 同时看参数里的 `uploading` 与本地 `submitting`：
+ * ★ 页面的忙碌状态同时看参数里的 `uploading` 与本地 `submitting`：
  *   前者是权威来源（窗口层正在上传），后者只负责"回调还没返回"的那一小段时间，
  *   避免用户在系统选择器弹出前连点两下。
+ * ★ 自动上传链路里**不能读 `@Computed` 的 `busy`**，原因见 `isBusyNow()` 的注释。
  */
 
 import { UiTheme } from '../common/UiTheme';
+import { Logger } from '../common/Logger';
 import { MediaPickerPageParam } from '../types/PageParams';
 import { PageHeader } from '../components/PageHeader';
 import { RippleCard } from '../components/RippleCard';
@@ -45,10 +47,32 @@ export struct MediaPickerPage {
   /** 调回调期间按钮禁用，避免连点弹出两次系统选择器 */
   @Local submitting: boolean = false;
 
-  /** 是否处于忙碌（参数里的 uploading 是权威来源） */
+  /**
+   * 患者姓名（可选）· 提交时随上传一起带给窗口层
+   *
+   * ★ 为什么放在这一页而不是参数类：它只在这一页存活、只在 `onUpload` 那一刻被读取，
+   *   重进页面本来就该清空 —— 用 `@Local` 语义最直白。
+   * ★ 页面不会等它非空才上传：素材选完就自动上传（见 BUG-11），
+   *   所以输入框放在最上面，用户先看到"可以命名"，再点下面的素材卡片。
+   */
+  @Local patientName: string = '';
+
+  /** 是否处于忙碌（仅用于 UI 的禁用与样式） */
   @Computed
   get busy(): boolean {
     return this.pageParam.uploading || this.submitting;
+  }
+
+  /**
+   * 逻辑分支用的忙碌判定 · 读**原始字段**，不要读上面的 `busy`
+   *
+   * ★ 坑（实机定位）：`@Computed` 只在渲染期刷新。`requestPick()` 的 `.then` 回调
+   *   在渲染之外执行，此时 `busy` 还是"等待选择器"那一帧的缓存值 `true`，
+   *   于是 `submit()` 的第一行 `if (this.busy) return` 把自动上传永久挡掉 ——
+   *   表现就是"选完素材后页面停在已选状态，必须手动再点一次开始分析"。
+   */
+  private isBusyNow(): boolean {
+    return this.submitting || this.pageParam.uploading;
   }
 
   /** 主按钮文案 */
@@ -68,13 +92,15 @@ export struct MediaPickerPage {
    * ★ 用户取消（回调返回 false）则什么都不做：取消不是错误，不能弹红字。
    */
   private requestPick(): void {
-    if (this.busy) {
+    if (this.isBusyNow()) {
+      Logger.i('[MediaPicker] requestPick 被 busy 挡下');
       return;
     }
     this.submitting = true;
     this.pageParam.onPickRequest()
       .then((picked: boolean) => {
         this.submitting = false;
+        Logger.i(`[MediaPicker] 选择器返回 picked=${picked} hasPicked=${this.pageParam.hasPicked}`);
         // ★ 再确认一次 `hasPicked`：回调说"选到了"但参数没被回填时，
         //   直接进 submit() 会因为它自己的分支又去开一次系统选择器。
         if (picked && this.pageParam.hasPicked) {
@@ -82,13 +108,15 @@ export struct MediaPickerPage {
         }
       })
       .catch(() => {
+        Logger.e('[MediaPicker] 选择回调抛异常（详情见窗口层日志）');
         this.submitting = false;
       });
   }
 
   /** 点「开始分析」· 交给窗口层上传 + 返回工作台 */
   private submit(): void {
-    if (this.busy) {
+    Logger.i(`[MediaPicker] submit busy=${this.isBusyNow()} uploading=${this.pageParam.uploading} hasPicked=${this.pageParam.hasPicked} patient="${this.patientName}"`);
+    if (this.isBusyNow()) {
       return;
     }
     if (!this.pageParam.hasPicked) {
@@ -96,11 +124,13 @@ export struct MediaPickerPage {
       return;
     }
     this.submitting = true;
-    this.pageParam.onUpload()
+    this.pageParam.onUpload(this.patientName.trim())
       .then((ok: boolean) => {
         this.submitting = false;
+        Logger.i(`[MediaPicker] 上传回调返回 ok=${ok} errorMsg="${this.pageParam.errorMsg}"`);
       })
       .catch(() => {
+        Logger.e('[MediaPicker] 上传回调抛异常（详情见窗口层日志）');
         this.submitting = false;
       });
   }
@@ -134,6 +164,43 @@ export struct MediaPickerPage {
 
       Scroll() {
         Column({ space: UiTheme.gapL }) {
+          // ── ⓪ 患者姓名（可选）· 上传时随请求带给服务端 ──
+          // ★ 放在素材卡片之前：素材一选完就自动上传，用户来不及回头补名字
+          Column({ space: UiTheme.gapS }) {
+            Text('患者姓名')
+              .fontSize(UiTheme.fontSizeSection)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(UiTheme.textPrimary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+
+            TextInput({ text: this.patientName, placeholder: '选填，例如：张三' })
+              .type(InputType.Normal)
+              .maxLength(64)
+              .height(UiTheme.controlHeight)
+              .fontSize(UiTheme.fontSizeBody)
+              .fontColor(UiTheme.textPrimary)
+              .placeholderColor(UiTheme.textSecondary)
+              .backgroundColor(UiTheme.fillSoft)
+              .borderRadius(UiTheme.cardRadius)
+              .padding({ left: UiTheme.gapM, right: UiTheme.gapM })
+              .enabled(!this.pageParam.uploading)
+              .onChange((value: string) => {
+                this.patientName = value;
+              })
+
+            Text('留空则不命名，之后可在素材库补填')
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.textSecondary)
+              .width('100%')
+              .textAlign(TextAlign.Start)
+          }
+          .width('100%')
+          .padding(UiTheme.cardPadding)
+          .backgroundColor(UiTheme.cardBackground)
+          .borderRadius(UiTheme.cardRadius)
+          .alignItems(HorizontalAlign.Start)
+
           // ── ① 选择卡片：整卡可点，等价于点"选择/重新选择" ──
           RippleCard({
             onTap: () => {
@@ -232,6 +299,15 @@ export struct MediaPickerPage {
                   .textOverflow({ overflow: TextOverflow.Ellipsis })
                   .width('100%')
                   .textAlign(TextAlign.Start)
+
+                // 命名会随上传写进服务端，这里回显让用户确认自己填对了
+                if (this.patientName.trim().length > 0) {
+                  Text(`患者：${this.patientName.trim()}`)
+                    .fontSize(UiTheme.fontSizeBody)
+                    .fontColor(UiTheme.primary)
+                    .width('100%')
+                    .textAlign(TextAlign.Start)
+                }
               }
               .width('100%')
               .alignItems(HorizontalAlign.Start)

@@ -686,8 +686,8 @@ export struct MainPage {
     this.pickerParam.onPickRequest = async (): Promise<boolean> => {
       return await this.pickMedia();
     };
-    this.pickerParam.onUpload = async (): Promise<boolean> => {
-      return await this.uploadPicked();
+    this.pickerParam.onUpload = async (patient: string): Promise<boolean> => {
+      return await this.uploadPicked(patient);
     };
 
     // ── 我的页 ──
@@ -810,13 +810,15 @@ export struct MainPage {
    * 顺序不能变：**先记当前任务再启动分析**，否则 WS 的第一帧可能在任务登记之前到达，
    * `syncCurrentTask()` 会因为"还没有任务"而直接返回，工作台就看不到进度。
    *
+   * ★ 患者名来自选择页顶部的输入框（`onUpload(patient)`）。空串 = 不命名，
+   *   之后可在素材库「修改所属患者」补填（同一个 `PUT /api/media/{id}/patient`）。
    * ★ 本轮（主页重构）不再跳转分析详情页：选择页的使命结束后直接 `pop()` 回工作台，
    *   工作台 hero 立刻显示新任务的实时进度。这样"上传 → 看到分析"只隔一次出栈，
    *   用户也不会落在一个需要再按返回的详情页上。
    * ★ 出栈前先清空工作台 focus：否则上一次固定在历史素材上的查看目标会挡住新任务。
    * ★ 栈深回到 1 时（用户已按返回）不再 pop，避免误弹工作台/别的页签。
    */
-  private async uploadPicked(): Promise<boolean> {
+  private async uploadPicked(patient: string): Promise<boolean> {
     const media: PickedMediaModel | null = this.picked;
     if (media === null) {
       this.pickerParam.errorMsg = '请先选择素材';
@@ -845,7 +847,14 @@ export struct MainPage {
       mimeType: media.mimeType
     };
     const app: AppStore = AppStore.get();
-    const uploaded: MediaItemModel | null = await app.media().uploadMedia(spec);
+    const patientName: string = patient.trim();
+    let uploaded: MediaItemModel | null = null;
+    if (patientName.length > 0) {
+      // 带患者名走 query 参数（后端 `patient` ≤64 字符）；失败回退由 store 统一处理
+      uploaded = await app.media().uploadMediaWithPatient(spec, patientName);
+    } else {
+      uploaded = await app.media().uploadMedia(spec);
+    }
     app.sync();
     this.pickerParam.uploading = false;
 
