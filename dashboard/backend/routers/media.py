@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from config import FRAMES_PER_BATCH
+from config import FRAMES_PER_BATCH, MEDIA_DIR
 from database import get_db
 from deps import get_current_user
 from media_paths import media_file_name, resolve_media_path
