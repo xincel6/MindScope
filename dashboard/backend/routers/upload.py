@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import uuid
 import shutil
 from pathlib import Path
@@ -15,6 +16,7 @@ from models import MediaAsset, MediaType, User
 from services.video_thumbnail import create_video_thumbnail
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".mp4", ".avi", ".mov", ".webm"}
 
@@ -49,7 +51,12 @@ async def upload_image(
 
     thumbnail_url = ""
     if media_type == MediaType.video:
-        thumbnail_url = await asyncio.to_thread(create_video_thumbnail, dest, MEDIA_DIR)
+        try:
+            thumbnail_url = await asyncio.to_thread(create_video_thumbnail, dest, MEDIA_DIR)
+        except Exception:
+            # 首帧只是列表展示增强，不能导致视频本身上传失败。
+            logger.exception("上传视频后生成首帧失败 · file=%s", unique_name)
+            thumbnail_url = ""
 
     # Create DB record
     # ★ 只存文件名，不存绝对路径：depression.db 会随仓库/备份在 Windows 与 Linux

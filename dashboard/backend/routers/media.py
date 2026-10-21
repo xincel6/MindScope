@@ -1,5 +1,5 @@
-import asyncio
 import base64
+import logging
 
 import cv2
 import numpy as np
@@ -25,6 +25,7 @@ from services.inference import average_heatmaps, lmtformer_inference
 from services.video_thumbnail import create_video_thumbnail
 
 router = APIRouter(prefix="/api")
+logger = logging.getLogger(__name__)
 
 
 @router.get("/media/list", response_model=MediaListOut)
@@ -43,14 +44,18 @@ async def list_media(
         fname = media_file_name(a.file_path)
         thumbnail_url = a.thumbnail_url or ""
         if a.type.value == "video" and not thumbnail_url:
-            video_path = resolve_media_path(a.file_path)
-            if video_path is not None:
-                thumbnail_url = await asyncio.to_thread(
-                    create_video_thumbnail, video_path, MEDIA_DIR
-                )
-                if thumbnail_url:
-                    a.thumbnail_url = thumbnail_url
-                    thumbnails_changed = True
+            try:
+                video_path = resolve_media_path(a.file_path)
+                if video_path is not None:
+                    # 封面是增强信息：生成失败只能影响这一条视频，
+                    # 不能让整个素材库接口变成 500。
+                    thumbnail_url = create_video_thumbnail(video_path, MEDIA_DIR)
+                    if thumbnail_url:
+                        a.thumbnail_url = thumbnail_url
+                        thumbnails_changed = True
+            except Exception:
+                logger.exception("生成视频首帧失败 · media_id=%s", a.id)
+                thumbnail_url = ""
         items.append(MediaItemOut(
             id=str(a.id),
             name=a.name,
@@ -63,7 +68,14 @@ async def list_media(
         ))
 
     if thumbnails_changed:
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            logger.exception("保存视频首帧地址失败 · 本次仍然返回已生成的封面")
+            try:
+                await db.rollback()
+            except Exception:
+                logger.exception("回滚视频首帧数据库事务失败")
     return MediaListOut(items=items)
 
 
