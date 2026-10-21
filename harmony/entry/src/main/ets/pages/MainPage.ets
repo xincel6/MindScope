@@ -406,9 +406,10 @@ export struct MainPage {
    * 选完文件后带上患者名一起上传。
    */
   private startUploadFlow(): void {
+    // 上传路径必填：留空的话素材库/历史报告只能显示哈希文件名（BUG-29）
     this.promptPatientName('', '为素材命名所属患者', (patient: string) => {
       this.pickAndUpload(patient);
-    });
+    }, true);
   }
 
   /** 重命名流程：弹输入框回填当前患者名，确认后调 renamePatient */
@@ -430,11 +431,13 @@ export struct MainPage {
    *   `TypeError: Cannot read property close of undefined` 并把应用打崩（真机实测）。
    *   所以确认/取消都回调到页面，由页面统一 `closePatientDialog()`。
    */
-  private promptPatientName(initial: string, title: string, onConfirm: (patient: string) => void): void {
+  private promptPatientName(initial: string, title: string, onConfirm: (patient: string) => void,
+    required: boolean = false): void {
     this.patientDialogCtrl = new CustomDialogController({
       builder: PatientNameDialog({
         title: title,
         initial: initial,
+        required: required,
         onConfirm: (patient: string): void => {
           this.closePatientDialog();
           onConfirm(patient);
@@ -471,7 +474,7 @@ export struct MainPage {
         return;
       }
       const uri: string = uris[0];
-      const file: UploadFileSpec = this.buildUploadSpec(uri);
+      const file: UploadFileSpec = this.buildUploadSpec(uri, patient);
       const res: ActionResultModel = patient.length > 0
         ? await AppStore.get().media().uploadImageWithPatient(file, patient)
         : await AppStore.get().media().uploadImage(file);
@@ -484,8 +487,31 @@ export struct MainPage {
     }
   }
 
+  /**
+   * 上传文件名：有患者名时规范成「患者名_时间戳.ext」
+   *
+   * ★ 为什么改文件名：相册/微信保存来的文件常是
+   *   `3bd6295303d765800e6260b7a37ce31d.jpg` 这种哈希名，素材库在没有患者名时
+   *   只能显示它，看起来就是「乱码」（BUG-29）。带上患者名后，即使 patient
+   *   字段在某个环节丢了，名字里也还认得出是谁。
+   * ★ 时间戳保证同一患者多次上传不会同名覆盖。
+   */
+  private uploadFileName(originalName: string, patient: string): string {
+    const name: string = patient.trim();
+    if (name.length === 0) {
+      return originalName;
+    }
+    const dot: number = originalName.lastIndexOf('.');
+    const ext: string = dot > 0 ? originalName.substring(dot) : '.jpg';
+    const now: Date = new Date();
+    const pad = (n: number): string => (n < 10 ? `0${n}` : `${n}`);
+    const stamp: string = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`
+      + `_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+    return `${name}_${stamp}${ext}`;
+  }
+
   /** 从相册 URI 构造上传文件描述（copy 到沙箱后再传，规避跨应用访问权限） */
-  private buildUploadSpec(uri: string): UploadFileSpec {
+  private buildUploadSpec(uri: string, patient: string): UploadFileSpec {
     let filePath: string = uri;
     let fileName: string = 'upload.jpg';
     let mimeType: string = 'image/jpeg';
@@ -510,8 +536,9 @@ export struct MainPage {
       this.log.e('复制上传文件到沙箱失败，退回原始 URI', err as Object);
     }
     const spec: UploadFileSpec = {
+      // 沙箱副本沿用原文件名（路径安全），只有上传文件名带患者名
       filePath: filePath,
-      fileName: fileName,
+      fileName: this.uploadFileName(fileName, patient),
       mimeType: mimeType
     };
     return spec;
@@ -558,7 +585,7 @@ export struct MainPage {
     }
     this.selectedMediaId = item.id;
     const app: AppStore = AppStore.get();
-    app.setCurrentTask(item.id, item.name, item.type);
+    app.setCurrentTask(item.id, app.mediaLabel(item.id, item.name), item.type);
     app.startAnalysis(item.id);
     this.refreshAfterAction();
     this.pushTab(MainTab.workbench);
@@ -570,7 +597,7 @@ export struct MainPage {
       return;
     }
     const item: MediaItemModel | null = AppStore.get().findMedia(mediaId);
-    const name: string = item === null ? '该素材' : item.name;
+    const name: string = item === null ? '该素材' : AppStore.get().mediaLabel(item.id, item.name);
     this.getUIContext().showAlertDialog({
       title: '删除素材',
       message: `确定删除「${name}」吗？删除后不可恢复。`,
@@ -592,7 +619,19 @@ export struct MainPage {
   private async doDeleteMedia(mediaId: string): Promise<void> {
     this.deletingMediaId = mediaId;
     try {
-      const res: ActionResultModel = await AppStore.get().media().deleteMedia(mediaId);
+      const app: AppStore = AppStore.get();
+      const res: ActionResultModel = await app.media().deleteMedia(mediaId);
+      // ★ 必须 sync：MediaStore 换了一整个 items 数组，而 AppStore.mediaItems 还是旧引用，
+      //   不镜像的话素材库卡片会一直留在页面上（BUG-30）
+      app.sync();
+      if (res.ok) {
+        // 服务端删除时已级联删掉该素材的报告，本地也重拉一次，
+        // 否则历史报告页还会挂着这一条
+        await app.forgetMedia(mediaId);
+        await app.loadAllReports();
+        // 统计页的口径也变了（分析次数 / 素材总数 / 分布），一起重拉
+        await app.refreshStats();
+      }
       this.refreshAfterAction();
       this.toast(res.message);
     } catch (err) {
@@ -843,7 +882,7 @@ export struct MainPage {
 
     const spec: UploadFileSpec = {
       filePath: media.uploadPath,
-      fileName: media.fileName,
+      fileName: this.uploadFileName(media.fileName, patient),
       mimeType: media.mimeType
     };
     const app: AppStore = AppStore.get();
@@ -865,7 +904,8 @@ export struct MainPage {
     }
 
     // ① 任务登记（先于 WS：否则第一帧可能在任务登记之前到达，工作台就看不到进度）
-    app.setCurrentTask(uploaded.id, uploaded.name, uploaded.type);
+    //    标题用「患者名优先」，见 BUG-29
+    app.setCurrentTask(uploaded.id, app.mediaLabel(uploaded.id, uploaded.name), uploaded.type);
 
     // ② 启动分析（WS）。失败也不阻断返回 —— 工作台 hero 会把错误显示出来
     //    （带「重新分析该素材」出口）；选择页仍会先把错误写进参数。
@@ -899,7 +939,7 @@ export struct MainPage {
   private openReportDetail(report: ReportListItemModel): void {
     const param: AnalysisDetailPageParam = this.detailParam;
     param.mediaId = report.mediaId;
-    param.mediaName = report.mediaName;
+    param.mediaName = AppStore.get().mediaLabel(report.mediaId, report.mediaName);
     param.mediaType = report.mediaType;
     param.reportScore = report.bdiScore;
     param.reportTime = report.detectedAt;

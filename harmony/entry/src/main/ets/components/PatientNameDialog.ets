@@ -48,6 +48,14 @@ export struct PatientNameDialog {
   /** 取消回调 · 由页面关闭对话框 */
   onCancel: () => void = () => {};
 
+  /**
+   * 是否必填
+   *
+   * ★ 上传素材时必填（否则素材库/历史报告只能显示文件名，用户会以为「命名没生效」，
+   *   见 BUG-29）；事后重命名时允许清空（取消命名）。
+   */
+  required: boolean = false;
+
   /** 输入框内容 */
   @State inputValue: string = '';
 
@@ -64,7 +72,7 @@ export struct PatientNameDialog {
         .width('100%')
         .textAlign(TextAlign.Start)
 
-      TextInput({ text: this.inputValue, placeholder: '请输入患者姓名（可留空）' })
+      TextInput({ text: this.inputValue, placeholder: this.required ? '请输入患者姓名' : '请输入患者姓名（可留空）' })
         .fontSize(UiTheme.fontSizeBody)
         .fontColor(UiTheme.textPrimary)
         .placeholderColor(UiTheme.textSecondary)
@@ -74,6 +82,14 @@ export struct PatientNameDialog {
         .onChange((value: string) => {
           this.inputValue = value;
         })
+
+      if (this.required && this.inputValue.trim().length === 0) {
+        Text('患者姓名必填：素材库和历史报告里显示的就是它')
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .textAlign(TextAlign.Start)
+      }
 
       Row({ space: UiTheme.gapS }) {
         Button('取消')
@@ -98,6 +114,8 @@ export struct PatientNameDialog {
           .borderRadius(UiTheme.buttonRadius)
           .layoutWeight(1)
           .height(40)
+          .enabled(!this.required || this.inputValue.trim().length > 0)
+          .opacity(this.required && this.inputValue.trim().length === 0 ? 0.4 : 1)
           .onClick(() => {
             const value: string = this.inputValue.trim();
             this.onConfirm(value);

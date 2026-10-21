@@ -135,13 +135,13 @@ export struct ReportsPage {
 
     const matched: ReportMediaGroupModel[] = [];
     for (let i = 0; i < groups.length; i++) {
-      if (this.searchScoreOf(groups[i].latest.mediaName, query) >= 0) {
+      if (this.searchScoreOf(this.app.mediaSearchText(groups[i].latest.mediaId, groups[i].latest.mediaName), query) >= 0) {
         matched.push(groups[i]);
       }
     }
     matched.sort((a: ReportMediaGroupModel, b: ReportMediaGroupModel): number => {
-      const aScore: number = this.searchScoreOf(a.latest.mediaName, query);
-      const bScore: number = this.searchScoreOf(b.latest.mediaName, query);
+      const aScore: number = this.searchScoreOf(this.app.mediaSearchText(a.latest.mediaId, a.latest.mediaName), query);
+      const bScore: number = this.searchScoreOf(this.app.mediaSearchText(b.latest.mediaId, b.latest.mediaName), query);
       if (aScore !== bScore) {
         return bScore - aScore;
       }
@@ -601,7 +601,7 @@ export struct ReportsPage {
         Column({ space: UiTheme.gapM }) {
           Row({ space: UiTheme.gapM }) {
             Column({ space: 3 }) {
-              Text(`${this.subjectNameOf(group.latest.mediaName)} · ${this.dateText(group.latest.detectedAt)} ${this.timeText(group.latest.detectedAt)} · ${this.mediaTypeLabelOf(group.latest)}`)
+              Text(`${this.subjectNameOf(this.app.mediaLabel(group.latest.mediaId, group.latest.mediaName))} · ${this.dateText(group.latest.detectedAt)} ${this.timeText(group.latest.detectedAt)} · ${this.mediaTypeLabelOf(group.latest)}`)
                 .fontSize(UiTheme.fontSizeBody)
                 .fontWeight(FontWeight.Medium)
                 .fontColor(UiTheme.textPrimary)

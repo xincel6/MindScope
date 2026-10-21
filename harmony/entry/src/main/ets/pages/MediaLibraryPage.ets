@@ -247,21 +247,31 @@ export struct MediaLibraryPage {
       Column({ space: UiTheme.gapM }) {
         Row({ space: UiTheme.gapM }) {
           Column({ space: 4 }) {
-            Text(`患者：${this.patientSummaryOf(group)}`)
-              .fontSize(UiTheme.fontSizeCaption)
-              .fontColor(UiTheme.accent)
-              .padding({ left: UiTheme.gapS, right: UiTheme.gapS, top: 3, bottom: 3 })
-              .backgroundColor('rgba(2, 132, 199, 0.08)')
-              .borderRadius(10)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
+            if (this.singlePatientOf(group).length === 0) {
+              Text(`患者：${this.patientSummaryOf(group)}`)
+                .fontSize(UiTheme.fontSizeCaption)
+                .fontColor(UiTheme.accent)
+                .padding({ left: UiTheme.gapS, right: UiTheme.gapS, top: 3, bottom: 3 })
+                .backgroundColor('rgba(2, 132, 199, 0.08)')
+                .borderRadius(10)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
 
-            Text(group.name)
+            Text(this.groupTitleOf(group))
               .fontSize(UiTheme.fontSizeSection)
               .fontWeight(FontWeight.Medium)
               .fontColor(UiTheme.textPrimary)
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+            if (this.singlePatientOf(group).length > 0) {
+              Text(group.name)
+                .fontSize(UiTheme.fontSizeCaption)
+                .fontColor(UiTheme.textSecondary)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+            }
           }
           .layoutWeight(1)
           .alignItems(HorizontalAlign.Start)
@@ -549,6 +559,37 @@ export struct MediaLibraryPage {
       }
     }
     return patients.length > 0 ? patients.join('、') : '未命名患者';
+  }
+
+  /**
+   * 分组里**唯一的**患者名（没有患者名、或混着多个患者名 → 空串）
+   *
+   * ★ 分组键是素材名，所以一组里通常只有一个患者；只有这种情况下才敢把
+   *   患者名当卡片标题，否则会张冠李戴（BUG-29）。
+   */
+  private singlePatientOf(group: MediaNameGroupModel): string {
+    let found: string = '';
+    for (let i = 0; i < group.items.length; i++) {
+      const patient: string = group.items[i].patient.trim();
+      if (patient.length === 0) {
+        return '';
+      }
+      if (found.length === 0) {
+        found = patient;
+      } else if (found !== patient) {
+        return '';
+      }
+    }
+    return found;
+  }
+
+  /** 素材库卡片标题：认得出患者就用患者名，否则回退素材名（BUG-29） */
+  private groupTitleOf(group: MediaNameGroupModel): string {
+    const patient: string = this.singlePatientOf(group);
+    if (patient.length > 0) {
+      return patient;
+    }
+    return group.name.trim().length > 0 ? group.name : '未命名素材';
   }
 
   private groupSummaryOf(group: MediaNameGroupModel): string {

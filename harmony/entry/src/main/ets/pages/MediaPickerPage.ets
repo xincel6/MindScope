@@ -96,6 +96,12 @@ export struct MediaPickerPage {
       Logger.i('[MediaPicker] requestPick 被 busy 挡下');
       return;
     }
+    // 患者名必填：留空会得到一条只有哈希文件名的素材（BUG-29），先拦在选择器之前
+    if (this.patientName.trim().length === 0) {
+      this.pageParam.errorMsg = '请先填写患者姓名，再选择素材';
+      return;
+    }
+    this.pageParam.errorMsg = '';
     this.submitting = true;
     this.pageParam.onPickRequest()
       .then((picked: boolean) => {
@@ -117,6 +123,10 @@ export struct MediaPickerPage {
   private submit(): void {
     Logger.i(`[MediaPicker] submit busy=${this.isBusyNow()} uploading=${this.pageParam.uploading} hasPicked=${this.pageParam.hasPicked} patient="${this.patientName}"`);
     if (this.isBusyNow()) {
+      return;
+    }
+    if (this.patientName.trim().length === 0) {
+      this.pageParam.errorMsg = '请先填写患者姓名，再选择素材';
       return;
     }
     if (!this.pageParam.hasPicked) {
@@ -174,7 +184,7 @@ export struct MediaPickerPage {
               .width('100%')
               .textAlign(TextAlign.Start)
 
-            TextInput({ text: this.patientName, placeholder: '选填，例如：张三' })
+            TextInput({ text: this.patientName, placeholder: '必填，例如：张三' })
               .type(InputType.Normal)
               .maxLength(64)
               .height(UiTheme.controlHeight)
@@ -187,9 +197,13 @@ export struct MediaPickerPage {
               .enabled(!this.pageParam.uploading)
               .onChange((value: string) => {
                 this.patientName = value;
+                // 一开填就把「请先填写患者姓名」的红字去掉，否则提示会一直挂着
+                if (this.pageParam.errorMsg === '请先填写患者姓名，再选择素材') {
+                  this.pageParam.errorMsg = '';
+                }
               })
 
-            Text('留空则不命名，之后可在素材库补填')
+            Text('必填 · 素材库与历史报告显示的就是这个名字')
               .fontSize(UiTheme.fontSizeCaption)
               .fontColor(UiTheme.textSecondary)
               .width('100%')
@@ -352,7 +366,8 @@ export struct MediaPickerPage {
             .fontColor(UiTheme.cardBackground)
             .backgroundColor(UiTheme.primary)
             .borderRadius(UiTheme.buttonRadius)
-            .enabled(!this.busy)
+            .enabled(!this.busy && this.patientName.trim().length > 0)
+            .opacity(this.patientName.trim().length > 0 ? 1 : 0.4)
             .onClick(() => {
               this.submit();
             })

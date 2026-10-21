@@ -498,6 +498,28 @@ export class AppStore {
     this.currentTaskRestored = false;
   }
 
+  /**
+   * 素材被删除后，清掉本机镜像里对它的引用
+   *
+   * ★ 只删素材本身不够：工作台的「当前任务」和 RDB 里的评估快照还指着它，
+   *   重启后 `restoreAssessment()` 会把这条已经删掉的素材恢复回 hero 卡片（BUG-31）。
+   */
+  public async forgetMedia(mediaId: string): Promise<void> {
+    const normalized: string = normalizeMediaId(mediaId);
+    if (normalized.length === 0) {
+      return;
+    }
+    if (normalizeMediaId(this.currentTaskMediaId) === normalized) {
+      this.clearCurrentTask();
+      try {
+        await StorageManager.assessmentDao().deleteAll();
+      } catch (err) {
+        this.log.e('评估快照清理失败', err as Object);
+      }
+    }
+    this.sync();
+  }
+
   // ══════════════════ 工作台：当前评估持久化 ══════════════════
 
   /** 当前用户归属 key（持久化载荷校验，避免换号串数据） */
@@ -704,6 +726,36 @@ export class AppStore {
   /** 按 id 找媒体（★ 内部归一化，规避字符串/数字混用） */
   public findMedia(mediaId: string): MediaItemModel | null {
     return this.domainMedia.findById(normalizeMediaId(mediaId));
+  }
+
+  /**
+   * 卡片标题用的素材显示名：**患者名优先**，没有患者名才回退素材文件名
+   *
+   * ★ 为什么放在门面而不是各页面各写一遍：工作台 hero、历史报告卡片、
+   *   分析详情页标题必须用同一条规则，否则「命名了但标题还是文件名」的不一致
+   *   会反复出现（BUG-29）。
+   * ★ 素材库还没同步到这条 id 时（离线 / 刚上传还没落本地）回退 fallback，
+   *   不让标题变成空串。
+   */
+  public mediaLabel(mediaId: string, fallbackName: string): string {
+    const media: MediaItemModel | null = this.findMedia(mediaId);
+    if (media === null) {
+      return fallbackName;
+    }
+    const patient: string = media.patient.trim();
+    if (patient.length > 0) {
+      return patient;
+    }
+    return media.name.length > 0 ? media.name : fallbackName;
+  }
+
+  /** 搜索用的可搜文本：素材名 + 患者名（历史报告页要能按患者名搜到） */
+  public mediaSearchText(mediaId: string, fallbackName: string): string {
+    const media: MediaItemModel | null = this.findMedia(mediaId);
+    if (media === null) {
+      return fallbackName;
+    }
+    return `${media.name} ${media.patient}`;
   }
 
   /** 只读一次，供 UI 断言「数据是否为空」 */

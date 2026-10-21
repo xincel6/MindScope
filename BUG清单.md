@@ -65,6 +65,9 @@
 | BUG-24 | 患者命名对话框按“确定”崩溃 | V2 页面里 `@CustomDialog` 内部 controller 取不到注入值 | ✅ 已修 |
 | BUG-27 | 选完素材**不会自动上传**，必须再点一次「开始分析」 | `@Computed` 的 `busy` 在渲染外读到上一帧缓存值 `true`，把自动上传挡掉 | ✅ 已修 |
 | BUG-28 | 历史报告里视频永远只有「视」字占位，没有首帧图 | `media.py` 用了未导入的 `MEDIA_DIR`，`NameError` 被 `try/except` 静默吞掉 | ✅ 已修 |
+| BUG-29 | 卡片标题显示 `3bd6295303d76580…` 这种哈希文件名，看不到患者名 | 显示层只读 `media.name` 从不读 `patient`；上传也不强制填名 | ✅ 已修 |
+| BUG-30 | 素材库点「删」后卡片仍在，必须手动刷新 | `MediaStore` 换了新数组，`AppStore.mediaItems` 还是旧引用，`doDeleteMedia` 没 `sync()` | ✅ 已修 |
+| BUG-31 | 删掉素材后重启，工作台 hero 又把它恢复出来 | RDB 评估快照还指着已删素材，`restoreAssessment()` 无条件还原 | ✅ 已修 |
 
 > 详细条目按轮次分组在下面各节；编号顺序与正文顺序不一致，按上表定位即可。
 > 编译验证基线：`bash harmony/scripts/build.sh` → **BUILD SUCCESSFUL**（2026-10-18）。
@@ -1326,6 +1329,99 @@ NameError: name 'MEDIA_DIR' is not defined
 
 **涉及文件**
 `dashboard/backend/routers/media.py`（**本地与服务器两边都已改，尚未提交**）
+
+
+---
+
+# 患者名优先轮 · 新增缺陷（BUG-29 / 30 / 31）
+
+## BUG-29 · 卡片标题显示哈希文件名，看不到患者名
+
+**现象**
+清空历史数据后重新上传一条素材，工作台卡片标题是 `3bd6295303d76580…`（上传 URI 的末段哈希），
+历史报告标题同样是这串哈希；明明输入框填了患者名，界面上却看不到。
+
+**根因（两处叠加）**
+1. **数据侧**：`PatientNameDialog` 的「确定」不校验空串，患者名留空时上传请求不带 `?patient=`，
+   后端 `media_assets.patient` 落成 `NULL`，`name` 只剩哈希文件名。
+2. **显示侧**：所有卡片标题只读 `media.name`，从不读 `patient` ——
+   `AppStore.buildRecentMedia()`、`WorkbenchPage` 的 `heroModel` / `opinionModel`、
+   `ReportsPage` 的分组标题、`MainPage` 的 `setCurrentTask` / `openReportDetail` /
+   删除确认框标题，全都绕过了患者名。
+
+**修法**
+| 位置 | 改动 |
+|---|---|
+| `store/AppStore.ets` | 新增 `mediaLabel(mediaId, fallbackName)`（`patient` 非空优先，其次 `name`）与 `mediaSearchText(mediaId, fallbackName)`（`name + patient` 拼串，供搜索） |
+| `pages/WorkbenchPage.ets` | hero / 意见卡片的 `mediaName` 改走 `mediaLabel` |
+| `pages/ReportsPage.ets` | 分组标题改 `mediaLabel`，搜索/排序改 `mediaSearchText` |
+| `pages/MainPage.ets` | `setCurrentTask`、报告详情 `param.mediaName`、删除确认框标题统一走 `mediaLabel` |
+| `pages/MediaLibraryPage.ets` | 新增 `singlePatientOf()` / `groupTitleOf()`：组内患者名唯一时标题直接用患者名，原文件名降为副标题 |
+| `components/PatientNameDialog.ets` | 新增 `required`：必填时空值不给点「确定」，并显示提示行 |
+| `pages/MediaPickerPage.ets` | 患者名改**必填**：空名点卡片 / 点按钮会被拦下并提示「请先填写患者姓名，再选择素材」 |
+| `pages/MainPage.ets` | 新增 `uploadFileName()`：有患者名时 multipart 文件名写成 `<患者名>_<yyyyMMdd_HHmmss>.<ext>`（沙箱副本仍用原文件名，避免路径问题） |
+
+**验证（2026-10-22 00:09–00:15，模拟器）**
+- 空名点选素材卡片 → 红字提示且主按钮置灰（`req_1_picker.jpeg`、`req_2_blocked.jpeg`）。
+- 填 `李四` → 上传后 DB 为 `(2, '李四_20261022_001131.jpg', '李四')`，中文 multipart 文件名往返正常；
+  工作台 hero 与历史报告标题都显示「李四」（`req_7_hero.jpeg`、`label_2_reports.jpeg`）。
+- 素材库卡片标题「王五」+ 副标题 `王五_20261022_001440.jpg`（`del_2_library.jpeg`）。
+
+---
+
+## BUG-30 · 素材库删掉素材后卡片不消失
+
+**现象**
+素材库点「删」→ 确认框 → 确认后卡片还留在列表里，手动刷新（重进页面/重启）才消失。
+
+**根因**
+`MediaStore.removeLocal()` 把 `this.items` 换成了**新数组**，而 `AppStore.mediaItems`
+仍指向旧数组引用；`MainPage.doDeleteMedia()` 只调了 `refreshAfterAction()`
+（只 bump tick、重推页面参数），没有 `app.sync()` 去重新镜像。页面参数拿到的还是旧数组。
+
+**修法**
+`doDeleteMedia()` 删除成功后立刻 `app.sync()`；同一处还补了两个必要的重拉：
+
+```text
+等待删除 → app.sync() → 若成功：
+  await app.forgetMedia(mediaId)    // 见 BUG-31
+  await app.loadAllReports()        // 后端已级联删报告，本地列表要跟着消失
+  await app.refreshStats()          // 统计页的分析次数 / 素材总数 / 分布口径也变了
+```
+
+**验证（2026-10-22 00:15，模拟器）**
+上传测试素材「王五」→ 素材库点「删」→ 确认后列表立即变成「共 1 组素材 · 1 个文件」，
+王五卡片消失，无需刷新（`del_3_confirm.jpeg` → `del_4_after.jpeg`）；
+历史报告页同步只剩 1 条（`del_5_reports.jpeg`）。
+
+---
+
+## BUG-31 · 删掉素材后重启，工作台 hero 又把它恢复出来
+
+**现象**
+素材库里删掉刚分析过的素材，工作台当次虽然换成了下一条；**重启 App 后**，
+那张已删除的卡片又出现在 hero 上（标题、分数、热力图全在），点进去 404。
+
+**根因**
+工作台「当前评估」除了内存镜像，还在 RDB 里存了一份整包快照（`assessmentDao`）。
+删除素材只删了 `media_assets` 行和报告，没人去清这份快照；
+`restoreAssessment()` 启动时只校验版本号和 `userKey`，不校验素材是否还在，于是原样还原。
+
+**修法**
+`AppStore` 新增 `public async forgetMedia(mediaId: string): Promise<void>`：
+若被删的正是 `currentTask.mediaId`，则 `clearCurrentTask()` + `assessmentDao().deleteAll()`，
+最后 `sync()`；`MainPage.doDeleteMedia()` 在删除成功后调用。
+
+**验证（2026-10-22 00:17–00:18，模拟器）**
+上传「赵六」→ 分析完成（hero 显示赵六）→ 素材库删除 → hero 立刻回落到「张三 · 最近一次评估」；
+`aa force-stop` + 重启后仍是张三，赵六没有复活（`forget_3_after_delete.jpeg`、`forget_4_restart.jpeg`），
+统计页 `1 次 / 1 项 / 正常 100%` 与服务端一致（`forget_5_stats.jpeg`）。
+
+**涉及文件**
+`harmony/entry/src/main/ets/store/AppStore.ets`、`pages/MainPage.ets`、
+`pages/WorkbenchPage.ets`、`pages/ReportsPage.ets`、`pages/MediaLibraryPage.ets`、
+`pages/MediaPickerPage.ets`、`components/PatientNameDialog.ets`
+
 
 
 
