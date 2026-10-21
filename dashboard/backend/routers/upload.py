@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 import shutil
 from pathlib import Path
@@ -11,6 +12,7 @@ from database import get_db
 from deps import get_current_user
 from face_detect import process_uploaded_image_with_mtcnn
 from models import MediaAsset, MediaType, User
+from services.video_thumbnail import create_video_thumbnail
 
 router = APIRouter(prefix="/api")
 
@@ -45,6 +47,10 @@ async def upload_image(
     if media_type == MediaType.image:
         await process_uploaded_image_with_mtcnn(dest)
 
+    thumbnail_url = ""
+    if media_type == MediaType.video:
+        thumbnail_url = await asyncio.to_thread(create_video_thumbnail, dest, MEDIA_DIR)
+
     # Create DB record
     # ★ 只存文件名，不存绝对路径：depression.db 会随仓库/备份在 Windows 与 Linux
     #   之间搬动，绝对路径一换机器就失效（见 media_paths.py 的说明）。
@@ -55,7 +61,7 @@ async def upload_image(
         file_path=unique_name,
         type=media_type,
         duration=None,
-        thumbnail_url="",
+        thumbnail_url=thumbnail_url,
     )
     db.add(asset)
     await db.commit()
@@ -66,5 +72,6 @@ async def upload_image(
         "name": asset.name,
         "type": asset.type.value,
         "url": f"/media/{unique_name}",
+        "thumbnail_url": thumbnail_url,
         "patient": asset.patient or "",
     }

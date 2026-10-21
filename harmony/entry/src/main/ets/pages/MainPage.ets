@@ -323,6 +323,7 @@ export struct MainPage {
     param.errorMsg = app.mediaError;
     param.videos = this.collectMedia(MediaType.video);
     param.images = this.collectMedia(MediaType.image);
+    param.mediaItems = this.collectAllMedia();
     param.patients = app.patientOptions();
     param.selectedPatient = app.patientFilter();
     param.selectedMediaId = this.selectedMediaId;
@@ -336,6 +337,27 @@ export struct MainPage {
     for (let i = 0; i < items.length; i++) {
       const src: MediaItemModel = items[i];
       // 复制一份并把相对路径解析成绝对地址，页面拿到即可直接喂给 Image
+      const item: MediaItemModel = {
+        id: src.id,
+        name: src.name,
+        type: src.type,
+        thumbnailUrl: ApiConfig.resolveMediaUrl(src.thumbnailUrl),
+        url: ApiConfig.resolveMediaUrl(src.url),
+        duration: src.duration,
+        createdAt: src.createdAt,
+        patient: src.patient
+      };
+      out.push(item);
+    }
+    return out;
+  }
+
+  /** 不按类型拆分地复制完整素材，供素材库按名称聚合与搜索 */
+  private collectAllMedia(): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const items: MediaItemModel[] = AppStore.get().mediaItems;
+    for (let i = 0; i < items.length; i++) {
+      const src: MediaItemModel = items[i];
       const item: MediaItemModel = {
         id: src.id,
         name: src.name,

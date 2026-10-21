@@ -176,7 +176,7 @@ export class Mapper {
       id: normalizeMediaId(dto.id),
       name: toText(dto.name, ''),
       type: toMediaType(dto.type),
-      thumbnailUrl: '',
+      thumbnailUrl: toText(dto.thumbnail_url, ''),
       url: toText(dto.url, ''),
       duration: null,
       createdAt: formatDateLocal(now),

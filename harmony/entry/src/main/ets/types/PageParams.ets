@@ -291,6 +291,9 @@ export class MediaLibraryPageParam extends TabPageParam {
   /** 图片素材列表（已按「患者 + 类型」筛好） */
   @Trace public images: MediaItemModel[] = [];
 
+  /** 不区分图片/视频的完整素材列表 · 素材库按名称聚合使用 */
+  @Trace public mediaItems: MediaItemModel[] = [];
+
   /** 去重后的患者名列表（含「未命名」占位）· 顶部筛选器用 */
   @Trace public patients: string[] = [];
 

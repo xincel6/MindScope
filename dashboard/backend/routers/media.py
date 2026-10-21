@@ -1,3 +1,4 @@
+import asyncio
 import base64
 
 import cv2
@@ -21,6 +22,7 @@ from schemas import (
     PatientUpdateIn,
 )
 from services.inference import average_heatmaps, lmtformer_inference
+from services.video_thumbnail import create_video_thumbnail
 
 router = APIRouter(prefix="/api")
 
@@ -34,21 +36,34 @@ async def list_media(
     assets = result.scalars().all()
 
     items: list[MediaItemOut] = []
+    thumbnails_changed = False
     for a in assets:
         # DB 里可能是 Windows 反斜杠路径 / 别的机器上的绝对路径；
         # 统一交给 media_file_name（POSIX 的 Path.name 不认反斜杠，会返回整条字符串）
         fname = media_file_name(a.file_path)
+        thumbnail_url = a.thumbnail_url or ""
+        if a.type.value == "video" and not thumbnail_url:
+            video_path = resolve_media_path(a.file_path)
+            if video_path is not None:
+                thumbnail_url = await asyncio.to_thread(
+                    create_video_thumbnail, video_path, MEDIA_DIR
+                )
+                if thumbnail_url:
+                    a.thumbnail_url = thumbnail_url
+                    thumbnails_changed = True
         items.append(MediaItemOut(
             id=str(a.id),
             name=a.name,
             type=a.type.value,
-            thumbnail_url=a.thumbnail_url or "",
+            thumbnail_url=thumbnail_url,
             url=f"/media/{fname}" if fname else "",
             duration=a.duration,
             patient=a.patient,
             created_at=a.created_at.strftime("%Y-%m-%d"),
         ))
 
+    if thumbnails_changed:
+        await db.commit()
     return MediaListOut(items=items)
 
 
@@ -75,10 +90,12 @@ async def delete_media(
     await db.commit()
 
     if file_path is not None:
-        try:
-            file_path.unlink()
-        except OSError:
-            pass
+        thumbnail_path = file_path.with_name(f"{file_path.stem}.thumb.jpg")
+        for path in (file_path, thumbnail_path):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
     return {"ok": True}
 

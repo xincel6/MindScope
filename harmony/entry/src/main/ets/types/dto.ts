@@ -65,6 +65,8 @@ export interface UploadImageOutDto {
   name: string;
   type: string;
   url: string;
+  /** 视频首帧封面；旧服务端可能不返回 */
+  thumbnail_url?: string;
   /** 上传时一并提交的患者名（后端回显） */
   patient?: string;
 }

@@ -54,6 +54,9 @@ const MEDIA_TYPE_FILTERS: string[] = ['', 'image', 'video'];
  */
 const LIST_STAGGER_LIMIT: number = 5;
 
+/** 历史报告卡左侧素材图边长 · 与工作台首帧照片保持同一视觉尺度 */
+const REPORT_THUMB_SIZE: number = 64;
+
 /**
  * 历史报告排序函数
  *
@@ -110,6 +113,9 @@ export struct ReportsPage {
   /** 历史报告页参数 · 动作由窗口层注入 */
   @Param pageParam: ReportsPageParam = new ReportsPageParam();
 
+  /** 页面内实时名称搜索 */
+  @Local searchText: string = '';
+
   /** 整页滚动控制器 · 刷新或筛选后回到最新一条 */
   private scroller: Scroller = new Scroller();
 
@@ -121,12 +127,37 @@ export struct ReportsPage {
   /** 最新在上的素材报告分组 */
   @Computed
   get reportGroups(): ReportMediaGroupModel[] {
-    return buildReportGroups(this.app.reportItems);
+    const groups: ReportMediaGroupModel[] = buildReportGroups(this.app.reportItems);
+    const query: string = this.searchText.trim().toLowerCase();
+    if (query.length === 0) {
+      return groups;
+    }
+
+    const matched: ReportMediaGroupModel[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      if (this.searchScoreOf(groups[i].latest.mediaName, query) >= 0) {
+        matched.push(groups[i]);
+      }
+    }
+    matched.sort((a: ReportMediaGroupModel, b: ReportMediaGroupModel): number => {
+      const aScore: number = this.searchScoreOf(a.latest.mediaName, query);
+      const bScore: number = this.searchScoreOf(b.latest.mediaName, query);
+      if (aScore !== bScore) {
+        return bScore - aScore;
+      }
+      if (a.latest.detectedAt !== b.latest.detectedAt) {
+        return a.latest.detectedAt < b.latest.detectedAt ? 1 : -1;
+      }
+      return b.latest.id - a.latest.id;
+    });
+    return matched;
   }
 
   @Computed
   get isFiltered(): boolean {
-    return this.app.reportSeverityFilter.length > 0 || this.app.reportMediaTypeFilter.length > 0;
+    return this.searchText.trim().length > 0
+      || this.app.reportSeverityFilter.length > 0
+      || this.app.reportMediaTypeFilter.length > 0;
   }
 
   @Computed
@@ -149,6 +180,9 @@ export struct ReportsPage {
     if (this.app.reportMediaTypeFilter.length > 0) {
       parts.push(UiConstant.mediaTypeLabel(this.app.reportMediaTypeFilter));
     }
+    if (this.searchText.trim().length > 0) {
+      parts.push(`搜索“${this.searchText.trim()}”`);
+    }
     return parts.join(' · ');
   }
 
@@ -158,6 +192,9 @@ export struct ReportsPage {
       return '正在加载历史报告…';
     }
     if (this.isFiltered) {
+      if (this.searchText.trim().length > 0) {
+        return '没有找到名称匹配的历史报告';
+      }
       return '当前筛选条件下没有报告';
     }
     return '还没有历史报告，先完成一次辅助评估';
@@ -196,7 +233,10 @@ export struct ReportsPage {
     if (this.app.reportLoading || !this.isFiltered) {
       return;
     }
-    await this.pageParam.onFilter('', '');
+    this.searchText = '';
+    if (this.app.reportSeverityFilter.length > 0 || this.app.reportMediaTypeFilter.length > 0) {
+      await this.pageParam.onFilter('', '');
+    }
     this.scrollToTop();
   }
 
@@ -228,6 +268,32 @@ export struct ReportsPage {
     return name.length > 0 ? name : '未命名素材';
   }
 
+  /**
+   * 名称搜索相关度：完全匹配 > 前缀匹配 > 词段起始 > 任意位置包含。
+   * query 已在调用方转成小写；分数相同再保持检测时间倒序。
+   */
+  private searchScoreOf(raw: string, query: string): number {
+    if (query.length === 0) {
+      return 0;
+    }
+    const name: string = this.subjectNameOf(raw).toLowerCase();
+    if (name === query) {
+      return 1000;
+    }
+    if (name.startsWith(query)) {
+      return 900 - Math.min(name.length - query.length, 100);
+    }
+
+    const index: number = name.indexOf(query);
+    if (index < 0) {
+      return -1;
+    }
+    if (index === 0 || '_-. '.indexOf(name.charAt(index - 1)) >= 0) {
+      return 700 - Math.min(index, 100);
+    }
+    return 500 - Math.min(index, 100);
+  }
+
   private dateText(raw: string): string {
     return raw.length >= 10 ? raw.slice(0, 10) : raw;
   }
@@ -257,6 +323,22 @@ export struct ReportsPage {
 
   private mediaTypeLabelOf(item: ReportListItemModel): string {
     return item.mediaType === MediaType.video ? '视频' : '图片';
+  }
+
+  /**
+   * 报告卡图片地址 · 复用服务端 /api/media/list 已下发的缩略图/原图。
+   * 图片优先用缩略图并回落到原图；视频只有在服务端有真实封面时才显示，
+   * 不把 .mp4 地址交给 Image 组件。
+   */
+  private reportImageUrlOf(item: ReportListItemModel): string {
+    const media = this.app.media().findById(item.mediaId);
+    if (media === null) {
+      return '';
+    }
+    if (media.thumbnailUrl.length > 0 || media.type === MediaType.image) {
+      return this.app.media().thumbnailUrl(media);
+    }
+    return '';
   }
 
   /**
@@ -314,36 +396,101 @@ export struct ReportsPage {
       .width('100%')
       .alignItems(VerticalAlign.Center)
 
-      Row({ space: 6 }) {
-        Text('严重度')
-          .fontSize(UiTheme.fontSizeCaption)
-          .fontColor(UiTheme.textSecondary)
-          .width(46)
-          .textAlign(TextAlign.Start)
+      this.searchBox()
+      this.severityStrip()
+      this.mediaFilterGroup()
+    }
+    .width('100%')
+    .alignItems(HorizontalAlign.Start)
+  }
 
-        ForEach(SEVERITY_FILTERS, (raw: string) => {
-          this.severityChip(raw)
-        }, (raw: string) => `sev-${raw}`)
+  @Builder
+  searchBox() {
+    Row({ space: UiTheme.gapS }) {
+      Text('⌕')
+        .fontSize(20)
+        .fontColor(UiTheme.textSecondary)
+        .width(22)
+        .textAlign(TextAlign.Center)
+
+      TextInput({ placeholder: '搜索图片或视频名称', text: this.searchText })
+        .layoutWeight(1)
+        .height(40)
+        .padding(0)
+        .fontSize(UiTheme.fontSizeBody)
+        .fontColor(UiTheme.textPrimary)
+        .placeholderColor(UiTheme.textSecondary)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 0 })
+        .maxLength(64)
+        .onChange((value: string) => {
+          this.searchText = value;
+        })
+
+      if (this.searchText.length > 0) {
+        Text('×')
+          .fontSize(22)
+          .fontColor(UiTheme.textSecondary)
+          .width(28)
+          .height(28)
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.searchText = '';
+          })
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: UiTheme.gapM, right: UiTheme.gapS })
+    .backgroundColor(UiTheme.cardBackground)
+    .borderRadius(UiTheme.buttonRadius)
+    .border({ width: 1, color: UiTheme.divider })
+    .alignItems(VerticalAlign.Center)
+  }
 
-      Row({ space: 6 }) {
-        Text('素材')
-          .fontSize(UiTheme.fontSizeCaption)
-          .fontColor(UiTheme.textSecondary)
-          .width(46)
-          .textAlign(TextAlign.Start)
+  @Builder
+  severityStrip() {
+    Row({ space: UiTheme.gapS }) {
+      Text('严重度')
+        .fontSize(UiTheme.fontSizeCaption)
+        .fontColor(UiTheme.textSecondary)
+        .width(46)
+        .textAlign(TextAlign.Start)
 
+      Scroll() {
+        Row({ space: UiTheme.gapS }) {
+          ForEach(SEVERITY_FILTERS, (raw: string) => {
+            this.severityChip(raw)
+          }, (raw: string) => `sev-${raw}`)
+        }
+      }
+      .layoutWeight(1)
+      .height(34)
+      .scrollable(ScrollDirection.Horizontal)
+      .scrollBar(BarState.Off)
+      .edgeEffect(EdgeEffect.Spring)
+    }
+    .width('100%')
+    .alignItems(VerticalAlign.Center)
+  }
+
+  @Builder
+  mediaFilterGroup() {
+    Row({ space: UiTheme.gapS }) {
+      Text('素材')
+        .fontSize(UiTheme.fontSizeCaption)
+        .fontColor(UiTheme.textSecondary)
+        .width(46)
+        .textAlign(TextAlign.Start)
+
+      Row({ space: UiTheme.gapS }) {
         ForEach(MEDIA_TYPE_FILTERS, (raw: string) => {
           this.mediaTypeChip(raw)
         }, (raw: string) => `media-${raw}`)
       }
-      .width('100%')
-      .alignItems(VerticalAlign.Center)
     }
     .width('100%')
-    .alignItems(HorizontalAlign.Start)
+    .alignItems(VerticalAlign.Center)
   }
 
   @Builder
@@ -351,11 +498,12 @@ export struct ReportsPage {
     Text(this.severityFilterLabel(raw))
       .fontSize(UiTheme.fontSizeCaption)
       .fontColor(raw === this.app.reportSeverityFilter ? UiTheme.cardBackground : UiTheme.textSecondary)
-      .padding({ left: UiTheme.gapS, right: UiTheme.gapS, top: 5, bottom: 5 })
-      .borderRadius(14)
+      .height(30)
+      .padding({ left: UiTheme.gapM, right: UiTheme.gapM })
+      .borderRadius(15)
+      .backgroundColor(raw === this.app.reportSeverityFilter ? UiTheme.primary : UiTheme.cardBackground)
       .borderWidth(1)
       .borderColor(raw === this.app.reportSeverityFilter ? UiTheme.primary : UiTheme.divider)
-      .backgroundColor(raw === this.app.reportSeverityFilter ? UiTheme.primary : UiTheme.cardBackground)
       .enabled(!this.app.reportLoading)
       .onClick(() => {
         this.changeSeverity(raw);
@@ -367,11 +515,12 @@ export struct ReportsPage {
     Text(this.mediaFilterLabel(raw))
       .fontSize(UiTheme.fontSizeCaption)
       .fontColor(raw === this.app.reportMediaTypeFilter ? UiTheme.cardBackground : UiTheme.textSecondary)
-      .padding({ left: UiTheme.gapS, right: UiTheme.gapS, top: 5, bottom: 5 })
-      .borderRadius(14)
+      .height(30)
+      .padding({ left: UiTheme.gapM, right: UiTheme.gapM })
+      .borderRadius(15)
+      .backgroundColor(raw === this.app.reportMediaTypeFilter ? UiTheme.primary : UiTheme.cardBackground)
       .borderWidth(1)
       .borderColor(raw === this.app.reportMediaTypeFilter ? UiTheme.primary : UiTheme.divider)
-      .backgroundColor(raw === this.app.reportMediaTypeFilter ? UiTheme.primary : UiTheme.cardBackground)
       .enabled(!this.app.reportLoading)
       .onClick(() => {
         this.changeMediaType(raw);
@@ -417,6 +566,28 @@ export struct ReportsPage {
   // ══════════════════ 报告卡片 ══════════════════
 
   @Builder
+  reportThumbnail(group: ReportMediaGroupModel) {
+    Stack({ alignContent: Alignment.Center }) {
+      Text(this.mediaTypeLabelOf(group.latest).slice(0, 1))
+        .fontSize(UiTheme.fontSizeSection)
+        .fontWeight(FontWeight.Medium)
+        .fontColor(UiTheme.textSecondary)
+
+      if (this.reportImageUrlOf(group.latest).length > 0) {
+        Image(this.reportImageUrlOf(group.latest))
+          .width('100%')
+          .height('100%')
+          .objectFit(ImageFit.Cover)
+      }
+    }
+    .width(REPORT_THUMB_SIZE)
+    .height(REPORT_THUMB_SIZE)
+    .borderRadius(UiTheme.gapS)
+    .clip(true)
+    .backgroundColor(UiTheme.fillSoft)
+  }
+
+  @Builder
   reportCard(group: ReportMediaGroupModel) {
     RippleCard({
       _padding: UiTheme.cardPadding,
@@ -424,72 +595,78 @@ export struct ReportsPage {
         this.pageParam.onOpenReport(group.latest);
       }
     }) {
-      Column({ space: UiTheme.gapM }) {
-        Row({ space: UiTheme.gapM }) {
-          Column({ space: 3 }) {
-            Text(`${this.subjectNameOf(group.latest.mediaName)} · ${this.dateText(group.latest.detectedAt)} ${this.timeText(group.latest.detectedAt)} · ${this.mediaTypeLabelOf(group.latest)}`)
-              .fontSize(UiTheme.fontSizeBody)
-              .fontWeight(FontWeight.Medium)
-              .fontColor(UiTheme.textPrimary)
-              .width('100%')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .textAlign(TextAlign.Start)
+      Row({ space: UiTheme.gapM }) {
+        this.reportThumbnail(group)
+
+        Column({ space: UiTheme.gapM }) {
+          Row({ space: UiTheme.gapM }) {
+            Column({ space: 3 }) {
+              Text(`${this.subjectNameOf(group.latest.mediaName)} · ${this.dateText(group.latest.detectedAt)} ${this.timeText(group.latest.detectedAt)} · ${this.mediaTypeLabelOf(group.latest)}`)
+                .fontSize(UiTheme.fontSizeBody)
+                .fontWeight(FontWeight.Medium)
+                .fontColor(UiTheme.textPrimary)
+                .width('100%')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .textAlign(TextAlign.Start)
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Column({ space: 2 }) {
+              Text(this.scoreText(group.latest))
+                .fontSize(28)
+                .fontWeight(FontWeight.Bold)
+                .fontColor(this.severityColorOf(group.latest))
+                .maxLines(1)
+
+              Text(this.severityLabelOf(group.latest))
+                .fontSize(UiTheme.fontSizeCaption)
+                .fontColor(this.severityColorOf(group.latest))
+                .maxLines(1)
+            }
+            .alignItems(HorizontalAlign.End)
           }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
 
-          Column({ space: 2 }) {
-            Text(this.scoreText(group.latest))
-              .fontSize(28)
-              .fontWeight(FontWeight.Bold)
-              .fontColor(this.severityColorOf(group.latest))
-              .maxLines(1)
+          ProgressBar({
+            ratio: this.scoreRatioOf(group.latest),
+            barColor: this.severityColorOf(group.latest),
+            barHeight: 5
+          })
 
-            Text(this.severityLabelOf(group.latest))
+          Row({ space: UiTheme.gapS }) {
+            Column({ space: 2 }) {
+              Text(`最近一次 · 推理 ${group.latest.inferenceTimeMs.toFixed(1)} ms`)
+                .fontSize(UiTheme.fontSizeCaption)
+                .fontColor(UiTheme.textSecondary)
+                .width('100%')
+                .textAlign(TextAlign.Start)
+
+              Text(this.analysisSummaryOf(group))
+                .fontSize(UiTheme.fontSizeCaption)
+                .fontColor(this.severityColorOf(group.latest))
+                .width('100%')
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .textAlign(TextAlign.Start)
+            }
+            .layoutWeight(1)
+            .alignItems(HorizontalAlign.Start)
+
+            Text('查看报告  ›')
               .fontSize(UiTheme.fontSizeCaption)
-              .fontColor(this.severityColorOf(group.latest))
-              .maxLines(1)
+              .fontColor(UiTheme.accent)
           }
-          .alignItems(HorizontalAlign.End)
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
         }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
-
-        ProgressBar({
-          ratio: this.scoreRatioOf(group.latest),
-          barColor: this.severityColorOf(group.latest),
-          barHeight: 5
-        })
-
-        Row({ space: UiTheme.gapS }) {
-          Column({ space: 2 }) {
-            Text(`最近一次 · 推理 ${group.latest.inferenceTimeMs.toFixed(1)} ms`)
-              .fontSize(UiTheme.fontSizeCaption)
-              .fontColor(UiTheme.textSecondary)
-              .width('100%')
-              .textAlign(TextAlign.Start)
-
-            Text(this.analysisSummaryOf(group))
-              .fontSize(UiTheme.fontSizeCaption)
-              .fontColor(this.severityColorOf(group.latest))
-              .width('100%')
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-              .textAlign(TextAlign.Start)
-          }
-          .layoutWeight(1)
-          .alignItems(HorizontalAlign.Start)
-
-          Text('查看报告  ›')
-            .fontSize(UiTheme.fontSizeCaption)
-            .fontColor(UiTheme.accent)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
       }
       .width('100%')
-      .alignItems(HorizontalAlign.Start)
+      .alignItems(VerticalAlign.Center)
     }
   }
 

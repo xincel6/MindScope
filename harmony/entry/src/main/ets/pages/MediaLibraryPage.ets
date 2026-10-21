@@ -1,73 +1,143 @@
 /**
- * MediaLibraryPage · 素材库（一级页签）
+ * MediaLibraryPage · 素材库
  *
- * 页面契约：`@Param pageParam: MediaLibraryPageParam`
- *   - 数据（`videos` / `images` / `selectedMediaId` / `analyzing`）由窗口层注入；
- *   - 动作（`onUpload` / `onOpenMedia` / `onDelete` / `onRetry`）通过回调交回窗口层；
- *   - `busy` / `errorMsg` 驱动骨架屏与「加载失败 + 重试」。
- *
- * ★ 页面纪律：不 import 任何 store、不发请求、不碰路由栈。
+ * 素材按名称聚合为纵向卡片；每张卡上方展示上传时填写的患者信息，
+ * 下方把同名素材放进一条可横向滑动的素材带。页面顶部支持实时搜索，
+ * 排序按钮可在“按时间 / 按姓名”之间切换。
  */
 
 import { UiTheme } from '../common/UiTheme';
 import { MediaLibraryPageParam } from '../types/PageParams';
 import { MediaItemModel, MediaType } from '../types/Index';
-import { PageHeader } from '../components/PageHeader';
-import { SkeletonBlock } from '../components/SkeletonView';
 import { ErrorRetryView } from '../components/ErrorRetryView';
+import { RippleCard } from '../components/RippleCard';
+import { SkeletonBlock } from '../components/SkeletonView';
 
-/** 当前激活的素材类型 Tab（本页内部状态，与业务筛选无关） */
-enum MediaTab {
-  video = 0,
-  image = 1
+enum MediaSortMode {
+  time = 0,
+  name = 1
 }
+
+interface MediaNameGroupModel {
+  key: string;
+  name: string;
+  items: MediaItemModel[];
+}
+
+const MEDIA_TILE_WIDTH: number = 176;
+const MEDIA_TILE_IMAGE_HEIGHT: number = 108;
 
 @ComponentV2
 export struct MediaLibraryPage {
-  /** ★ 本页唯一入参 */
   @Param pageParam: MediaLibraryPageParam = new MediaLibraryPageParam();
 
-  /** 当前激活的 Tab */
-  @Local activeTab: MediaTab = MediaTab.video;
-
-  /** 缩略图加载失败的素材 id 集合（用于回退到占位图标） */
+  @Local searchText: string = '';
+  @Local sortMode: MediaSortMode = MediaSortMode.time;
   @Local brokenThumbs: string[] = [];
 
-  build() {
-    Column({ space: UiTheme.gapL }) {
-      PageHeader({ title: '素材库', subtitle: '评估用的图片与视频素材' })
+  @Computed
+  get visibleGroups(): MediaNameGroupModel[] {
+    const groups: MediaNameGroupModel[] = this.buildGroups();
+    const query: string = this.searchText.trim().toLowerCase();
+    if (query.length === 0) {
+      groups.sort((a: MediaNameGroupModel, b: MediaNameGroupModel): number => {
+        return this.compareGroups(a, b, query);
+      });
+      return groups;
+    }
 
-      this.uploadBar()
-
-      // 内容区三态：加载 / 错误 / 列表
-      if (this.pageParam.busy) {
-        this.loadingView()
-      } else if (this.pageParam.errorMsg.length > 0) {
-        ErrorRetryView({
-          message: this.pageParam.errorMsg,
-          onRetry: (): void => {
-            this.pageParam.onRetry();
-          }
-        })
-      } else {
-        this.patientFilterBar()
-        this.tabBar()
-        this.contentView()
+    const matched: MediaNameGroupModel[] = [];
+    for (let i = 0; i < groups.length; i++) {
+      if (this.groupSearchScore(groups[i], query) >= 0) {
+        matched.push(groups[i]);
       }
+    }
+    matched.sort((a: MediaNameGroupModel, b: MediaNameGroupModel): number => {
+      return this.compareGroups(a, b, query);
+    });
+    return matched;
+  }
+
+  @Computed
+  get countText(): string {
+    let fileCount: number = 0;
+    const groups: MediaNameGroupModel[] = this.visibleGroups;
+    for (let i = 0; i < groups.length; i++) {
+      fileCount += groups[i].items.length;
+    }
+    return `共 ${groups.length} 组素材 · ${fileCount} 个文件`;
+  }
+
+  build() {
+    Scroll() {
+      Column({ space: UiTheme.gapM }) {
+        this.headerBar()
+        this.searchBox()
+        this.sortBar()
+
+        if (this.pageParam.busy) {
+          this.loadingView()
+        } else if (this.pageParam.errorMsg.length > 0) {
+          ErrorRetryView({
+            message: this.pageParam.errorMsg,
+            onRetry: (): void => {
+              this.pageParam.onRetry();
+            }
+          })
+        } else {
+          Row({ space: UiTheme.gapS }) {
+            Text('素材分组')
+              .fontSize(UiTheme.fontSizeBody)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(UiTheme.textPrimary)
+
+            Text(this.countText)
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.textSecondary)
+              .layoutWeight(1)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }
+          .width('100%')
+          .alignItems(VerticalAlign.Center)
+
+          if (this.visibleGroups.length === 0) {
+            this.emptyView()
+          } else {
+            ForEach(this.visibleGroups, (group: MediaNameGroupModel) => {
+              this.groupCard(group)
+            }, (group: MediaNameGroupModel) => group.key)
+          }
+        }
+      }
+      .width('100%')
+      .padding({
+        left: UiTheme.pagePadding,
+        right: UiTheme.pagePadding,
+        top: UiTheme.gapL,
+        bottom: UiTheme.gapXxl
+      })
+      .alignItems(HorizontalAlign.Start)
     }
     .width('100%')
     .height('100%')
-    .padding({ left: UiTheme.pagePadding, right: UiTheme.pagePadding, top: UiTheme.gapL })
-    .alignItems(HorizontalAlign.Start)
+    .scrollBar(BarState.Off)
     .backgroundColor(UiTheme.pageBackground)
   }
 
-  // ────────────────── 顶部：标题右侧上传按钮 ──────────────────
-
   @Builder
-  uploadBar() {
-    Row() {
-      Blank()
+  headerBar() {
+    Row({ space: UiTheme.gapS }) {
+      Column({ space: UiTheme.gapXs }) {
+        Text('素材库')
+          .fontSize(UiTheme.fontSizeTitle)
+          .fontWeight(FontWeight.Bold)
+          .fontColor(UiTheme.textPrimary)
+          .width('100%')
+      }
+      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
+
       Button('＋ 上传')
         .type(ButtonType.Normal)
         .fontSize(UiTheme.fontSizeBody)
@@ -76,7 +146,7 @@ export struct MediaLibraryPage {
         .borderWidth(1)
         .borderColor('rgba(13, 148, 136, 0.32)')
         .borderRadius(UiTheme.buttonRadius)
-        .height(32)
+        .height(34)
         .padding({ left: UiTheme.gapM, right: UiTheme.gapM })
         .onClick(() => {
           this.pageParam.onUpload();
@@ -86,287 +156,441 @@ export struct MediaLibraryPage {
     .alignItems(VerticalAlign.Center)
   }
 
-  // ────────────────── 患者筛选器 ──────────────────
+  @Builder
+  searchBox() {
+    Row({ space: UiTheme.gapS }) {
+      Text('⌕')
+        .fontSize(20)
+        .fontColor(UiTheme.textSecondary)
+        .width(22)
+        .textAlign(TextAlign.Center)
+
+      TextInput({ placeholder: '搜索素材名称或患者姓名', text: this.searchText })
+        .layoutWeight(1)
+        .height(40)
+        .padding(0)
+        .fontSize(UiTheme.fontSizeBody)
+        .fontColor(UiTheme.textPrimary)
+        .placeholderColor(UiTheme.textSecondary)
+        .backgroundColor(Color.Transparent)
+        .border({ width: 0 })
+        .maxLength(64)
+        .onChange((value: string) => {
+          this.searchText = value;
+        })
+
+      if (this.searchText.length > 0) {
+        Text('×')
+          .fontSize(22)
+          .fontColor(UiTheme.textSecondary)
+          .width(28)
+          .height(28)
+          .textAlign(TextAlign.Center)
+          .onClick(() => {
+            this.searchText = '';
+          })
+      }
+    }
+    .width('100%')
+    .height(46)
+    .padding({ left: UiTheme.gapM, right: UiTheme.gapS })
+    .backgroundColor(UiTheme.cardBackground)
+    .borderRadius(UiTheme.buttonRadius)
+    .border({ width: 1, color: UiTheme.divider })
+    .alignItems(VerticalAlign.Center)
+  }
 
   @Builder
-  patientFilterBar() {
+  sortBar() {
     Row({ space: UiTheme.gapS }) {
-      Text('患者')
+      Text('排序')
         .fontSize(UiTheme.fontSizeCaption)
         .fontColor(UiTheme.textSecondary)
 
-      Select(this.patientSelectOptions())
-        .selected(this.selectedPatientIndex())
-        .value(this.selectedPatientLabel())
-        .font({ size: UiTheme.fontSizeCaption })
+      Select(this.sortOptions())
+        .selected(this.sortMode as number)
+        .value(this.sortMode === MediaSortMode.time ? '按时间' : '按姓名')
+        .font({ size: UiTheme.fontSizeBody })
         .fontColor(UiTheme.textPrimary)
-        .selectedOptionFont({ size: UiTheme.fontSizeCaption })
+        .selectedOptionFont({ size: UiTheme.fontSizeBody })
         .selectedOptionFontColor(UiTheme.textPrimary)
-        .optionFont({ size: UiTheme.fontSizeCaption })
+        .optionFont({ size: UiTheme.fontSizeBody })
         .optionFontColor(UiTheme.textPrimary)
         .backgroundColor(UiTheme.cardBackground)
+        .borderWidth(1)
+        .borderColor(UiTheme.divider)
         .borderRadius(UiTheme.buttonRadius)
-        .height(32)
+        .height(34)
         .onSelect((index: number) => {
-          const opts: string[] = this.patientLabels();
-          if (index >= 0 && index < opts.length) {
-            this.pageParam.onSelectPatient(opts[index]);
-          }
+          this.sortMode = index === MediaSortMode.name as number
+            ? MediaSortMode.name
+            : MediaSortMode.time;
         })
     }
     .width('100%')
     .alignItems(VerticalAlign.Center)
   }
 
-  /** 患者标签数组：首项固定「全部患者」，其后接去重患者名 */
-  private patientLabels(): string[] {
-    const out: string[] = ['全部患者'];
-    const patients: string[] = this.pageParam.patients;
-    for (let i = 0; i < patients.length; i++) {
-      out.push(patients[i]);
-    }
-    return out;
-  }
-
-  /** 患者下拉选项（Select 组件需要 SelectOption[]） */
-  private patientSelectOptions(): SelectOption[] {
-    const labels: string[] = this.patientLabels();
-    const out: SelectOption[] = [];
-    for (let i = 0; i < labels.length; i++) {
-      const opt: SelectOption = { value: labels[i] };
-      out.push(opt);
-    }
-    return out;
-  }
-
-  /** 当前选中患者在选项列表里的下标（0 = 全部患者） */
-  private selectedPatientIndex(): number {
-    const opts: string[] = this.patientLabels();
-    const selected: string = this.pageParam.selectedPatient;
-    for (let i = 0; i < opts.length; i++) {
-      if (opts[i] === selected) {
-        return i;
-      }
-    }
-    return 0;
-  }
-
-  /** 当前选中患者的显示文案 */
-  private selectedPatientLabel(): string {
-    const opts: string[] = this.patientLabels();
-    const idx: number = this.selectedPatientIndex();
-    return opts[idx];
-  }
-
-  // ────────────────── Tab 切换 ──────────────────
-
-  @Builder
-  tabBar() {
-    Row({ space: UiTheme.gapS }) {
-      this.tabChip('视频素材', MediaTab.video)
-      this.tabChip('图片素材', MediaTab.image)
-    }
-    .width('100%')
+  private sortOptions(): SelectOption[] {
+    const time: SelectOption = { value: '按时间' };
+    const name: SelectOption = { value: '按姓名' };
+    return [time, name];
   }
 
   @Builder
-  tabChip(label: string, tab: MediaTab) {
-    Text(label)
-      .fontSize(UiTheme.fontSizeBody)
-      .fontWeight(this.activeTab === tab ? FontWeight.Medium : FontWeight.Normal)
-      .fontColor(this.activeTab === tab ? UiTheme.primary : UiTheme.textSecondary)
-      .padding({
-        left: UiTheme.gapM,
-        right: UiTheme.gapM,
-        top: UiTheme.gapXs,
-        bottom: UiTheme.gapXs
-      })
-      .backgroundColor(this.activeTab === tab ? 'rgba(13, 148, 136, 0.10)' : Color.Transparent)
-      .borderRadius(UiTheme.buttonRadius)
-      .onClick(() => {
-        this.activeTab = tab;
-      })
-  }
+  groupCard(group: MediaNameGroupModel) {
+    RippleCard({
+      _enabled: false,
+      _clickable: false,
+      _padding: UiTheme.cardPadding
+    }) {
+      Column({ space: UiTheme.gapM }) {
+        Row({ space: UiTheme.gapM }) {
+          Column({ space: 4 }) {
+            Text(`患者：${this.patientSummaryOf(group)}`)
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.accent)
+              .padding({ left: UiTheme.gapS, right: UiTheme.gapS, top: 3, bottom: 3 })
+              .backgroundColor('rgba(2, 132, 199, 0.08)')
+              .borderRadius(10)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-  // ────────────────── 内容区 ──────────────────
-
-  @Builder
-  contentView() {
-    if (this.activeTab === MediaTab.video) {
-      this.gridView(this.pageParam.videos, MediaType.video)
-    } else {
-      this.gridView(this.pageParam.images, MediaType.image)
-    }
-  }
-
-  @Builder
-  gridView(items: MediaItemModel[], type: MediaType) {
-    if (items.length === 0) {
-      Column({ space: UiTheme.gapS }) {
-        Text(type === MediaType.video ? '暂无视频素材' : '暂无图片素材')
-          .fontSize(UiTheme.fontSizeBody)
-          .fontColor(UiTheme.textSecondary)
-      }
-      .width('100%')
-      .height(200)
-      .justifyContent(FlexAlign.Center)
-      .alignItems(HorizontalAlign.Center)
-    } else {
-      Grid() {
-        ForEach(items, (item: MediaItemModel) => {
-          GridItem() {
-            this.mediaItem(item)
+            Text(group.name)
+              .fontSize(UiTheme.fontSizeSection)
+              .fontWeight(FontWeight.Medium)
+              .fontColor(UiTheme.textPrimary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
           }
-        }, (item: MediaItemModel) => item.id)
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+
+          Column({ space: 1 }) {
+            Text(`${group.items.length}`)
+              .fontSize(22)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(UiTheme.primary)
+
+            Text('个素材')
+              .fontSize(UiTheme.fontSizeCaption)
+              .fontColor(UiTheme.textSecondary)
+          }
+          .alignItems(HorizontalAlign.End)
+        }
+        .width('100%')
+        .alignItems(VerticalAlign.Center)
+
+        Text(this.groupSummaryOf(group))
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+
+        Scroll() {
+          Row({ space: UiTheme.gapM }) {
+            ForEach(group.items, (item: MediaItemModel) => {
+              this.materialTile(item)
+            }, (item: MediaItemModel) => item.id)
+          }
+        }
+        .width('100%')
+        .height(174)
+        .scrollable(ScrollDirection.Horizontal)
+        .scrollBar(BarState.Off)
+        .edgeEffect(EdgeEffect.Spring)
       }
-      .columnsTemplate('1fr 1fr')
-      .columnsGap(UiTheme.gapS)
-      .rowsGap(UiTheme.gapS)
       .width('100%')
-      .layoutWeight(1)
+      .alignItems(HorizontalAlign.Start)
     }
   }
 
   @Builder
-  mediaItem(item: MediaItemModel) {
+  materialTile(item: MediaItemModel) {
     Column() {
-      Stack() {
-        // 缩略图 / 占位
-        this.thumbArea(item)
+      Stack({ alignContent: Alignment.TopStart }) {
+        Column() {
+          Text(item.type === MediaType.video ? '视频' : '图片')
+            .fontSize(UiTheme.fontSizeSection)
+            .fontColor(UiTheme.textSecondary)
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+        .backgroundColor('#1A1A1A')
 
-        // 右上角操作按钮组
+        if (!this.isBroken(item.id) && this.imageSourceOf(item).length > 0) {
+          Image(this.imageSourceOf(item))
+            .width('100%')
+            .height('100%')
+            .objectFit(ImageFit.Cover)
+            .onError(() => {
+              this.markBroken(item.id);
+            })
+        }
+
         Row({ space: UiTheme.gapXs }) {
-          // 命名/重命名按钮
-          Text('名')
-            .fontSize(12)
+          Text('改')
+            .fontSize(11)
             .fontColor('#FFFFFF')
-            .width(26)
+            .width(28)
             .height(26)
             .textAlign(TextAlign.Center)
-            .borderRadius(6)
-            .backgroundColor('rgba(2, 132, 199, 0.75)')
+            .borderRadius(7)
+            .backgroundColor('rgba(2, 132, 199, 0.82)')
             .onClick(() => {
               this.pageParam.onRename(item.id);
             })
 
-          // 删除按钮
-          Text('✕')
-            .fontSize(12)
-            .fontColor('#F87171')
-            .width(26)
+          Text('删')
+            .fontSize(11)
+            .fontColor('#FFFFFF')
+            .width(28)
             .height(26)
             .textAlign(TextAlign.Center)
-            .borderRadius(6)
-            .backgroundColor('rgba(0, 0, 0, 0.55)')
+            .borderRadius(7)
+            .backgroundColor('rgba(0, 0, 0, 0.58)')
             .onClick(() => {
               this.pageParam.onDelete(item.id);
             })
         }
-        .padding(4)
+        .width('100%')
+        .padding(UiTheme.gapXs)
+        .justifyContent(FlexAlign.End)
       }
       .width('100%')
-      .aspectRatio(16 / 10)
-      .alignContent(Alignment.TopEnd)
+      .height(MEDIA_TILE_IMAGE_HEIGHT)
+      .clip(true)
 
-      // 名称
-      Text(item.name)
-        .fontSize(UiTheme.fontSizeCaption)
-        .fontColor(UiTheme.textSecondary)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
+      Column({ space: 4 }) {
+        Row({ space: UiTheme.gapXs }) {
+          Text(item.type === MediaType.video ? '视频' : '图片')
+            .fontSize(UiTheme.fontSizeCaption)
+            .fontColor(UiTheme.primary)
+
+          Text(item.createdAt.length > 0 ? item.createdAt : '日期未知')
+            .fontSize(UiTheme.fontSizeCaption)
+            .fontColor(UiTheme.textSecondary)
+            .layoutWeight(1)
+            .maxLines(1)
+            .textAlign(TextAlign.End)
+        }
         .width('100%')
-        .padding({ left: UiTheme.gapXs, right: UiTheme.gapXs, top: UiTheme.gapXs })
 
-      // 患者名（未命名时弱化显示）
-      Text(item.patient.length > 0 ? `患者：${item.patient}` : '未命名')
-        .fontSize(11)
-        .fontColor(item.patient.length > 0 ? UiTheme.accent : UiTheme.textSecondary)
-        .maxLines(1)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-        .width('100%')
-        .padding({ left: UiTheme.gapXs, right: UiTheme.gapXs })
-
-      // 时长（仅视频）
-      if (item.type === MediaType.video && item.duration !== null) {
-        Text(`${item.duration}s`)
-          .fontSize(11)
+        Text(item.type === MediaType.video && item.duration !== null
+          ? `时长 ${item.duration}s`
+          : '图片素材')
+          .fontSize(UiTheme.fontSizeCaption)
           .fontColor(UiTheme.textSecondary)
           .width('100%')
-          .padding({ left: UiTheme.gapXs, right: UiTheme.gapXs, bottom: UiTheme.gapXs })
       }
+      .width('100%')
+      .padding(UiTheme.gapS)
+      .alignItems(HorizontalAlign.Start)
     }
-    .width('100%')
-    .borderRadius(UiTheme.cardRadius)
-    .borderWidth(1)
+    .width(MEDIA_TILE_WIDTH)
+    .borderRadius(12)
+    .borderWidth(this.pageParam.selectedMediaId === item.id ? 2 : 1)
     .borderColor(this.pageParam.selectedMediaId === item.id ? UiTheme.primary : UiTheme.divider)
-    .backgroundColor('rgba(0, 0, 0, 0.06)')
+    .backgroundColor(UiTheme.cardBackground)
+    .clip(true)
     .onClick(() => {
       this.pageParam.onOpenMedia(item.id);
     })
   }
 
   @Builder
-  thumbArea(item: MediaItemModel) {
-    Column() {
-      if (this.isBroken(item.id)) {
-        // 加载失败 → 占位字形
-        Text(item.type === MediaType.video ? '影' : '图')
-          .fontSize(28)
-          .fontColor(UiTheme.textSecondary)
-      } else if (item.thumbnailUrl.length > 0 || item.url.length > 0) {
-        Image(item.thumbnailUrl.length > 0 ? item.thumbnailUrl : item.url)
-          .width('100%')
-          .height('100%')
-          .objectFit(ImageFit.Cover)
-          .onError(() => {
-            this.markBroken(item.id);
-          })
-      } else {
-        Text(item.type === MediaType.video ? '影' : '图')
-          .fontSize(28)
-          .fontColor(UiTheme.textSecondary)
-      }
-    }
-    .width('100%')
-    .height('100%')
-    .justifyContent(FlexAlign.Center)
-    .alignItems(HorizontalAlign.Center)
-    .backgroundColor('#1A1A1A')
-    .borderRadius({ topLeft: UiTheme.cardRadius, topRight: UiTheme.cardRadius })
-    .clip(true)
-  }
-
-  // ────────────────── 加载骨架 ──────────────────
-
-  @Builder
   loadingView() {
     Column({ space: UiTheme.gapM }) {
-      SkeletonBlock({ blockHeight: 96, radius: UiTheme.cardRadius })
-      SkeletonBlock({ blockHeight: 96, radius: UiTheme.cardRadius })
-      SkeletonBlock({ blockHeight: 96, radius: UiTheme.cardRadius })
+      SkeletonBlock({ blockHeight: 210, radius: UiTheme.cardRadius })
+      SkeletonBlock({ blockHeight: 210, radius: UiTheme.cardRadius })
+      SkeletonBlock({ blockHeight: 210, radius: UiTheme.cardRadius })
     }
     .width('100%')
   }
 
-  // ────────────────── 缩略图失败回退 ──────────────────
+  @Builder
+  emptyView() {
+    RippleCard({ _enabled: false, _clickable: false }) {
+      Column({ space: UiTheme.gapS }) {
+        Text(this.searchText.trim().length > 0 ? '没有找到匹配的素材' : '素材库还是空的')
+          .fontSize(UiTheme.fontSizeBody)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(UiTheme.textPrimary)
+          .width('100%')
 
-  private isBroken(id: string): boolean {
-    for (let i = 0; i < this.brokenThumbs.length; i++) {
-      if (this.brokenThumbs[i] === id) {
-        return true;
+        Text(this.searchText.trim().length > 0
+          ? '可以按素材名称或患者姓名重新搜索。'
+          : '上传一张图片或一段视频后，会按名称自动归组显示。')
+          .fontSize(UiTheme.fontSizeCaption)
+          .fontColor(UiTheme.textSecondary)
+          .width('100%')
+      }
+      .width('100%')
+      .alignItems(HorizontalAlign.Start)
+    }
+  }
+
+  private sourceMedia(): MediaItemModel[] {
+    const out: MediaItemModel[] = [];
+    const all: MediaItemModel[] = this.pageParam.mediaItems;
+    if (all.length > 0) {
+      for (let i = 0; i < all.length; i++) {
+        out.push(all[i]);
+      }
+      return out;
+    }
+
+    // 兼容页面参数刚挂载、完整列表尚未同步的一帧。
+    for (let i = 0; i < this.pageParam.videos.length; i++) {
+      out.push(this.pageParam.videos[i]);
+    }
+    for (let i = 0; i < this.pageParam.images.length; i++) {
+      out.push(this.pageParam.images[i]);
+    }
+    return out;
+  }
+
+  private buildGroups(): MediaNameGroupModel[] {
+    const source: MediaItemModel[] = this.sourceMedia();
+    const groups: MediaNameGroupModel[] = [];
+    const indexByName: Record<string, number> = {};
+
+    for (let i = 0; i < source.length; i++) {
+      const item: MediaItemModel = source[i];
+      const name: string = item.name.trim().length > 0 ? item.name.trim() : '未命名素材';
+      const key: string = name.toLowerCase();
+      const hit: number | undefined = indexByName[key];
+      if (hit !== undefined) {
+        groups[hit].items.push(item);
+        continue;
+      }
+
+      indexByName[key] = groups.length;
+      const group: MediaNameGroupModel = {
+        key: key,
+        name: name,
+        items: [item]
+      };
+      groups.push(group);
+    }
+
+    for (let i = 0; i < groups.length; i++) {
+      groups[i].items.sort((a: MediaItemModel, b: MediaItemModel): number => {
+        if (a.createdAt !== b.createdAt) {
+          return a.createdAt < b.createdAt ? 1 : -1;
+        }
+        return Number(b.id) - Number(a.id);
+      });
+    }
+    return groups;
+  }
+
+  private compareGroups(a: MediaNameGroupModel, b: MediaNameGroupModel, query: string): number {
+    if (query.length > 0) {
+      const aScore: number = this.groupSearchScore(a, query);
+      const bScore: number = this.groupSearchScore(b, query);
+      if (aScore !== bScore) {
+        return bScore - aScore;
       }
     }
-    return false;
+
+    if (this.sortMode === MediaSortMode.name) {
+      const aName: string = a.name.toLowerCase();
+      const bName: string = b.name.toLowerCase();
+      if (aName !== bName) {
+        return aName < bName ? -1 : 1;
+      }
+    }
+
+    const aDate: string = a.items.length > 0 ? a.items[0].createdAt : '';
+    const bDate: string = b.items.length > 0 ? b.items[0].createdAt : '';
+    if (aDate !== bDate) {
+      return aDate < bDate ? 1 : -1;
+    }
+    const aId: number = a.items.length > 0 ? Number(a.items[0].id) : 0;
+    const bId: number = b.items.length > 0 ? Number(b.items[0].id) : 0;
+    return bId - aId;
+  }
+
+  private groupSearchScore(group: MediaNameGroupModel, query: string): number {
+    const nameScore: number = this.textSearchScore(group.name, query, 0);
+    const patientScore: number = this.textSearchScore(this.patientSummaryOf(group), query, 120);
+    return Math.max(nameScore, patientScore);
+  }
+
+  private textSearchScore(raw: string, query: string, penalty: number): number {
+    const text: string = raw.trim().toLowerCase();
+    if (text.length === 0) {
+      return -1;
+    }
+    if (text === query) {
+      return 1000 - penalty;
+    }
+    if (text.startsWith(query)) {
+      return 900 - penalty - Math.min(text.length - query.length, 80);
+    }
+    const index: number = text.indexOf(query);
+    if (index < 0) {
+      return -1;
+    }
+    return 600 - penalty - Math.min(index, 100);
+  }
+
+  private patientSummaryOf(group: MediaNameGroupModel): string {
+    const patients: string[] = [];
+    for (let i = 0; i < group.items.length; i++) {
+      const patient: string = group.items[i].patient.trim();
+      const label: string = patient.length > 0 ? patient : '未命名患者';
+      if (patients.indexOf(label) < 0) {
+        patients.push(label);
+      }
+    }
+    return patients.length > 0 ? patients.join('、') : '未命名患者';
+  }
+
+  private groupSummaryOf(group: MediaNameGroupModel): string {
+    let imageCount: number = 0;
+    let videoCount: number = 0;
+    for (let i = 0; i < group.items.length; i++) {
+      if (group.items[i].type === MediaType.video) {
+        videoCount++;
+      } else {
+        imageCount++;
+      }
+    }
+
+    const parts: string[] = [];
+    if (imageCount > 0) {
+      parts.push(`图片 ${imageCount}`);
+    }
+    if (videoCount > 0) {
+      parts.push(`视频 ${videoCount}`);
+    }
+    if (group.items.length > 0 && group.items[0].createdAt.length > 0) {
+      parts.push(`最近 ${group.items[0].createdAt}`);
+    }
+    return parts.join(' · ');
+  }
+
+  private imageSourceOf(item: MediaItemModel): string {
+    if (item.thumbnailUrl.length > 0) {
+      return item.thumbnailUrl;
+    }
+    return item.type === MediaType.image ? item.url : '';
+  }
+
+  private isBroken(id: string): boolean {
+    return this.brokenThumbs.indexOf(id) >= 0;
   }
 
   private markBroken(id: string): void {
     if (this.isBroken(id)) {
       return;
     }
-    const next: string[] = [];
-    for (let i = 0; i < this.brokenThumbs.length; i++) {
-      next.push(this.brokenThumbs[i]);
-    }
+    const next: string[] = this.brokenThumbs.slice();
     next.push(id);
     this.brokenThumbs = next;
   }
