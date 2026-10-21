@@ -68,6 +68,7 @@
 | BUG-29 | 卡片标题显示 `3bd6295303d76580…` 这种哈希文件名，看不到患者名 | 显示层只读 `media.name` 从不读 `patient`；上传也不强制填名 | ✅ 已修 |
 | BUG-30 | 素材库点「删」后卡片仍在，必须手动刷新 | `MediaStore` 换了新数组，`AppStore.mediaItems` 还是旧引用，`doDeleteMedia` 没 `sync()` | ✅ 已修 |
 | BUG-31 | 删掉素材后重启，工作台 hero 又把它恢复出来 | RDB 评估快照还指着已删素材，`restoreAssessment()` 无条件还原 | ✅ 已修 |
+| BUG-32 | 同一个患者传了两条素材，素材库里被拆成两组 | `buildGroups()` 只按素材名分组，上传文件名带时间戳，两条 test1 名字不同 | ✅ 已修 |
 
 > 详细条目按轮次分组在下面各节；编号顺序与正文顺序不一致，按上表定位即可。
 > 编译验证基线：`bash harmony/scripts/build.sh` → **BUILD SUCCESSFUL**（2026-10-18）。
@@ -1421,6 +1422,56 @@ NameError: name 'MEDIA_DIR' is not defined
 `harmony/entry/src/main/ets/store/AppStore.ets`、`pages/MainPage.ets`、
 `pages/WorkbenchPage.ets`、`pages/ReportsPage.ets`、`pages/MediaLibraryPage.ets`、
 `pages/MediaPickerPage.ets`、`components/PatientNameDialog.ets`
+
+
+# 同名归组轮 · 新增缺陷（BUG-32）
+
+## BUG-32 · 同一个患者的两条素材被拆成两组
+
+**现象**
+连续用同一个患者名「test1」传两张图，素材库里出现两张卡片，各 1 个素材；
+用户原话：「我命名了两个test1结果这两个人在素材库不放在一起」。
+
+**根因**
+`MediaLibraryPage.buildGroups()` 的分组键是**素材名**：
+
+```ts
+const name: string = item.name.trim().length > 0 ? item.name.trim() : '未命名素材';
+const key: string = name.toLowerCase();
+```
+
+而上传时文件名被规范成 `<患者名>_<yyyyMMdd_HHmmss><ext>`（为了不再出现
+`3bd6295303d76580…` 这种哈希名），两条 test1 的时间戳不同 →
+`test1_20261022_002822.jpg` 与 `test1_20261022_003140.jpg` 是两个 key。
+患者名才是"人"的语义，素材名只是文件。
+
+> 弯路记录：第一版按"人脸相同"去做（MTCNN 对齐 + LBP/HOG 描述子 + 余弦阈值聚类），
+> 被用户一句「我的意思是命名相同，不是人脸相同！」否掉，代码已删。
+> 这里要的是**按名字分组**，不是生物识别。
+
+**修法**
+分组键改为「患者名优先、没有患者名才退回素材名」，标题同步用患者名：
+
+```ts
+const patient: string = item.patient.trim();
+const title: string = patient.length > 0 ? patient : fileName;
+const key: string = patient.length > 0 ? `p:${patient.toLowerCase()}` : `n:${fileName.toLowerCase()}`;
+```
+
+`MediaNameGroupModel` 增加 `fileName` 字段专作副标题；新增 `groupSubtitleOf()`，
+组内多条时显示「`test1_20261022_003140.jpg` 等 2 个文件」，与标题重复则不显示。
+`groupSearchScore()` 把 `fileName` 也纳入打分（`penalty 60`），所以按患者名、
+按文件名都搜得到。
+
+**验证（2026-10-22 00:36–00:37，模拟器）**
+素材库由「共 6 组素材 · 6 个文件」变为「共 5 组素材 · 6 个文件」，test1 组标题
+「test1」、副标题「test1_20261022_003140.jpg 等 2 个文件」、右侧 `2 个素材`，
+两张缩略图并排（`group_1_lib.jpeg`）；搜索框输入 `test1` 只剩这一组 2 个文件
+（`group_2_search.jpeg`）。
+
+**涉及文件**
+`harmony/entry/src/main/ets/pages/MediaLibraryPage.ets`
+
 
 
 

@@ -20,7 +20,10 @@ enum MediaSortMode {
 
 interface MediaNameGroupModel {
   key: string;
+  /** 组标题：有患者名用患者名，没有才用素材名 */
   name: string;
+  /** 组内最新一条的原始文件名，作副标题用 */
+  fileName: string;
   items: MediaItemModel[];
 }
 
@@ -265,8 +268,8 @@ export struct MediaLibraryPage {
               .maxLines(1)
               .textOverflow({ overflow: TextOverflow.Ellipsis })
 
-            if (this.singlePatientOf(group).length > 0) {
-              Text(group.name)
+            if (this.groupSubtitleOf(group).length > 0) {
+              Text(this.groupSubtitleOf(group))
                 .fontSize(UiTheme.fontSizeCaption)
                 .fontColor(UiTheme.textSecondary)
                 .maxLines(1)
@@ -463,25 +466,35 @@ export struct MediaLibraryPage {
     return out;
   }
 
+  /**
+   * 按"同一个人"分组：**患者名优先**，没有患者名才退回素材名。
+   *
+   * ★ BUG-32：以前只按素材名分组，上传时文件被规范成 `test1_20261022_002822.jpg`
+   *   和 `test1_20261022_003140.jpg`，同一个患者被拆成两组。患者名是人填的，
+   *   语义上才是"人"，所以同名的素材必须归到一组。
+   */
   private buildGroups(): MediaNameGroupModel[] {
     const source: MediaItemModel[] = this.sourceMedia();
     const groups: MediaNameGroupModel[] = [];
-    const indexByName: Record<string, number> = {};
+    const indexByKey: Record<string, number> = {};
 
     for (let i = 0; i < source.length; i++) {
       const item: MediaItemModel = source[i];
-      const name: string = item.name.trim().length > 0 ? item.name.trim() : '未命名素材';
-      const key: string = name.toLowerCase();
-      const hit: number | undefined = indexByName[key];
+      const fileName: string = item.name.trim().length > 0 ? item.name.trim() : '未命名素材';
+      const patient: string = item.patient.trim();
+      const title: string = patient.length > 0 ? patient : fileName;
+      const key: string = patient.length > 0 ? `p:${patient.toLowerCase()}` : `n:${fileName.toLowerCase()}`;
+      const hit: number | undefined = indexByKey[key];
       if (hit !== undefined) {
         groups[hit].items.push(item);
         continue;
       }
 
-      indexByName[key] = groups.length;
+      indexByKey[key] = groups.length;
       const group: MediaNameGroupModel = {
         key: key,
-        name: name,
+        name: title,
+        fileName: fileName,
         items: [item]
       };
       groups.push(group);
@@ -527,8 +540,9 @@ export struct MediaLibraryPage {
 
   private groupSearchScore(group: MediaNameGroupModel, query: string): number {
     const nameScore: number = this.textSearchScore(group.name, query, 0);
+    const fileScore: number = this.textSearchScore(group.fileName, query, 60);
     const patientScore: number = this.textSearchScore(this.patientSummaryOf(group), query, 120);
-    return Math.max(nameScore, patientScore);
+    return Math.max(Math.max(nameScore, fileScore), patientScore);
   }
 
   private textSearchScore(raw: string, query: string, penalty: number): number {
@@ -590,6 +604,21 @@ export struct MediaLibraryPage {
       return patient;
     }
     return group.name.trim().length > 0 ? group.name : '未命名素材';
+  }
+
+  /** 卡片副标题：原始文件名；同名多条素材时补一句"共 N 个文件" */
+  private groupSubtitleOf(group: MediaNameGroupModel): string {
+    const fileName: string = group.fileName.trim();
+    const title: string = this.groupTitleOf(group).trim();
+    const count: number = group.items.length;
+    let text: string = fileName;
+    if (count > 1) {
+      text = `${fileName} 等 ${count} 个文件`;
+    }
+    if (text.toLowerCase() === title.toLowerCase()) {
+      return '';
+    }
+    return text;
   }
 
   private groupSummaryOf(group: MediaNameGroupModel): string {
