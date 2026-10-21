@@ -301,16 +301,23 @@ export struct RegisterPage {
       .backgroundColor(UiTheme.pageBackground)
 
       // ── 失败弹窗（覆盖在最上层，不占布局；与登录页同一组件） ──
-      if (this.alertVisible) {
-        AuthAlert({
-          title: this.alertTitle,
-          message: this.alertMessage,
-          hint: this.alertHint,
-          onClose: () => {
-            this.alertVisible = false;
-          }
-        })
+      //
+      // ★ 套一层 `.position({x:0,y:0})`：直接当 Stack 子节点时它一出现会把页面
+      //   本体整体下推（登录页实测被推 104vp），绝对定位之后才真正"不占布局"。
+      Column() {
+        if (this.alertVisible) {
+          AuthAlert({
+            title: this.alertTitle,
+            message: this.alertMessage,
+            hint: this.alertHint,
+            onClose: () => {
+              this.alertVisible = false;
+            }
+          })
+        }
       }
+      .width('100%')
+      .position({ x: 0, y: 0 })
     }
     .width('100%')
     .height('100%')

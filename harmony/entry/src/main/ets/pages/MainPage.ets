@@ -5,7 +5,7 @@
  * ```
  * Navigation(this.navStack)          ← 唯一的路由栈
  *   ├─ 内容区：各页的 NavDestination（由 navDestination 分发器渲染）
- *   └─ 底部：五个自定义按钮（工作台 / 素材库 / 历史报告 / 统计 / 我的）
+ *   └─ 底部：五个自定义按钮（工作台 / 素材库 / 历史报告 / 统计 / 我的 · 图标 + 文字）
  * ```
  *
  * 四条实现要点：
@@ -58,15 +58,9 @@ import { ProfilePage } from './ProfilePage';
 import { MediaPickerPage } from './MediaPickerPage';
 import { AnalysisDetailPage } from './AnalysisDetailPage';
 
-/**
- * 页签胶囊的高度与圆角
- *
- * ★ 高度写死、不让文字自己撑：五个胶囊必须一样高。字重差异（选中 Medium / 未选 Normal）
- *   会让行高差一点点，选中时底色块的上下边就会轻微跳动，一眼看得出来。
- * ★ 32 = 正文行高约 20 + 上下各 6 的内边距；圆角取高度一半即胶囊形（与进度条同一套取法）。
- */
-const TAB_CAPSULE_HEIGHT: number = 32;
-const TAB_CAPSULE_RADIUS: number = TAB_CAPSULE_HEIGHT / 2;
+// 页签选中胶囊的尺寸已收进 `UiTheme`（`tabIconPillWidth` / `tabIconPillHeight`）：
+// 本轮改成"图标在上、文字在下"后，底色只罩图标，不再由文字宽度/行高撑出来，
+// 所以本地不需要再留 `TAB_CAPSULE_HEIGHT` 这类"写死防跳动"的常量。
 
 @ComponentV2
 export struct MainPage {
@@ -952,41 +946,61 @@ export struct MainPage {
   // ══════════════════ 底部导航栏 ══════════════════
 
   /**
-   * 底部页签栏 · **纯文字 + 选中胶囊底**
+   * 底部页签栏 · **图标在上、文字在下 + 选中胶囊底**
    *
-   * ★ 这里刻意**不再渲染** `mainTabGlyph(item.tab)`：`MainTabMeta.glyph` 只是一个汉字
-   *   （析/库/报/统/我），摆在图标位就成了"单字图标"——真机上读起来像乱码或被截断的标签，
-   *   用户已按截图判定为视觉缺陷。`PageRoutes` 的 `glyph` 字段与 `mainTabGlyph()` 保留不动
-   *   （路由元数据仍可能被别处按名字取用），本栏只是不再消费它。
+   * ────────────── 本轮改动（用户指定）──────────────
+   * 五枚图标由用户提供（办公桌 / 审计清单 / 四柱图 / 人像），本轮替换掉此前的"纯文字"页签：
+   * 「素材库」用户没给对应图标，自绘了一个相册图标（同为 24 网格、描边 2，与审计清单同风格）。
+   * 图标资源与颜色见 `PageRoutes.MAIN_TABS` 与 `UiTheme` 的 tab* 令牌。
    *
-   * ★ 选中态改用胶囊底表达：未选中只有 textSecondary 文字、无底色；选中是薄荷绿胶囊
-   *   （`cardPressTint`）+ 主色文字 + Medium 字重。胶囊随文字宽度，在各自的等分槽里居中。
+   * ────────────── 为什么每个页签两份 SVG（★ 实测约束）──────────────
+   * `Image.fillColor()` 在官方定义里是"叠加在图像上的填充色"，且**只改填充、不改描边**：
+   * 审计清单那枚整枚都是 `stroke`，若靠 fillColor 换色，会出现"页签选中了、图标还是灰的"。
+   * 所以颜色烤进 SVG 文件，选中/未选中各一份（`tab_*` / `tab_*_on`），两态共用同一条属性链，
+   * builder 里只按 `selectedTab` 选资源，不写 if/else。
+   *
+   * ────────────── 为什么胶囊只罩图标 ──────────────
+   * 这是 Material 3 底部导航栏的写法：底色块只包图标，文字留在外面。
+   * 若连文字一起罩进胶囊，"历史报告"四个字会顶到胶囊边缘，看着像被裁掉一截
+   * （当年 `TAB_CAPSULE_HEIGHT` 就是为这个问题写死高度的）。
+   *
+   * ★ `MainTabMeta.glyph`（析/库/报/统/我）与 `mainTabGlyph()` 保留不动，
+   *   但本栏不再消费它们 —— 单字当图标在真机上读起来像乱码，用户已按截图判定为视觉缺陷。
    */
   @Builder
   tabBar() {
     Row() {
       ForEach(MAIN_TABS, (item: MainTabMeta) => {
-        // 槽本身负责"等分 + 居中 + 点击"：胶囊只有文字那么宽，点击区却仍是整槽，好按
-        Row() {
+        Column() {
+          // 图标胶囊：槽内居中，只有图标这一层带底色（选中薄荷绿、未选中全透明）
+          Row() {
+            Image(this.selectedTab === item.tab ? item.iconActive : item.icon)
+              .width(UiTheme.tabIconSize)
+              .height(UiTheme.tabIconSize)
+              .objectFit(ImageFit.Contain)
+              .draggable(false)
+              .interpolation(ImageInterpolation.High)
+          }
+          .width(UiTheme.tabIconPillWidth)
+          .height(UiTheme.tabIconPillHeight)
+          .justifyContent(FlexAlign.Center)
+          .alignItems(VerticalAlign.Center)
+          .borderRadius(UiTheme.tabIconPillHeight / 2)
+          // 未选中给全透明而不是"不设底色"：两态共用一条属性链，builder 里不必写 if/else
+          .backgroundColor(this.selectedTab === item.tab ? UiTheme.cardPressTint : Color.Transparent)
+
           Text(item.label)
             .fontSize(UiTheme.fontSizeBody)
             .fontWeight(this.selectedTab === item.tab ? FontWeight.Medium : FontWeight.Normal)
             .fontColor(this.selectedTab === item.tab ? UiTheme.primary : UiTheme.textSecondary)
             .maxLines(1)
-            .height(TAB_CAPSULE_HEIGHT)
-            // ★ 左右内边距取 gapS(8) 而不是更宽的档位：五个页签是等分槽，
-            //   "历史报告"四个字在 14fp 下已占约 56vp，槽宽只有屏宽/5，
-            //   再宽的内边距会把字挤出槽外（ArkUI 会按槽宽回夹，字就被截断）。
-            .padding({ left: UiTheme.gapS, right: UiTheme.gapS })
-            .borderRadius(TAB_CAPSULE_RADIUS)
-            // 未选中给全透明而不是"不设底色"：两态共用一条属性链，builder 里不必写 if/else
-            .backgroundColor(this.selectedTab === item.tab ? UiTheme.cardPressTint : Color.Transparent)
             .textAlign(TextAlign.Center)
+            .margin({ top: UiTheme.gapXs })
         }
         .layoutWeight(1)
         .height(UiTheme.tabBarHeight)
         .justifyContent(FlexAlign.Center)
-        .alignItems(VerticalAlign.Center)
+        .alignItems(HorizontalAlign.Center)
         .onClick(() => {
           this.pushTab(item.tab);
         })

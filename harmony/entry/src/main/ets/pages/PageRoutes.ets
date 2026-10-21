@@ -52,26 +52,41 @@ export class MainTabMeta {
   public tab: MainTab = MainTab.workbench;
   /** 底部按钮与页面标题的中文名 */
   public label: string = '';
-  /** 底部按钮的字形（本轮不引入图片资源，用单字代替图标） */
+  /** 底部按钮的字形（历史字段 · 图标上线后底部栏不再消费，保留给仍按名字取用的地方） */
   public glyph: string = '';
+  /** 未选中态图标 · 灰（`UiTheme.textSecondary`） */
+  public icon: Resource = $r('app.media.tab_workbench');
+  /** 选中态图标 · 主色（`UiTheme.primary`） */
+  public iconActive: Resource = $r('app.media.tab_workbench_on');
 
-  constructor(tab: MainTab, label: string, glyph: string) {
+  constructor(tab: MainTab, label: string, glyph: string, icon: Resource, iconActive: Resource) {
     this.tab = tab;
     this.label = label;
     this.glyph = glyph;
+    this.icon = icon;
+    this.iconActive = iconActive;
   }
 }
 
 /**
  * 五个一级页签 · **顺序即底部导航栏的展示顺序**
  * ★ 用户指定顺序：工作台 / 素材库 / 历史报告 / 统计 / 我的
+ * ★ 图标（24 网格 SVG，`resources/base/media/tab_*.svg`）：
+ *   工作台=办公桌 / 素材库=相册（用户没给这一枚，自绘）/ 历史报告=审计清单 /
+ *   统计=四柱图 / 我的=人像。每个页签两份文件，区别只在颜色：
+ *   未选中 `#4E5969`（textSecondary）、选中 `#0D9488`（primary）。
  */
 export const MAIN_TABS: MainTabMeta[] = [
-  new MainTabMeta(MainTab.workbench, '工作台', '析'),
-  new MainTabMeta(MainTab.media, '素材库', '库'),
-  new MainTabMeta(MainTab.reports, '历史报告', '报'),
-  new MainTabMeta(MainTab.stats, '统计', '统'),
-  new MainTabMeta(MainTab.profile, '我的', '我')
+  new MainTabMeta(MainTab.workbench, '工作台', '析',
+    $r('app.media.tab_workbench'), $r('app.media.tab_workbench_on')),
+  new MainTabMeta(MainTab.media, '素材库', '库',
+    $r('app.media.tab_media'), $r('app.media.tab_media_on')),
+  new MainTabMeta(MainTab.reports, '历史报告', '报',
+    $r('app.media.tab_reports'), $r('app.media.tab_reports_on')),
+  new MainTabMeta(MainTab.stats, '统计', '统',
+    $r('app.media.tab_stats'), $r('app.media.tab_stats_on')),
+  new MainTabMeta(MainTab.profile, '我的', '我',
+    $r('app.media.tab_profile'), $r('app.media.tab_profile_on'))
 ];
 
 // ══════════════════ ③ 小工具 ══════════════════

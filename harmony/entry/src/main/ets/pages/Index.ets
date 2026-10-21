@@ -3,11 +3,15 @@
  *
  * 它只做"阶段分支"，不画任何业务界面：
  * ```
- *                            ┌ 开屏页（SplashView，覆盖在最上层，引导完成后淡出）
- * Index（本文件，@ComponentV2）┼ bootPhase = idle / preparing        → 骨架屏（开屏页背后）
- *                            ├ signedIn  = false                   → 登录流（独立 Navigation）
+ *                            ┌ bootPhase = idle / preparing        → 待机页（StandbyView）
+ * Index（本文件，@ComponentV2）┼ signedIn  = false                   → 登录流（独立 Navigation）
  *                            └ signedIn  = true                    → 主界面（独立 Navigation）
  * ```
+ *
+ * ★ 待机页不是"覆盖层"而是**一个真实的阶段**（`phase === ''`）：用户看到的第一个界面
+ *   就是它，引导结束后它被登录页顶掉。登录页的入场动画（图标放大 + 白层上滑）写在
+ *   `LoginPage.playEnter()` 里，两个页面的品牌区共用 `UiTheme.heroTop / heroLogoWidth`，
+ *   所以这一刀切下去图标不会跳。
  *
  * ★ 本文件是**唯一**允许触碰 store、网络与路由栈的 UI 文件（"窗口层"）：
  *   两个分支里的页面组件全部只接受参数（见 `types/PageParams.ets` 的三条纪律）。
@@ -27,20 +31,33 @@ import { UiTheme } from '../common/UiTheme';
 import { AppStore } from '../store/AppStore';
 import { ActionResultModel, AuthFailKind, BootPhase } from '../types/Index';
 import { LoginPageParam, MainPageParam, RegisterPageParam } from '../types/PageParams';
-import { AuthSkeleton } from '../components/SkeletonView';
-import { SplashView } from '../components/SplashView';
+import { StandbyView } from '../components/StandbyView';
 import { LOGIN_ROUTE, REGISTER_ROUTE } from './PageRoutes';
 import { LoginPage } from './LoginPage';
 import { RegisterPage } from './RegisterPage';
 import { MainPage } from './MainPage';
+import { window } from '@kit.ArkUI';
+import { BusinessError } from '@kit.BasicServicesKit';
 
 /**
- * 开屏页的**硬上限**（毫秒）
- * ★ 为什么需要：开屏页的收起原本只等 `AppBootstrap.ready`，
- *   一旦引导因为异常卡住（例如 preferences 打开失败后没有收敛），
- *   用户会永远停在开屏页。这里给一个兜底时长，到点就露出下面的骨架屏。
+ * 待机页最短展示时长（毫秒）· 见 `UiTheme.standbyMinDurationMs`
+ *
+ * ★ 为什么由本页来卡：引导流程（读缓存 → 探活 → 拉数据）在缓存命中时两百毫秒就结束了，
+ *   不留下限的话"待机页"只会闪一下 —— 用户看到的是白屏闪动，比不显示更难看。
+ *   这里把"允许离开待机页"的最早时刻记下来，而不是去延迟引导本身（引导越快越好）。
  */
-const SPLASH_MAX_MS: number = 5000;
+const STANDBY_MIN_MS: number = UiTheme.standbyMinDurationMs;
+
+/** 已登录冷启动时，待机页淡出到主界面的时长（毫秒） */
+const COVER_FADE_MS: number = 360;
+
+/**
+ * 图标长大之后、切页之前的停顿（毫秒）
+ *
+ * ★ 需要一点点"停住"：放大结束时图标正好停在登录页的尺寸上，留 60ms 让眼睛
+ *   确认"它已经到了"，白层再盖上来才像是接着发生的第二拍，而不是同一口气。
+ */
+const STANDBY_HOLD_MS: number = 60;
 
 @Entry
 @ComponentV2
@@ -80,14 +97,45 @@ struct Index {
   @Local retrying: boolean = false;
 
   /**
-   * 开屏页是否还在显示
-   * ★ 它是**覆盖层**，不是阶段分支：开屏期间下面的骨架屏/登录流照常构建，
-   *   收起时只播一个淡出，不会引起下层重新布局。
+   * 是否还压在待机页上
+   *
+   * ★ 它是"最短展示时长"的执行者：`phase` 可能很早就变成 'auth'/'main'，
+   *   但只要这个开关还是 true，`shownPhase` 就继续返回 ''（继续显示待机页）。
+   *   到点后置 false，界面一次性切到真实阶段 —— 切换动作本身是"一帧完成"的，
+   *   因为登录页有自己的入场动画、主界面有自己的淡出覆盖层。
    */
-  @Local splashVisible: boolean = true;
+  @Local holdStandby: boolean = true;
 
-  /** 应用启动时刻（毫秒）· 用来算"开屏页还差多少才到最短展示时长" */
+  /**
+   * 待机页图标的"长大"倍数（1 → 1/heroLogoStart）
+   *
+   * ★ 用户选定的节奏是"图标先放大，白层再盖上"：引导就绪且够时长后，先在
+   *   **待机页上**把图标推到登录页的尺寸（`heroEnterMs`），推完才切页；
+   *   登录页接手时图标已经是最终大小，只需要把白层盖上来。
+   * ★ 只改这一个数就能让整个转场停下：`animateTo` 只动 `scale()`，不触发排版。
+   */
+  @Local standbyGrowScale: number = 1;
+
+  /**
+   * 冷启动直通主界面时的品牌色覆盖层
+   *
+   * ★ 为什么只在这一条路上需要：待机页 → 登录页有"白层上滑"做衔接；
+   *   而待机页 → 主界面是两套完全不同的版式（青绿 ↔ 浅灰），硬切会像闪屏。
+   *   所以先把待机页留在最上层，让主界面在底下构建好，再把它淡出。
+   */
+  @Local bootCoverVisible: boolean = false;
+
+  /** 覆盖层当前透明度 */
+  @Local bootCoverOpacity: number = 1;
+
+  /** 应用启动时刻（毫秒）· 用来算"待机页还差多少才到最短展示时长" */
   private launchAt: number = 0;
+
+  /** 覆盖层是否已经播过（只在冷启动时播一次） */
+  private coverPlayed: boolean = false;
+
+  /** 状态栏内容色是否已按当前阶段设置过（避免每帧都调系统接口） */
+  private barStyleApplied: string = '';
 
   /** 主界面的动作回调是否已挂载（登出回调只挂一次） */
   private mainActionsAttached: boolean = false;
@@ -111,6 +159,36 @@ struct Index {
       return '';
     }
     return this.app.signedIn ? 'main' : 'auth';
+  }
+
+  /**
+   * 界面上**实际**显示哪个阶段 · 只在"待机页最短展示时长"内与 `phase` 不同
+   *
+   * ★ 两个都保留的原因：`phase` 是"数据真相"（store 到哪一步了），
+   *   `shownPhase` 是"观感真相"（用户现在该看什么）。把它们混成一个会让
+   *   "引导已完成"与"界面已切换"两件事纠缠在一起，后面加延迟或兜底就无处下刀。
+   */
+  @Computed
+  get shownPhase(): string {
+    if (this.holdStandby) {
+      return '';
+    }
+    return this.phase;
+  }
+
+  /**
+   * 待机页底部那句状态 · 让等待**可解释**
+   *
+   * ★ "正在启动"与"正在准备数据"必须分开：前者一闪而过，后者在慢网/坏服务端时
+   *   会停留十几秒 —— 用户看到"正在准备数据"才知道是在等后端，而不是 App 挂了。
+   */
+  @Computed
+  get standbyStatusText(): string {
+    const phase: BootPhase = this.app.bootPhase;
+    if (phase === BootPhase.preparing) {
+      return '正在准备数据…';
+    }
+    return '正在启动…';
   }
 
   /**
@@ -235,40 +313,117 @@ struct Index {
 
   aboutToAppear(): void {
     this.launchAt = Date.now();
+    this.applyBarStyle(this.phase !== 'main');
     // ★ 先把登录页压入登录流的栈：首次渲染时栈非空，不会出现根内容闪一帧的情况
     if (!this.loginStackReady) {
       this.loginStackReady = true;
       this.syncLoginParam();
       this.loginStack.pushPathByName(LOGIN_ROUTE, this.loginParam, false);
     }
-    // 引导流程在 EntryAbility.onCreate 里已经点火，这里只等它结束再刷新一次界面
+    // 引导流程在 EntryAbility.onCreate 里已经点火，这里只等它结束
     AppBootstrap.ready.then(() => {
       this.refreshUi();
-      this.dismissSplash();
+      this.releaseStandby();
     });
-    // ★ 兜底：引导万一卡住，开屏页也必须让位（否则用户永远看到开屏页）
-    setTimeout((): void => {
-      this.splashVisible = false;
-    }, SPLASH_MAX_MS);
   }
 
-  // ══════════════════ 开屏页 ══════════════════
+  // ══════════════════ 待机页收尾 ══════════════════
 
   /**
-   * 收起开屏页（**至少**显示 `UiTheme.splashMinDurationMs`）
+   * 允许离开待机页（**至少**展示 `STANDBY_MIN_MS`）
    *
-   * ★ 为什么要设下限：引导流程在缓存命中时两百毫秒就结束了，
-   *   不留一个下限的话开屏页只会"闪一下"，比不显示更难看。
-   * ★ 收起方式：把 `splashVisible` 置 false，由 `build()` 里那个 `if` 上的
-   *   `transition(OPACITY)` 播淡出；下层的登录流/骨架屏在这期间就已经构建好了，
-   *   所以淡出结束看到的是**已经就绪**的界面，不会出现"先白一下再出内容"。
+   * ★ 到点后按阶段分两条路：
+   *   · 未登录 → 先在待机页上把图标放大到登录页尺寸，**放完才切页**（用户选的节奏）；
+   *   · 已登录 → 直接放开开关，再用品牌色覆盖层淡出（主界面版式完全不同，硬切会闪）。
+   * ★ 顺序不能反：先放开开关再刷界面，`shownPhase` 才会算出真实阶段。
    */
-  private dismissSplash(): void {
+  private releaseStandby(): void {
     const elapsed: number = Date.now() - this.launchAt;
-    const wait: number = elapsed >= UiTheme.splashMinDurationMs ? 0 : (UiTheme.splashMinDurationMs - elapsed);
+    const wait: number = elapsed >= STANDBY_MIN_MS ? 0 : (STANDBY_MIN_MS - elapsed);
     setTimeout((): void => {
-      this.splashVisible = false;
+      if (this.phase !== 'main') {
+        this.growStandbyLogoThenEnter();
+        return;
+      }
+      this.holdStandby = false;
+      this.refreshUi();
+      this.playBootCoverIfNeeded();
     }, wait);
+  }
+
+  /**
+   * 待机页图标"长大"到登录页尺寸，之后再切页
+   *
+   * ★ 这是"待机页 → 登录页"转场的第一拍：图标在**原地**从 0.84 长到 1
+   *   （`.scale()` 不参与排版，下面的 MindScope/产品名一动不动）。
+   * ★ 放完再切，是为了让"长大"这件事被看见：如果切页和放大同时发生，
+   *   白层会盖住放大过程的后半段（用户实测感受是"没看清就没了"）。
+   */
+  private growStandbyLogoThenEnter(): void {
+    this.getUIContext().animateTo({
+      duration: UiTheme.heroEnterMs,
+      curve: Curve.EaseOut
+    }, (): void => {
+      // 父级 @Param 变化会带动子组件一起播这条动画
+      this.standbyGrowScale = 1 / UiTheme.heroLogoStart;
+    });
+    setTimeout((): void => {
+      this.holdStandby = false;
+      this.refreshUi();
+    }, UiTheme.heroEnterMs + STANDBY_HOLD_MS);
+  }
+
+  /**
+   * 冷启动直通主界面时，把待机页当覆盖层淡出
+   *
+   * ★ 只在 `phase === 'main'` 且没播过时执行一次；登录流不需要它（白层上滑已经在衔接）。
+   */
+  private playBootCoverIfNeeded(): void {
+    if (this.coverPlayed || this.phase !== 'main') {
+      return;
+    }
+    this.coverPlayed = true;
+    this.bootCoverVisible = true;
+    this.bootCoverOpacity = 1;
+    this.getUIContext().animateTo({
+      duration: COVER_FADE_MS,
+      curve: Curve.EaseInOut
+    }, (): void => {
+      this.bootCoverOpacity = 0;
+    });
+    setTimeout((): void => {
+      this.bootCoverVisible = false;
+    }, COVER_FADE_MS + 40);
+  }
+
+  /**
+   * 按当前页面底色设置状态栏/导航栏内容色
+   *
+   * ★ 必须切：待机页与登录页是**青绿满屏**，系统默认的深色图标在上面几乎看不见；
+   *   主界面、注册页是浅色页面，用白色图标同样看不见。所以这里跟着当前页面改，
+   *   而不是在 EntryAbility 里写死一次。
+   * ★ `onBrand = true` 表示"这一页是青绿底、要白图标"。
+   * ★ 失败只记日志：状态栏颜色是"锦上添花"，不能因为系统接口拒绝而让页面挂掉。
+   */
+  private applyBarStyle(onBrand: boolean): void {
+    const key: string = onBrand ? 'brand' : 'light';
+    if (this.barStyleApplied === key) {
+      return;
+    }
+    this.barStyleApplied = key;
+    window.getLastWindow(getContext(this)).then((win: window.Window): void => {
+      const props: window.SystemBarProperties = {
+        statusBarContentColor: onBrand ? '#FFFFFF' : '#000000',
+        isStatusBarLightIcon: onBrand,
+        navigationBarContentColor: onBrand ? '#FFFFFF' : '#000000',
+        isNavigationBarLightIcon: onBrand
+      };
+      win.setWindowSystemBarProperties(props).catch((err: BusinessError): void => {
+        console.error(`Index.applyBarStyle 失败: ${err.code} ${err.message}`);
+      });
+    }).catch((err: BusinessError): void => {
+      console.error(`Index.applyBarStyle 取窗口失败: ${err.code} ${err.message}`);
+    });
   }
 
   // ══════════════════ 页面参数构造（★ 唯一注入点） ══════════════════
@@ -293,6 +448,10 @@ struct Index {
   private refreshUi(): void {
     this.tick = this.tick + 1;
     this.syncAllParams();
+    // ★ 阶段可能刚变（登录成功 / 登出），状态栏内容色要跟着切。
+    //   注意这里只按"阶段"给粗值：auth 阶段默认落在登录页（青绿），
+    //   注册页是浅色页面，由 `loginDestination` 里的 onShown/onHidden 再纠正。
+    this.applyBarStyle(this.phase !== 'main');
   }
 
   /** 把 store 的实时状态写进缓存的登录页参数（动作回调只挂一次，不重复创建闭包） */
@@ -437,12 +596,18 @@ struct Index {
         LoginPage({ pageParam: param as LoginPageParam })
       }
       .hideTitleBar(true)
-      .backgroundColor(UiTheme.pageBackground)
+      // ★ 兜底用品牌深色（不是浅灰）：登录页是青绿满屏，
+      //   万一它某一帧没画满，露出来的也应该是同一族的深青绿，而不是一条浅灰边。
+      .backgroundColor(UiTheme.brandEnd)
       // ★ 登录页是登录流的**根页面**：系统返回键不允许把它弹掉。
       //   弹掉之后栈为空，Navigation 只会露出一个空白根内容（真机实测：整屏纯白，
       //   用户会以为应用卡死）。返回 true = 消费返回事件。
       .onBackPressed((): boolean => {
         return true;
+      })
+      // 回到登录页 = 回到青绿底，状态栏图标要换回白色
+      .onShown(() => {
+        this.applyBarStyle(true);
       })
     } else if (name === REGISTER_ROUTE && param instanceof RegisterPageParam) {
       NavDestination() {
@@ -451,15 +616,26 @@ struct Index {
       .hideTitleBar(true)
       .backgroundColor(UiTheme.pageBackground)
       // 注册页允许返回（回到登录页），因此这里**不**拦截
+      // ★ 注册页是浅灰底（登录页是青绿底），状态栏图标必须跟着换深色，
+      //   否则进到注册页后时间/电量就"消失"了（实测白图标压在 #F2F3F7 上）
+      .onShown(() => {
+        this.applyBarStyle(false);
+      })
+      .onHidden(() => {
+        this.applyBarStyle(true);
+      })
     }
   }
 
   // ══════════════════ 界面组装 ══════════════════
 
-  /** 引导中 · 骨架屏（规范：加载时显示骨架屏） */
+  /** 引导中 · 待机页（用户看到的第一个界面） */
   @Builder
-  readyStage() {
-    AuthSkeleton()
+  standbyStage() {
+    StandbyView({
+      statusText: this.standbyStatusText,
+      growScale: this.standbyGrowScale
+    })
   }
 
   /** 未登录 · 登录流（登录页 ↔ 注册页） */
@@ -484,13 +660,16 @@ struct Index {
       .navDestination(this.loginDestination)
       .hideTitleBar(true)
       .mode(NavigationMode.Stack)
-      .backgroundColor(UiTheme.pageBackground)
+      // ★ 透明：登录页自己铺满青绿渐变（并扩到状态栏底下），
+      //   这里再刷一层底色会在安全区边缘留下细边
+      .backgroundColor(Color.Transparent)
       .width('100%')
       .height('100%')
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(UiTheme.pageBackground)
+    // ★ 透明：见下方 `stageContent` 的同名说明
+    .backgroundColor(Color.Transparent)
   }
 
   /** 已登录 · 主界面 */
@@ -499,13 +678,13 @@ struct Index {
     MainPage({ pageParam: this.mainParam })
   }
 
-  /** 当前阶段的界面（开屏页淡出后露出的就是它） */
+  /** 当前阶段的界面（待机页 / 登录流 / 主界面） */
   @Builder
   stageContent() {
     Column() {
-      if (this.phase.length === 0) {
-        this.readyStage()
-      } else if (this.phase === 'auth') {
+      if (this.shownPhase.length === 0) {
+        this.standbyStage()
+      } else if (this.shownPhase === 'auth') {
         this.authStage()
       } else {
         this.mainStage()
@@ -513,19 +692,21 @@ struct Index {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor(UiTheme.pageBackground)
+    // ★ 透明：三个阶段各自满屏作画（待机/登录是青绿渐变且要铺进状态栏），
+    //   这里再刷一层浅灰只会在安全区边缘露出细边
+    .backgroundColor(Color.Transparent)
   }
 
   build() {
-    // ★ 两层结构：① 阶段内容 ② 开屏页（覆盖在最上层）
-    //   开屏页是"覆盖"而不是"阶段"，所以它淡出时下层已经构建完成，
-    //   不会出现"白一下再出内容"的中间态，也不需要额外的骨架屏衔接。
+    // ★ 两层结构：① 阶段内容 ② 冷启动直通主界面时的品牌色覆盖层（只在这一条路上出现）
     Stack({ alignContent: Alignment.TopStart }) {
       this.stageContent()
 
-      if (this.splashVisible) {
-        SplashView()
-          .transition(TransitionEffect.OPACITY.animation({ duration: 320, curve: Curve.EaseInOut }))
+      if (this.bootCoverVisible) {
+        StandbyView({ statusText: '正在准备数据…' })
+          .opacity(this.bootCoverOpacity)
+          // 覆盖层只是"盖着看一眼"，不该吃掉下层主界面的点击
+          .hitTestBehavior(HitTestMode.None)
       }
     }
     .width('100%')
