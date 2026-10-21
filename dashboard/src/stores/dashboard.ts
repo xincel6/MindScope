@@ -1,8 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { MediaItem, AnalysisFrame } from '@/api/index'
-import { apiFetch, parseApiError } from '@/api/http'
-import { fetchMediaList, triggerAnalysis, deleteMedia as deleteMediaApi } from '@/api/index'
+import {
+  fetchMediaList,
+  triggerAnalysis,
+  deleteMedia as deleteMediaApi,
+  uploadMedia as uploadMediaApi,
+  renamePatient as renamePatientApi,
+} from '@/api/index'
 
 export interface FaceFrameSnapshot {
   key: string
@@ -34,11 +39,31 @@ export const severityLabels: Record<SeverityLevel, string> = {
   severe: '重度抑郁',
 }
 
+/** 数据表达色（色块 / 图例 / 饼图扇区 / 边框）：鸿蒙 UiConstant.severityMeta().color 四色。
+ *  对白底对比度 3.30 / 4.10 / 3.19 / 4.83 —— 只有 severe 够正文，其余**只做填充与图标**。 */
 export const severityColors: Record<SeverityLevel, string> = {
-  none: '#f2f3b2',
-  mild: '#b2f3cd',
-  moderate: '#b2c3f3',
-  severe: '#f3b2bd',
+  none: '#16A34A',
+  mild: '#0284C7',
+  moderate: '#D97706',
+  severe: '#DC2626',
+}
+
+/** 文字态（badge 文字 / 数值 / 标签）：对白底 5.02 / 5.93 / 5.02 / 6.47，全部过 AA 正文。 */
+export const severityTextColors: Record<SeverityLevel, string> = {
+  none: '#15803D',
+  mild: '#0369A1',
+  moderate: '#B45309',
+  severe: '#B91C1C',
+}
+
+/** 取数据表达色。入参常是接口返回的 string/any，这里一次性收窄，避免各组件重复 TS7053 断言。 */
+export function severityColorOf(level: SeverityLevel | string): string {
+  return severityColors[level as SeverityLevel] ?? severityColors.none
+}
+
+/** 取文字态色。语义同 severityColorOf（文字一律走这个）。 */
+export function severityTextColorOf(level: SeverityLevel | string): string {
+  return severityTextColors[level as SeverityLevel] ?? severityTextColors.none
 }
 
 export const severitySuggestions: Record<SeverityLevel, string> = {
@@ -68,7 +93,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   // --- WebSocket ---
   const wsConnected = ref(false)
-  const isDemo = ref(false)
 
   // --- VLM ---
   const vlmAnalysis = ref('')
@@ -80,8 +104,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     ageRange: string
     assessmentDate: string
   } | null>(null)
-
-  const demoPlaying = ref(false)
 
   /** 视频/图片分析过程中累积的人脸帧缩略图（base64），用于左侧人脸帧模块 */
   const faceFrameHistory = ref<FaceFrameSnapshot[]>([])
@@ -97,6 +119,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const severity = computed(() => getSeverity(currentScore.value))
   const severityLabel = computed(() => severityLabels[severity.value])
   const severityColor = computed(() => severityColors[severity.value])
+  /** 文字态：数值 / 标签 / badge 一律用它（数据色只做填充） */
+  const severityTextColor = computed(() => severityTextColors[severity.value])
   const suggestion = computed(() => severitySuggestions[severity.value])
 
   const selectedMedia = computed(() =>
@@ -116,7 +140,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     }
   }
 
-  /** 删除素材：演示模式与本地视频仅更新前端；其余调用后端并移除磁盘文件 */
+  /** 删除素材：本地视频仅更新前端；其余调用后端并移除磁盘文件 */
   async function removeMedia(id: string) {
     if (id === 'local-video') {
       if (localVideoUrl.value) {
@@ -128,16 +152,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
       if (selectedMediaId.value === id) {
         selectedMediaId.value = null
         reset()
-        stopDemoAnalysis()
-      }
-      return
-    }
-    if (isDemo.value) {
-      mediaList.value = mediaList.value.filter((m) => m.id !== id)
-      if (selectedMediaId.value === id) {
-        selectedMediaId.value = null
-        reset()
-        stopDemoAnalysis()
       }
       return
     }
@@ -146,7 +160,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     if (selectedMediaId.value === id) {
       selectedMediaId.value = null
       reset()
-      stopDemoAnalysis()
     }
   }
 
@@ -171,34 +184,50 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   const uploadLoading = ref(false)
 
-  async function uploadAndAnalyze(file: File) {
+  /**
+   * 上传素材：只「加入列表 + 选中」，**不再自动开始分析**（P4a 行为变更）。
+   *
+   * 原 `uploadAndAnalyze` 会在上传成功后立刻 `startAnalysis()`，导致：
+   *   · 用户还没确认患者名，推理已经跑起来了；
+   *   · 想改患者名只能等一次完整分析跑完。
+   * 现在改为与鸿蒙一致的两步式：上传 → 选中 → 用户在工作台点「开始分析」
+   * （`AssessmentHeroCard` 在「有素材、无帧、未分析」时正好显示「开始分析」按钮）。
+   *
+   * `patient` 可选，走后端 query 参数（`upload.py` 里 `patient` 是 Query(None)）。
+   * 返回上传后的素材；失败返回 null 并把原因写进 `mediaError`。
+   */
+  async function uploadMedia(file: File, patient?: string): Promise<MediaItem | null> {
     uploadLoading.value = true
     mediaError.value = ''
     try {
-      const form = new FormData()
-      form.append('file', file)
-      const res = await apiFetch('/api/upload/image', { method: 'POST', body: form })
-      if (!res.ok) {
-        throw new Error(await parseApiError(res, '上传失败'))
-      }
-      const uploaded = await res.json()
-      // Add to media list
-      mediaList.value.unshift({
-        id: uploaded.id,
-        name: uploaded.name,
-        type: uploaded.type,
-        thumbnail_url: '',
-        url: uploaded.url,
-        duration: undefined,
-        created_at: new Date().toISOString().split('T')[0],
-      })
-      // Auto-start analysis
-      await startAnalysis(uploaded.id)
-    } catch (e: any) {
-      mediaError.value = e.message ?? '上传失败'
+      const uploaded = await uploadMediaApi(file, patient)
+      mediaList.value.unshift(uploaded)
+      // 选中新素材前先清掉上一个素材的分析态：否则旧 WebSocket 的帧会继续
+      // 落在 currentFrame 上，看起来像是新素材的评分（reset 不动 mediaList/selectedMediaId）。
+      reset()
+      selectedMediaId.value = uploaded.id
+      return uploaded
+    } catch (e: unknown) {
+      mediaError.value = e instanceof Error ? e.message : '上传失败'
+      return null
     } finally {
       uploadLoading.value = false
     }
+  }
+
+  /** @deprecated P4a 起上传不再自动分析，请用 `uploadMedia`；保留别名只为不遗漏旧调用点。 */
+  const uploadAndAnalyze = uploadMedia
+
+  /**
+   * 修改素材所属患者：调 `PUT /api/media/{id}/patient`，成功后**只局部更新列表**，
+   * 不重新拉整页（素材库按患者分组，改完分组会自然重算）。
+   * `local-video` 是纯前端 blob 素材（没有后端记录），只改本地字段、跳过请求。
+   */
+  async function renamePatient(id: string, patient: string) {
+    const name = (patient ?? '').trim()
+    const saved = id === 'local-video' ? name : await renamePatientApi(id, name)
+    const item = mediaList.value.find((m) => m.id === id)
+    if (item) item.patient = saved
   }
 
   function handleWsMessage(data: any) {
@@ -286,7 +315,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
 
   /** 主界面「返回」：清空主监控区与选中素材，但保留左侧人脸帧列表 */
   function exitMainDisplayKeepFaceFrames() {
-    stopDemoAnalysis()
     analyzing.value = false
     currentFrame.value = null
     bdiHistory.value = []
@@ -319,7 +347,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     },
     meta: { frameId: number; videoName: string },
   ) {
-    stopDemoAnalysis()
     analyzing.value = false
     ignoreIncomingWsFrames.value = true
     singleFaceImageMode.value = true
@@ -376,93 +403,6 @@ export const useDashboardStore = defineStore('dashboard', () => {
     selectedMediaId.value = id
   }
 
-  // --- Demo mode: simulate analysis without backend ---
-  let demoInterval: ReturnType<typeof setInterval> | null = null
-
-  function loadDemoData() {
-    isDemo.value = true
-    mediaList.value = [
-      { id: '1', name: '患者A_初始访谈.mp4', type: 'video', thumbnail_url: '', url: '', duration: 120, created_at: '2026-04-10' },
-      { id: '2', name: '患者B_随访记录.mp4', type: 'video', thumbnail_url: '', url: '', duration: 90, created_at: '2026-04-12' },
-      { id: '3', name: '患者C_情绪评估.png', type: 'image', thumbnail_url: '', url: '', created_at: '2026-04-15' },
-      { id: '4', name: '患者D_心理咨询.mp4', type: 'video', thumbnail_url: '', url: '', duration: 180, created_at: '2026-04-18' },
-      { id: '5', name: '患者A_复诊.png', type: 'image', thumbnail_url: '', url: '', created_at: '2026-04-20' },
-      { id: '6', name: '匿名样本_001.mp4', type: 'video', thumbnail_url: '', url: '', duration: 60, created_at: '2026-04-22' },
-    ]
-    mediaError.value = ''
-    mediaLoading.value = false
-  }
-
-  function startDemoAnalysis(id: string) {
-    stopDemoAnalysis()
-    selectedMediaId.value = id
-    analyzing.value = true
-    bdiHistory.value = []
-    analysisProgress.value = 0
-    currentFrame.value = null
-    faceFrameHistory.value = []
-    ignoreIncomingWsFrames.value = false
-    singleFaceImageMode.value = false
-    singleFaceImageUrl.value = ''
-    singleFaceLabel.value = ''
-    wsConnected.value = true
-
-    let frameId = 0
-    const totalFrames = 60
-    // Simulate a score trajectory that moves from normal to moderate and back
-    const baseScore = 18 + Math.random() * 10
-
-    demoInterval = setInterval(() => {
-      frameId++
-      const progress = frameId / totalFrames
-      const noise = Math.sin(frameId * 0.3) * 6 + (Math.random() - 0.5) * 4
-      const score = Math.max(0, Math.min(63, baseScore + noise))
-
-      const frame: AnalysisFrame = {
-        frame_id: frameId,
-        timestamp: Date.now() / 1000,
-        bdi_score: score,
-        aligned_face: '',
-        heatmap_data: generateDemoHeatmap(),
-        inference_time_ms: 24 + Math.random() * 8,
-        progress,
-      }
-
-      handleFrame(frame)
-
-      // 演示模式无人脸图时跳过人脸帧条；若有 base64 可在此填入
-
-      if (progress >= 1) {
-        stopDemoAnalysis()
-      }
-    }, 300)
-  }
-
-  function generateDemoHeatmap(): number[][] {
-    const size = 16
-    const data: number[][] = []
-    for (let y = 0; y < size; y++) {
-      const row: number[] = []
-      for (let x = 0; x < size; x++) {
-        // Gaussian-like hotspot near center
-        const dx = (x - size / 2) / (size / 4)
-        const dy = (y - size / 2) / (size / 4)
-        const v = Math.exp(-(dx * dx + dy * dy) / 1.5)
-        row.push(Math.round(v * 100) / 100)
-      }
-      data.push(row)
-    }
-    return data
-  }
-
-  function stopDemoAnalysis() {
-    if (demoInterval) {
-      clearInterval(demoInterval)
-      demoInterval = null
-    }
-    analyzing.value = false
-  }
-
   function setPatientInfo(info: typeof patientInfo.value) {
     patientInfo.value = info
   }
@@ -470,16 +410,16 @@ export const useDashboardStore = defineStore('dashboard', () => {
   return {
     mediaList, mediaLoading, mediaError, selectedMediaId,
     analyzing, currentFrame, bdiHistory, faceImageData, heatmapData,
-    inferenceTimeMs, analysisProgress, wsConnected, isDemo, demoPlaying, analysisRunId,
-    currentScore, severity, severityLabel, severityColor, suggestion, selectedMedia,
+    inferenceTimeMs, analysisProgress, wsConnected, analysisRunId,
+    currentScore, severity, severityLabel, severityColor, severityTextColor, suggestion, selectedMedia,
     patientInfo, setPatientInfo,
     faceFrameHistory,
     ignoreIncomingWsFrames, singleFaceImageMode, singleFaceImageUrl, singleFaceLabel,
-    loadMediaList, removeMedia, startAnalysis, uploadAndAnalyze, uploadLoading, handleFrame, handleWsMessage, setWsConnected, reset,
+    loadMediaList, removeMedia, startAnalysis, uploadMedia, uploadAndAnalyze, uploadLoading,
+    renamePatient, handleFrame, handleWsMessage, setWsConnected, reset,
     exitMainDisplayKeepFaceFrames, clearFaceFrameHistory,
     applySingleFrameAnalysisResult, switchVideoAnalysisToSingleFaceImage,
     localVideoUrl, localVideoName, setLocalVideo,
-    loadDemoData, startDemoAnalysis, stopDemoAnalysis,
     vlmAnalysis,
   }
 })

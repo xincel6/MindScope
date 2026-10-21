@@ -109,12 +109,12 @@ watch(() => props.visible, (v) => {
 
 <style scoped>
 .patient-dialog :deep(.el-dialog) {
-  --el-dialog-bg-color: var(--bg-secondary);
+  --el-dialog-bg-color: var(--bg-card);
 }
 
 .patient-dialog :deep(.el-dialog__title) {
-  color: var(--accent-cyan);
-  font-size: 15px;
+  color: var(--text-primary);
+  font-size: var(--font-base);
 }
 
 .patient-form {
@@ -125,13 +125,13 @@ watch(() => props.visible, (v) => {
 
 .form-item label {
   display: block;
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--text-secondary);
   margin-bottom: 4px;
 }
 
 .required {
-  color: var(--accent-red);
+  color: var(--color-danger);
 }
 
 .dialog-footer {

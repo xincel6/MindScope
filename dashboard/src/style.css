@@ -1,87 +1,75 @@
 @import "tailwindcss";
+@import "./styles/tokens.css";
 
 /* ================================================================
    抑郁症智能辅助诊断系统 — 清新浅色主题
    主色：天青 + 薄荷绿，温和明亮
    ================================================================ */
 
+/* ----------------------------------------------------------------
+   P0 · 旧变量兼容层（过渡期；本段在 @import 的 tokens.css 之后）
+
+   目的只有一个：让 P0 的渲染结果与重构前**逐像素一致**。
+   - 「异名同值」→ 直接写成 var(--新令牌) 别名；
+   - 「同名不同值」→ 这里保留旧字面值（本段在 tokens.css 之后，按层叠
+     顺序天然覆盖同名新令牌），P1 逐行删除即切到新令牌；
+   - 旧变量名一个都不删：全项目 301 处 var() 引用依赖这些名字。
+   ---------------------------------------------------------------- */
 :root {
-  /* 背景层级 */
-  --bg-primary: #eef6fb;
-  --bg-secondary: #ffffff;
-  --bg-elevated: #ffffff;
-  --bg-card: #ffffff;
-  --bg-card-hover: #f5fbff;
-  --bg-inset: #f1f5f9;
-  --bg-muted: #e8f4f8;
+  /* 背景层级 · 只剩别名，色值全部来自 tokens.css（P1：style.css 不再持有第二套值） */
+  --bg-primary: var(--bg-page);
+  --bg-secondary: var(--bg-card);
+  --bg-elevated: var(--bg-card);
+  --bg-muted: var(--bg-inset);
 
   /* 边框 */
-  --border-color: rgba(14, 165, 233, 0.14);
-  --border-active: rgba(13, 148, 136, 0.45);
-  --border-subtle: rgba(148, 163, 184, 0.18);
+  --border-color: var(--border);
+  --border-subtle: var(--border);
 
-  /* 品牌色 — 天青 + 薄荷 */
-  --accent-primary: #0d9488;
-  --accent-cyan: #0891b2;
-  --accent-blue: #0284c7;
-  --accent-teal: #14b8a6;
-  --accent-mint: #2dd4bf;
-  --accent-violet: #6366f1;
-  --accent-yellow: #f59e0b;
-  --accent-red: #ef4444;
+  /* 品牌色（旧名别名；--accent-teal/mint/violet 已删，全部 0 引用） */
+  --accent-primary: var(--color-primary);
+  --accent-cyan: var(--color-accent);            /* 旧名 · 归并到辅助蓝（原 #0891b2 青调） */
+  --accent-blue: var(--color-accent);
+  --accent-yellow: var(--color-warning);         /* 旧名 · 归并到警示色（原 #f59e0b） */
+  --accent-red: var(--color-danger);
 
-  /* 临床严重度 */
-  --severity-none: #059669;
-  --severity-mild: #0284c7;
-  --severity-moderate: #d97706;
-  --severity-severe: #dc2626;
+  /* 临床严重度 · tokens.css 已定义同名令牌（--severity-*），本段不再声明 */
 
   /* 文字 */
-  --text-primary: #1e3a5f;
-  --text-secondary: #475569;
-  --text-muted: #94a3b8;
-  --text-label: #64748b;
+  --text-muted: var(--text-secondary);   /* §2.2 弱化文字统一走次要文字（2.56:1 → 7.3:1） */
+  --text-label: var(--text-secondary);
 
   /* 图表 */
-  --chart-axis: #94a3b8;
-  --chart-split: rgba(148, 163, 184, 0.25);
-  --chart-line: #0891b2;
-  --chart-area: rgba(8, 145, 178, 0.12);
-  --chart-tooltip-bg: #ffffff;
-  --chart-tooltip-border: rgba(14, 165, 233, 0.2);
-  --chart-tooltip-text: #334155;
+  --chart-split: var(--chart-grid);
+  --chart-line: var(--color-accent);
+  --chart-area: color-mix(in srgb, var(--color-accent) 12%, transparent);
+  --chart-tooltip-bg: var(--bg-card);
+  --chart-tooltip-border: var(--border);
+  --chart-tooltip-text: var(--text-primary);
 
-  /* 阴影 */
-  --shadow-sm: 0 1px 2px rgba(14, 116, 144, 0.06);
-  --shadow-card: 0 1px 3px rgba(14, 116, 144, 0.08), 0 4px 12px rgba(14, 116, 144, 0.05);
-  --shadow-card-hover: 0 4px 16px rgba(14, 116, 144, 0.12);
-  --radius-sm: 8px;
-  --radius-card: 12px;
-  --radius-lg: 16px;
+  /* 阴影 · §2.6 只留 2 级（--shadow-card-hover 已删，hover 不再抬升） */
+  --shadow-sm: var(--shadow-card);
 
-  /* 布局 */
-  --header-height: 56px;
-  --sidebar-width: 248px;
-  --report-width: 400px;
-  --content-gap: 12px;
-  --page-padding: 16px;
+  /* 圆角 */
+  --radius-sm: var(--radius-tag);   /* 别名 → --radius-tag（8px） */
+  --radius-lg: var(--radius-card);  /* 旧名 · 并入 --radius-card（16px） */
 
   /* 字体 */
-  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
-  --font-sans: 'PingFang SC', 'Microsoft YaHei', 'SF Pro Display', sans-serif;
-  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --font-mono: 'JetBrains Mono', 'Fira Code', monospace;  /* 旧名 · Web 独有字族（UiTheme 无字体族常量） */
+  --font-sans: 'PingFang SC', 'Microsoft YaHei', 'SF Pro Display', sans-serif;  /* 同上 */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);         /* 旧名 · Web 独有缓动，P5 收口 */
 
-  /* Element Plus 浅色适配 */
-  --el-bg-color: #ffffff;
-  --el-bg-color-overlay: #ffffff;
-  --el-text-color-primary: #1e3a5f;
-  --el-text-color-regular: #475569;
-  --el-text-color-secondary: #64748b;
-  --el-text-color-placeholder: #94a3b8;
-  --el-border-color: rgba(14, 165, 233, 0.18);
-  --el-border-color-light: rgba(14, 165, 233, 0.1);
-  --el-fill-color-blank: #ffffff;
-  --el-color-primary: #0d9488;
+  /* Element Plus 浅色适配（非设计令牌；全部指向设计令牌） */
+  --el-bg-color: var(--bg-card);
+  --el-bg-color-overlay: var(--bg-card);
+  --el-text-color-primary: var(--text-primary);
+  --el-text-color-regular: var(--text-secondary);
+  --el-text-color-secondary: var(--text-secondary);
+  --el-text-color-placeholder: var(--text-secondary);
+  --el-border-color: var(--border);
+  --el-border-color-light: var(--border);
+  --el-fill-color-blank: var(--bg-card);
+  --el-color-primary: var(--color-primary);
 }
 
 /* ================================================================
@@ -94,19 +82,19 @@ html, body, #app {
   height: 100vh;
   overflow: hidden;
   font-family: var(--font-sans);
-  background: var(--bg-primary) !important;
+  background: var(--bg-page) !important;
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
-  font-size: 14px;
+  font-size: var(--font-sm);
   line-height: 1.5;
 }
 
-::selection { background: rgba(13, 148, 136, 0.2); color: var(--text-primary); }
+::selection { background: color-mix(in srgb, var(--color-primary) 20%, transparent); color: var(--text-primary); }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(13, 148, 136, 0.22); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(13, 148, 136, 0.35); }
+::-webkit-scrollbar-thumb { background: var(--bg-skeleton); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--chart-axis); }
 
 /* ================================================================
    KEYFRAMES
@@ -134,32 +122,7 @@ html, body, #app {
   flex-direction: column;
   position: relative;
   overflow: hidden;
-  background: var(--bg-primary);
-}
-
-.page-shell > :not(.app-bg) {
-  position: relative;
-  z-index: 1;
-}
-
-.app-bg,
-.neuro-bg {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 0;
-  background: linear-gradient(145deg, #eef6fb 0%, #e6f4f1 45%, #edf5ff 100%);
-}
-
-.app-bg::before,
-.neuro-bg::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(ellipse 55% 40% at 5% 0%, rgba(45, 212, 191, 0.12) 0%, transparent 55%),
-    radial-gradient(ellipse 50% 35% at 95% 100%, rgba(14, 165, 233, 0.1) 0%, transparent 50%),
-    radial-gradient(ellipse 40% 30% at 50% 50%, rgba(255, 255, 255, 0.6) 0%, transparent 70%);
+  background: var(--bg-page);
 }
 
 .page-content {
@@ -175,35 +138,33 @@ html, body, #app {
   width: 100%;
 }
 
+/* P3 五个一级页的统一内容容器：页面滚动交给 AppLayout 的 .app-main */
+.app-page {
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: var(--page-padding);
+  min-height: 100%;
+}
+
 /* ================================================================
-   PANEL CARD
+   PANEL CARD · §2.6 三件套：白卡 + 1px 描边 + 极淡投影，无 hover 抬升
    ================================================================ */
 .glass-card {
   background: var(--bg-card);
-  border: 1px solid var(--border-color);
+  border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--shadow-card);
   animation: fadeInUp 0.28s var(--ease-out-expo);
   position: relative;
   overflow: hidden;
-  transition: border-color 0.2s, box-shadow 0.2s, background 0.2s;
-}
-
-.glass-card:hover {
-  border-color: var(--border-active);
-  box-shadow: var(--shadow-card-hover);
-}
-
-.glass-card--flat:hover {
-  box-shadow: var(--shadow-card);
-  background: var(--bg-card);
 }
 
 /* ================================================================
-   SECTION TITLE
+   SECTION TITLE · 层级靠字号/字重，不靠渐变小色条
    ================================================================ */
 .section-title {
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 12px;
@@ -213,24 +174,15 @@ html, body, #app {
   flex-shrink: 0;
 }
 
-.section-title::before {
-  content: '';
-  width: 3px;
-  height: 14px;
-  background: linear-gradient(180deg, var(--accent-teal), var(--accent-cyan));
-  border-radius: 2px;
-  flex-shrink: 0;
-}
-
 .section-title--bordered {
   padding-bottom: 10px;
-  border-bottom: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border);
 }
 
 .section-subtitle {
-  font-size: 11px;
+  font-size: var(--font-xs);
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-left: auto;
 }
 
@@ -246,62 +198,100 @@ html, body, #app {
 .status-dot {
   width: 7px; height: 7px; border-radius: 50%; display: inline-block; flex-shrink: 0;
 }
-.status-dot.connected { background: #10b981; }
-.status-dot.disconnected { background: var(--accent-red); }
-.status-dot.connecting { background: var(--accent-yellow); animation: breathe 1.2s ease-in-out infinite; }
+.status-dot.connected { background: var(--status-online); }
+.status-dot.disconnected { background: var(--status-offline); }
+.status-dot.connecting { background: var(--color-warning); animation: breathe 1.2s ease-in-out infinite; }
 
 .clinical-disclaimer {
   padding: 8px 12px;
-  background: #fff8f0;
-  border: 1px solid rgba(217, 119, 6, 0.2);
-  border-radius: var(--radius-sm);
-  font-size: 11px;
-  color: #92400e;
+  background: var(--color-warning-soft);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--color-warning);
+  border-radius: var(--radius-tag);
+  font-size: var(--font-xs);
+  color: var(--text-primary);
   line-height: 1.55;
 }
 
 /* ================================================================
-   ELEMENT PLUS OVERRIDES
+   ELEMENT PLUS OVERRIDES · 全部指向设计令牌，无硬编码色
    ================================================================ */
-.el-tabs__item {
-  color: var(--text-secondary) !important;
-  font-weight: 500;
-  font-size: 13px;
-}
-.el-tabs__item.is-active { color: var(--accent-primary) !important; }
-.el-tabs__active-bar { background: var(--accent-primary) !important; height: 2px !important; }
-.el-tabs__header { border-bottom-color: var(--border-color) !important; margin-bottom: 0 !important; }
-.el-tabs__nav-wrap::after { background: var(--border-color) !important; }
-
 .el-card {
   background: var(--bg-card) !important;
-  border-color: var(--border-color) !important;
+  border-color: var(--border) !important;
   color: var(--text-primary) !important;
   border-radius: var(--radius-card) !important;
 }
 
-.el-tag { font-family: var(--font-mono); font-size: 11px; }
-.el-button { font-weight: 500; border-radius: var(--radius-sm) !important; }
-.el-button.is-round { border-radius: var(--radius-sm) !important; }
-.el-button--primary {
-  --el-button-bg-color: var(--accent-primary);
-  --el-button-border-color: var(--accent-primary);
-  --el-button-hover-bg-color: #0f766e;
-  --el-button-hover-border-color: #0f766e;
+/* 默认 8px 圆角（P5 统一，走 --radius-tag）；EP 的 4px 不再出现。
+   .is-round 由 EP 自己覆盖为胶囊，保留。 */
+.el-tag {
+  font-family: inherit;
+  font-size: var(--font-xs);
+  border-radius: var(--radius-tag);
 }
-.el-skeleton { --el-skeleton-color: rgba(13, 148, 136, 0.08); }
-.el-empty__description p { color: var(--text-muted) !important; }
+/* EP 浅色 primary 标签默认 #0D9488 on #ECF5FF 仅 3.4:1，12px 正文不达 AA；
+   文字改用同色系文字令牌后 4.99:1，底色/描边不变。 */
+.el-tag--primary {
+  color: var(--color-primary-text);
+}
+.el-button { font-weight: 500; border-radius: var(--radius-control) !important; }
+.el-button.is-round { border-radius: var(--radius-pill) !important; }
+
+/* P5 T2 · 主按钮专用底色：白字对 --color-primary (#0D9488) 仅 3.74:1，
+   改用 --color-primary-button (#0F766E) 后 5.47:1，过 WCAG AA 正文要求。
+   hover / active 用同色系压暗（与 --text-primary 混合），避免回到低对比绿。
+   #0D9488 仍用于图标、强调、选中态、焦点环等非文字场景。 */
+.el-button--primary {
+  --el-button-bg-color: var(--color-primary-button);
+  --el-button-border-color: var(--color-primary-button);
+  --el-button-text-color: var(--bg-card);
+  --el-button-hover-bg-color: color-mix(in srgb, var(--color-primary-button) 86%, var(--text-primary));
+  --el-button-hover-border-color: color-mix(in srgb, var(--color-primary-button) 86%, var(--text-primary));
+  --el-button-hover-text-color: var(--bg-card);
+  --el-button-active-bg-color: color-mix(in srgb, var(--color-primary-button) 74%, var(--text-primary));
+  --el-button-active-border-color: color-mix(in srgb, var(--color-primary-button) 74%, var(--text-primary));
+  --el-button-active-text-color: var(--bg-card);
+  /* disabled 也不再落到 primary-light-5（白字对比不足）：保持 5.47:1，
+     用 cursor + 无 hover 反馈表达禁用态。 */
+  --el-button-disabled-bg-color: var(--color-primary-button);
+  --el-button-disabled-border-color: var(--color-primary-button);
+  --el-button-disabled-text-color: var(--bg-card);
+}
+/* 浅色/文字/链接三种 primary 变体：常态文字同样用 5.47:1 的按钮底色令牌 */
+.el-button--primary.is-plain,
+.el-button--primary.is-text,
+.el-button--primary.is-link {
+  --el-button-text-color: var(--color-primary-button);
+  --el-button-hover-text-color: var(--bg-card);
+  --el-button-hover-bg-color: var(--color-primary-button);
+  --el-button-hover-border-color: var(--color-primary-button);
+  --el-button-active-text-color: var(--bg-card);
+}
+.el-button--primary.is-text:not(.is-disabled):hover,
+.el-button--primary.is-link:not(.is-disabled):hover,
+.el-button--primary.is-text:not(.is-disabled):active,
+.el-button--primary.is-link:not(.is-disabled):active {
+  color: var(--color-primary-button);
+}
+/* 危险操作浅色按钮：EP 的 danger-light-9 底配红字只有 2.61:1；
+   把常态文字压暗到 ~5.9:1，仍保留危险语义；hover 维持 EP 实底白字。 */
+.el-button--danger.is-plain {
+  --el-button-text-color: color-mix(in srgb, var(--color-danger) 78%, var(--text-primary));
+}
+.el-skeleton { --el-skeleton-color: var(--bg-skeleton); }
+.el-empty__description p { color: var(--text-secondary) !important; }
 
 .el-dialog {
-  border-radius: var(--radius-lg) !important;
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border-color) !important;
-  box-shadow: var(--shadow-card-hover) !important;
+  border-radius: var(--radius-card) !important;
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: var(--shadow-popover) !important;
 }
 .el-dialog__title { color: var(--text-primary) !important; font-weight: 600 !important; }
 
 .el-collapse {
-  --el-collapse-border-color: var(--border-color);
+  --el-collapse-border-color: var(--border);
   --el-collapse-header-bg-color: transparent;
   --el-collapse-content-bg-color: transparent;
   --el-collapse-header-text-color: var(--text-secondary);
@@ -310,69 +300,162 @@ html, body, #app {
 }
 .el-collapse-item__header {
   background: transparent !important;
-  border-bottom-color: var(--border-color) !important;
-  font-size: 12px !important;
+  border-bottom-color: var(--border) !important;
+  font-size: var(--font-xs) !important;
   font-weight: 600 !important;
   color: var(--text-secondary) !important;
   height: 38px !important;
   line-height: 38px !important;
 }
-.el-collapse-item__wrap { border-bottom-color: var(--border-color) !important; }
-.el-collapse-item__content { padding-bottom: 12px !important; font-size: 12px; line-height: 1.65; }
+.el-collapse-item__wrap { border-bottom-color: var(--border) !important; }
+.el-collapse-item__content { padding-bottom: 12px !important; font-size: var(--font-xs); line-height: 1.65; }
 
-.el-tag[color="#059669"],
-.el-tag[color="#10b981"] { --el-tag-bg-color: rgba(5, 150, 105, 0.1); --el-tag-border-color: rgba(5, 150, 105, 0.25); --el-tag-text-color: #047857; }
-.el-tag[color="#0284c7"],
-.el-tag[color="#3b82f6"] { --el-tag-bg-color: rgba(2, 132, 199, 0.1); --el-tag-border-color: rgba(2, 132, 199, 0.25); --el-tag-text-color: #0369a1; }
-.el-tag[color="#d97706"],
-.el-tag[color="#f59e0b"] { --el-tag-bg-color: rgba(217, 119, 6, 0.1); --el-tag-border-color: rgba(217, 119, 6, 0.25); --el-tag-text-color: #b45309; }
-.el-tag[color="#dc2626"],
-.el-tag[color="#ef4444"] { --el-tag-bg-color: rgba(220, 38, 38, 0.1); --el-tag-border-color: rgba(220, 38, 38, 0.25); --el-tag-text-color: #b91c1c; }
+/* 严重度标签：原 8 条 [color="#..."] 属性选择器 → 4 条语义类名。
+   「填充色 10% 混透明 + -text 文字态」：数据色本身（3.19–4.83:1）只作填充/图标，
+   文字一律用 --severity-*-text（5.02–6.47:1，过 AA）。 */
+.sev-none {
+  --el-tag-bg-color: color-mix(in srgb, var(--severity-none) 10%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--severity-none) 32%, transparent);
+  --el-tag-text-color: var(--severity-none-text);
+}
+.sev-mild {
+  --el-tag-bg-color: color-mix(in srgb, var(--severity-mild) 10%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--severity-mild) 32%, transparent);
+  --el-tag-text-color: var(--severity-mild-text);
+}
+.sev-moderate {
+  --el-tag-bg-color: color-mix(in srgb, var(--severity-moderate) 10%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--severity-moderate) 32%, transparent);
+  --el-tag-text-color: var(--severity-moderate-text);
+}
+.sev-severe {
+  --el-tag-bg-color: color-mix(in srgb, var(--severity-severe) 10%, transparent);
+  --el-tag-border-color: color-mix(in srgb, var(--severity-severe) 32%, transparent);
+  --el-tag-text-color: var(--severity-severe-text);
+}
 
 .el-table th.el-table__cell {
-  background: var(--bg-muted) !important;
+  background: var(--bg-inset) !important;
   font-weight: 600;
-  font-size: 11px;
-  color: var(--text-label) !important;
+  font-size: var(--font-xs);
+  color: var(--text-secondary) !important;
 }
 .el-table tr { background: transparent !important; }
 .el-table td.el-table__cell {
-  border-bottom-color: var(--border-subtle) !important;
+  border-bottom-color: var(--border) !important;
   color: var(--text-primary) !important;
 }
 .el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
-  background: rgba(13, 148, 136, 0.03) !important;
+  background: var(--bg-press) !important;
 }
 
 .el-popper.is-light,
 .el-popper.is-dark {
-  background: var(--bg-secondary) !important;
-  border: 1px solid var(--border-color) !important;
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border) !important;
   color: var(--text-primary) !important;
 }
 
 .el-input__wrapper {
   background: var(--bg-inset) !important;
-  box-shadow: 0 0 0 1px var(--border-subtle) inset !important;
+  box-shadow: 0 0 0 1px var(--border) inset !important;
 }
 .el-input__wrapper:hover,
 .el-input__wrapper.is-focus {
-  box-shadow: 0 0 0 1px var(--accent-primary) inset !important;
+  box-shadow: 0 0 0 1px var(--color-primary) inset !important;
 }
 
-.el-select-dropdown { background: var(--bg-secondary) !important; }
+.el-select-dropdown { background: var(--bg-card) !important; }
 
-.el-tabs--border-card {
-  background: transparent !important;
-  border-color: var(--border-color) !important;
-}
-.el-tabs--border-card > .el-tabs__header {
-  background: var(--bg-muted) !important;
-  border-bottom-color: var(--border-color) !important;
-}
-.el-tabs--border-card > .el-tabs__header .el-tabs__item.is-active {
-  background: var(--bg-card) !important;
-  color: var(--accent-primary) !important;
+.el-alert { border-radius: var(--radius-tag) !important; }
+
+/* ================================================================
+   P5 T3 · 键盘焦点可见
+   ----------------------------------------------------------------
+   全局兜底：2px 实色 + 2px offset（--color-primary-text 对白底 5.47:1）。
+   组件里已有的 `box-shadow: var(--focus-ring)` 继续生效；这里补 EP 与
+   原生控件缺失的 visible 焦点，不再出现只有 `outline: none` 的情况。
+   ================================================================ */
+:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
 }
 
-.el-alert { border-radius: var(--radius-sm) !important; }
+.el-button:focus-visible,
+.el-button.is-text:not(.is-disabled):focus-visible,
+.el-button.is-link:not(.is-disabled):focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
+}
+
+/* EP 的 input / textarea 只在 .is-focus 上做内阴影，键盘用户看不到焦点。
+   用 :has(:focus-visible) 只在键盘聚焦时加环，鼠标点击不触发。 */
+.el-input__wrapper:has(> .el-input__inner:focus-visible),
+.el-textarea__inner:focus-visible,
+.el-select__wrapper:has(.el-select__input:focus-visible),
+.el-select__wrapper:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
+}
+
+.el-checkbox__input:has(.el-checkbox__original:focus-visible) .el-checkbox__inner {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
+}
+
+/* ================================================================
+   P5 T1 · 图片加载失败统一占位
+   ----------------------------------------------------------------
+   文件缺失时不再让 alt 文字铺满卡片：保留原卡片尺寸，显示
+   类型图标 + 「预览不可用」。缩略图容器是 position:relative 时用
+   absolute 占满；人脸帧按钮用 --frame 保持 1:1 占位高度。
+   ================================================================ */
+.thumb-fallback {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1);
+  padding: var(--space-2);
+  background: var(--bg-inset);
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
+  line-height: 1.3;
+  text-align: center;
+}
+
+.thumb-fallback--frame {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  aspect-ratio: 1;
+}
+
+.thumb-fallback .el-icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.thumb-fallback__text {
+  max-width: 100%;
+}
+
+/* ================================================================
+   P5 T4 · 减弱动效
+   系统偏好 reduce 时，过渡/动画/平滑滚动全部归零；
+   ECharts 由 usePrefersReducedMotion() 传入 animation:false。
+   ================================================================ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0s !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0s !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+}

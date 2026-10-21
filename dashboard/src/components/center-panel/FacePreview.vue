@@ -1,11 +1,20 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, computed } from 'vue'
+import { ref, watch, onMounted, computed, nextTick } from 'vue'
 import { useDashboardStore } from '@/stores/dashboard'
 
 const store = useDashboardStore()
 const canvasRef = ref<HTMLCanvasElement | null>(null)
+const legendRef = ref<HTMLCanvasElement | null>(null)
 
-const SIZE = 200
+const props = withDefaults(
+  defineProps<{
+    /** 嵌进工作台卡片时不画自己的白底 / 边框 / 标题 */
+    embedded?: boolean
+    /** canvas 逻辑分辨率（CSS 宽度随容器收缩，最大到该值） */
+    size?: number
+  }>(),
+  { embedded: false, size: 200 },
+)
 
 function drawFace() {
   const canvas = canvasRef.value
@@ -13,12 +22,12 @@ function drawFace() {
   const ctx = canvas.getContext('2d')
   if (!ctx) return
 
-  ctx.clearRect(0, 0, SIZE, SIZE)
+  ctx.clearRect(0, 0, props.size, props.size)
 
   if (store.faceImageData) {
     const img = new Image()
     img.onload = () => {
-      ctx.drawImage(img, 0, 0, SIZE, SIZE)
+      ctx.drawImage(img, 0, 0, props.size, props.size)
 
       if (store.heatmapData.length && store.heatmapData[0]?.length) {
         drawHeatmap(ctx, store.heatmapData)
@@ -29,27 +38,27 @@ function drawFace() {
   } else {
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.12)'
     ctx.lineWidth = 0.5
-    const step = SIZE / 8
-    for (let i = 0; i <= SIZE; i += step) {
-      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, SIZE); ctx.stroke()
-      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(SIZE, i); ctx.stroke()
+    const step = props.size / 8
+    for (let i = 0; i <= props.size; i += step) {
+      ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, props.size); ctx.stroke()
+      ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(props.size, i); ctx.stroke()
     }
     ctx.strokeStyle = 'rgba(148, 163, 184, 0.3)'
     ctx.lineWidth = 1
-    ctx.beginPath(); ctx.moveTo(SIZE / 2, 0); ctx.lineTo(SIZE / 2, SIZE); ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(0, SIZE / 2); ctx.lineTo(SIZE, SIZE / 2); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(props.size / 2, 0); ctx.lineTo(props.size / 2, props.size); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, props.size / 2); ctx.lineTo(props.size, props.size / 2); ctx.stroke()
     ctx.fillStyle = 'rgba(148, 163, 184, 0.5)'
     ctx.font = '11px sans-serif'
     ctx.textAlign = 'center'
-    ctx.fillText('等待推理数据...', SIZE / 2, SIZE / 2 - 6)
+    ctx.fillText('等待推理数据...', props.size / 2, props.size / 2 - 6)
   }
 }
 
 function drawRegionBoxes(ctx: CanvasRenderingContext2D) {
   // Draw anatomical region annotations on the aligned face
   // Canonical face 128×128: eyes at y≈52 (left x≈38, right x≈90), mouth at y≈90 x≈64
-  // Scaled to SIZE
-  const scale = SIZE / 128
+  // Scaled to props.size
+  const scale = props.size / 128
 
   const regions = [
     { label: '眶周', cx: 38, cy: 52, color: 'rgba(0,230,180,0.5)' },
@@ -83,12 +92,12 @@ function drawRegionBoxes(ctx: CanvasRenderingContext2D) {
 function drawHeatmap(ctx: CanvasRenderingContext2D, data: number[][]) {
   const rows = data.length
   const cols = data[0].length
-  const cellW = SIZE / cols
-  const cellH = SIZE / rows
+  const cellW = props.size / cols
+  const cellH = props.size / rows
 
   const offCanvas = document.createElement('canvas')
-  offCanvas.width = SIZE
-  offCanvas.height = SIZE
+  offCanvas.width = props.size
+  offCanvas.height = props.size
   const offCtx = offCanvas.getContext('2d')
   if (!offCtx) return
 
@@ -112,8 +121,50 @@ function heatColor(t: number): string {
   return `rgba(${Math.round(r * 255)},${Math.round(g * 255)},${Math.round(b * 255)},0.8)`
 }
 
-watch(() => [store.faceImageData, store.heatmapData], drawFace, { deep: true })
-onMounted(drawFace)
+/**
+ * P5 T6c：图例色带改为 canvas 连续插值。
+ * 端点色仍取 tokens.css 的 --heat-1..5（与画布 heatColor() 同一条蓝→青→绿→黄→红
+ * 路径），createLinearGradient 在端点之间做连续插值；原来 5 个离散色块与热力图
+ * 实际的连续着色不一致，会让人误读色带含义。
+ * canvas 里无法直接使用 CSS 变量，所以先 getComputedStyle 取真实色值再绘制。
+ */
+function drawLegend() {
+  const canvas = legendRef.value
+  if (!canvas) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const dpr = window.devicePixelRatio || 1
+  const width = 280
+  const height = 12
+  canvas.width = Math.round(width * dpr)
+  canvas.height = Math.round(height * dpr)
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+
+  const styles = getComputedStyle(document.documentElement)
+  const stops = ['--heat-1', '--heat-2', '--heat-3', '--heat-4', '--heat-5']
+    .map((name) => styles.getPropertyValue(name).trim())
+    .filter(Boolean)
+  if (stops.length < 2) return
+
+  const gradient = ctx.createLinearGradient(0, 0, width, 0)
+  stops.forEach((color, index) => gradient.addColorStop(index / (stops.length - 1), color))
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, width, height)
+}
+
+watch(() => [store.faceImageData, store.heatmapData, props.size], drawFace, { deep: true })
+watch(
+  () => store.heatmapData.length,
+  async () => {
+    await nextTick()
+    drawLegend()
+  },
+)
+onMounted(() => {
+  drawFace()
+  drawLegend()
+})
 
 // Compute top-3 attention hotspots for medical interpretation
 const hotspots = computed(() => {
@@ -142,18 +193,25 @@ const hotspots = computed(() => {
 </script>
 
 <template>
-  <div class="face-preview">
-    <div class="section-title section-title--bordered">
+  <div class="face-preview" :class="{ 'face-preview--embedded': embedded }">
+    <div v-if="!embedded" class="section-title section-title--bordered">
       注意力热力图
       <span class="section-subtitle">MSSTformer</span>
     </div>
 
     <div class="face-body">
       <div class="face-canvas-wrapper">
-        <canvas ref="canvasRef" :width="SIZE" :height="SIZE" class="face-canvas" />
+        <canvas ref="canvasRef" :width="props.size" :height="props.size" class="face-canvas" />
         <div v-if="store.heatmapData.length" class="colormap-bar">
           <span class="cm-label">低</span>
-          <div class="cm-gradient" />
+          <div class="cm-gradient">
+            <canvas
+              ref="legendRef"
+              class="cm-gradient-canvas"
+              role="img"
+              aria-label="注意力热力色带：低到高"
+            />
+          </div>
           <span class="cm-label">高</span>
         </div>
       </div>
@@ -183,9 +241,29 @@ const hotspots = computed(() => {
   padding: 12px 14px;
   height: 100%;
   overflow-y: auto;
+}
+
+.face-preview:not(.face-preview--embedded) {
   background: var(--bg-card);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-card);
+}
+
+.face-preview--embedded {
+  padding: 0;
+  height: auto;
+  overflow: visible;
+}
+
+.face-preview--embedded .face-canvas {
+  width: 100%;
+  max-width: 280px;
+  height: auto;
+}
+
+.face-preview--embedded .colormap-bar {
+  width: 100%;
+  max-width: 280px;
 }
 
 .face-canvas-wrapper {
@@ -211,16 +289,23 @@ const hotspots = computed(() => {
 }
 
 .cm-label {
-  font-size: 9px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   flex-shrink: 0;
 }
 
+/* 热力图色带图例：canvas 连续插值（端点色 --heat-1..5，与 heatColor() 同一路径）。 */
 .cm-gradient {
   flex: 1;
   height: 6px;
-  border-radius: 3px;
-  background: linear-gradient(to right, #0000ff, #00ffff, #00ff00, #ffff00, #ff0000);
+  overflow: hidden;
+  border-radius: var(--radius-pill);
+}
+
+.cm-gradient-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .face-body {
@@ -233,22 +318,22 @@ const hotspots = computed(() => {
 
 .medical-notes {
   padding: 8px 10px;
-  background: var(--bg-muted);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tag);
   flex: 1;
   overflow-y: auto;
 }
 
 .notes-text {
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-secondary);
   line-height: 1.6;
   margin: 0;
 }
 
 .highlight {
-  color: var(--accent-primary);
+  color: var(--color-primary-text);
   font-weight: 600;
 }
 
@@ -257,7 +342,7 @@ const hotspots = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
 }
 </style>

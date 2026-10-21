@@ -1,0 +1,130 @@
+/* ================================================================
+   MindScope · Web 端设计令牌（P0 · 单一数据源）
+   ----------------------------------------------------------------
+   唯一真源：E:\MindScope\harmony\entry\src\main\ets\common\UiTheme.ets
+   少数令牌来自 UiConstant.severityMeta()（harmony/.../types/constant.ts:59-84），
+   因为 UiTheme 只给语义、不给严重度 4 个色值（见 UiTheme.ets:13-19 注释）。
+   每条声明都是「常量名 → 值」的直接搬运，不允许在本文件里新造取值；
+   鸿蒙没有、Web 必须补的少量项，行尾用 `新增：<理由>` 标注，可逐条回查。
+
+   P0 阶段纪律：本文件只定义、不消费。src/style.css 的旧变量兼容层
+   排在 @import 之后，同名声明按层叠顺序覆盖这里的值，因此 P0 渲染结果
+   与重构前逐像素一致；P1 起逐行删除旧声明即完成切换。
+
+   §2.8 渐变白名单：全工程只允许本文件末尾的 2 条 --gradient-*。
+   ================================================================ */
+
+:root {
+  /* ── §2.2 底色 · 层次三件套：浅灰页底 + 纯白卡片 + 极淡投影 ── */
+  --bg-page: #F2F3F7;      /* ← UiTheme.pageBackground */
+  --bg-card: #FFFFFF;      /* ← UiTheme.cardBackground */
+  --bg-inset: #E9EDF3;     /* ← UiTheme.fillSoft */
+  --bg-skeleton: #DCE3EC;  /* ← UiTheme.skeletonFill */
+  --bg-press: #F2F8F7;     /* ← UiTheme.cardPressTint */
+
+  /* ── §2.2 描边 / 分隔 ── */
+  --border: #E5E6EB;       /* ← UiTheme.divider */
+
+  /* ── §2.2 功能色 · 只 3 个（主色 / 辅助蓝 / 错误危险色） ── */
+  --color-primary: #0D9488;       /* ← UiTheme.primary（图标 / 强调 / 选中态 / 焦点环） */
+  --color-primary-text: #0F766E;  /* 新增：主色作正文/链接文字需 ≥4.5:1，UiTheme 无文字态常量 */
+  --color-primary-button: #0F766E; /* 新增：主按钮底色。白字在 #0D9488 上仅 3.74:1，此值 5.47:1 过 AA；与 primary-text 同值同色系 */
+  --color-accent: #0284C7;        /* ← UiTheme.accent */
+  --color-danger: #DC2626;        /* ← UiTheme.danger（仅失败提示，勿与严重度色互换） */
+  --color-danger-soft: #FEF2F2;   /* ← UiTheme.dangerSoft */
+  --color-warning: #D97706;       /* 新增：鸿蒙无 warning 常量，取 UiConstant.severityMeta('moderate').color 作警示描边/前景 */
+  --color-warning-soft: color-mix(in srgb, var(--color-warning) 8%, #FFFFFF);  /* 新增：警示浅底，由 warning 8% 混白得出，不新造十六进制 */
+  --color-warning-text: #B45309;  /* 新增：警示浅底上的文字色（对白 5.02:1，过 AA） */
+
+  /* ── §2.2 文字 ── */
+  --text-primary: #1D2129;    /* ← UiTheme.textPrimary */
+  --text-secondary: #4E5969;  /* ← UiTheme.textSecondary */
+
+  /* ── §2.2 服务状态灯 ── */
+  --status-online: #16A34A;   /* ← UiTheme.statusOnline */
+  --status-offline: #DC2626;  /* ← UiTheme.statusOffline */
+
+  /* ── §2.2 严重度数据色（数据表达色，不是 color-danger） ── */
+  --severity-none: #16A34A;      /* ← UiConstant.severityMeta().color（constant.ts:63） */
+  --severity-mild: #0284C7;      /* ← UiConstant.severityMeta().color（constant.ts:69） */
+  --severity-moderate: #D97706;  /* ← UiConstant.severityMeta().color（constant.ts:75） */
+  --severity-severe: #DC2626;    /* ← UiConstant.severityMeta().color（constant.ts:81） */
+  --severity-none-text: #15803D;      /* 新增：badge 文字态，对白底 ≥4.5:1（鸿蒙无对应常量） */
+  --severity-mild-text: #0369A1;      /* 新增：同上 */
+  --severity-moderate-text: #B45309;  /* 新增：同上 */
+  --severity-severe-text: #B91C1C;    /* 新增：同上 */
+
+  /* ── §2.2 图表 ── */
+  --chart-1: #17B26A;            /* ← UiTheme.severityPieColors[0] */
+  --chart-2: #2E6BE6;            /* ← UiTheme.severityPieColors[1] */
+  --chart-3: #F79009;            /* ← UiTheme.severityPieColors[2] */
+  --chart-4: #F04438;            /* ← UiTheme.severityPieColors[3] */
+  --chart-threshold-1: #2E6BE6;  /* ← UiTheme.chartThresholdColors[0] */
+  --chart-threshold-2: #F79009;  /* ← UiTheme.chartThresholdColors[1] */
+  --chart-grid: #E5E6EB;         /* ← UiTheme.chartGrid */
+  --chart-axis: #94A3B8;         /* ← §2.2「chartAxis #94A3B8」（UiTheme.ets 无此常量，待 P1 裁决补入） */
+
+  /* ── 热力图色带（数据图例，非装饰渐变；取自 FacePreview heatColor() 原色带 5 档采样） ── */
+  --heat-1: #0000FF;  /* 蓝 · 低注意力 */
+  --heat-2: #00FFFF;  /* 青 */
+  --heat-3: #00FF00;  /* 绿 */
+  --heat-4: #FFFF00;  /* 黄 */
+  --heat-5: #FF0000;  /* 红 · 高注意力 */
+
+  /* ── §2.3 字号 6 档（正文下限 14，禁止 <12） ── */
+  --font-xs: 12px;         /* ← UiTheme.fontSizeCaption */
+  --font-sm: 14px;         /* ← UiTheme.fontSizeBody */
+  --font-base: 16px;       /* ← UiTheme.fontSizeSection */
+  --font-title: 22px;      /* ← UiTheme.fontSizeTitle */
+  --font-metric-sm: 24px;  /* ← UiTheme.fontSizeCardMetric */
+  --font-metric: 32px;     /* ← UiTheme.fontSizeMetric */
+
+  /* §2.3 白名单唯一例外：图表轴 11px（不进 6 档，检查脚本里显式列出） */
+  --font-axis: 11px;       /* ← UiTheme.fontSizeAxis */
+
+  /* ── §2.4 间距 8 档 + 布局常量 ── */
+  --space-1: 4px;        /* ← UiTheme.gapXs */
+  --space-2: 8px;        /* ← UiTheme.gapS */
+  --space-3: 12px;       /* ← UiTheme.gapM */
+  --space-4: 16px;       /* ← UiTheme.gapL */
+  --space-5: 24px;       /* ← UiTheme.gapXl */
+  --space-6: 32px;       /* ← UiTheme.gapXxl */
+  --page-padding: 16px;  /* ← §2.4 桌面：<1280 取 16，≥1280 取 24（鸿蒙 pagePadding 20 为移动端） */
+  --content-gap: 16px;   /* ← §2.4（现状 12，P1 切换） */
+  --header-height: 56px; /* ← §2.4 桌面既有契约 */
+  --nav-width: 240px;    /* 新增：§2.4 侧栏宽度，P3 生效 */
+
+  /* ── §2.5 圆角 4 档 ── */
+  --radius-card: 16px;     /* ← UiTheme.cardRadius */
+  --radius-control: 12px;  /* ← UiTheme.buttonRadius */
+  --radius-tag: 8px;       /* 新增：标签 / chip / 缩略图内嵌块，UiTheme 无对应常量 */
+  --radius-pill: 999px;    /* 新增：状态点 / 圆形头像，UiTheme 无对应常量 */
+
+  /* ── §2.6 阴影 2 级（去青调；卡片内嵌元素一律不用投影） ── */
+  --shadow-card: 0 1px 2px rgba(29, 33, 41, 0.04), 0 3px 14px rgba(29, 33, 41, 0.08);  /* ← UiTheme.cardShadowRadius 14 / cardShadowColor #141D2129 / cardShadowOffsetY 3 */
+  --shadow-popover: 0 8px 24px rgba(29, 33, 41, 0.10);  /* 新增：浮层唯一一级（§2.6），鸿蒙无弹层投影常量 */
+
+  /* ── §2.7 动效 ── */
+  --motion-press: 120ms;  /* ← UiTheme.pressDuration */
+  --motion-enter: 260ms;  /* ← §2.7 卡片入场（替代现状 fadeInUp 0.28s） */
+  --stagger: 55ms;        /* ← §2.7 错峰步长 */
+  --press-scale: 0.985;   /* ← §2.7 按压反馈位移 */
+
+  /* ── §2.8 渐变白名单（全工程只允许这 2 条） ── */
+  --gradient-brand: linear-gradient(160deg, #22B49C 0%, #0C7A69 100%);  /* ← UiTheme.brandStart → UiTheme.brandEnd（§2.8 #1） */
+  --gradient-kpi: linear-gradient(180deg, #E8F6EF 0%, #FFFFFF 100%);    /* ← UiTheme.kpiGradientStart → UiTheme.kpiGradientEnd（§2.8 #2） */
+
+  /* ── 焦点环（Web 新增，§P5） ── */
+  /* 键盘焦点环：2px 实色描边 + 2px 白色间隔（P5 把原来的 3px 半透明青环改为可量化对比度）。
+     内层白环充当 offset，外层 --color-primary-text 对白底 5.47:1、对页底 4.9:1。
+     以 box-shadow 形式表达是为了沿用现有各处 `box-shadow: var(--focus-ring)` 的写法。 */
+  --focus-ring: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--color-primary-text);  /* 新增：键盘焦点环，鸿蒙 focus-visible 无对应常量 */
+}
+
+/* §2.4 断点：≥1280 页边距 24
+   P0 期间被 style.css 里同名的旧声明（16）覆盖，P1 删除旧声明即生效。 */
+@media (min-width: 1280px) {
+  :root {
+    --page-padding: 24px;
+  }
+}

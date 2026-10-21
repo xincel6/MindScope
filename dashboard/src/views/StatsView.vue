@@ -1,98 +1,116 @@
 <script setup lang="ts">
-import { onMounted, computed } from 'vue'
-import DashboardHeader from '@/components/layout/DashboardHeader.vue'
-import StatCard from '@/components/stats/StatCard.vue'
-import ModelMetricsCard from '@/components/stats/ModelMetricsCard.vue'
+import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { Refresh } from '@element-plus/icons-vue'
+import PageHeader from '@/components/layout/PageHeader.vue'
+import EmptyState from '@/components/common/EmptyState.vue'
 import SeverityPieChart from '@/components/stats/SeverityPieChart.vue'
 import BdiTrendChart from '@/components/stats/BdiTrendChart.vue'
-import RecentReportsTable from '@/components/stats/RecentReportsTable.vue'
+import ModelMetricsCard from '@/components/stats/ModelMetricsCard.vue'
 import { useStatsStore } from '@/stores/stats'
-import { severityColors } from '@/stores/dashboard'
 
 const store = useStatsStore()
+const router = useRouter()
 
-onMounted(() => { store.load() })
+onMounted(() => {
+  void store.load()
+})
 
-const today = computed(() =>
-  new Date().toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }),
-)
+const today = new Date().toLocaleDateString('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric',
+  weekday: 'long',
+})
 
-function severePct(): string {
-  if (!store.data?.total_analyses) return '--'
-  const sev = store.data.severity_distribution.severe ?? 0
-  return ((sev / store.data.total_analyses) * 100).toFixed(1) + '%'
-}
+/** 一条分析、一个素材都没有：整页空态，而不是一排 '--' 卡片 */
+const isEmpty = computed(() => {
+  const data = store.data
+  return !!data && data.total_analyses === 0 && data.total_media === 0
+})
+
+const severePct = computed(() => {
+  const data = store.data
+  if (!data?.total_analyses) return '--'
+  const severe = data.severity_distribution.severe ?? 0
+  return `${((severe / data.total_analyses) * 100).toFixed(1)}%`
+})
+
+const avgInference = computed(() => {
+  const value = store.data?.avg_inference_time_ms
+  return value ? `${value.toFixed(1)} ms` : '--'
+})
 </script>
 
 <template>
-  <div class="page-shell">
-    <DashboardHeader />
+  <div class="app-page stats-page">
+    <PageHeader title="统计" :subtitle="today">
+      <template #actions>
+        <el-button :icon="Refresh" :loading="store.loading" plain @click="store.load">刷新</el-button>
+      </template>
+    </PageHeader>
 
-    <div class="page-content page-content--wide stats-page">
-      <!-- 页头 -->
-      <header class="stats-header">
-        <div>
-          <h2 class="stats-title">数据统计概览</h2>
-          <p class="stats-date">{{ today }}</p>
-        </div>
-        <div class="stats-summary">
-          <span class="summary-chip">
-            累计分析 <strong class="mono-num">{{ store.data?.total_analyses ?? '--' }}</strong> 次
-          </span>
-          <span class="summary-chip">
-            素材库 <strong class="mono-num">{{ store.data?.total_media ?? '--' }}</strong> 个
-          </span>
-        </div>
-      </header>
+    <el-skeleton v-if="!store.data && !store.error" :rows="8" animated />
 
-      <!-- KPI 卡片 -->
-      <div class="stat-grid">
-        <StatCard
-          title="总分析次数"
-          subtitle="累计完成评估"
-          :value="store.data?.total_analyses ?? '--'"
-          icon="TrendCharts"
-          accent="var(--accent-primary)"
-        />
-        <StatCard
-          title="平均推理耗时"
-          subtitle="MSSTformer 单次推理"
-          :value="store.data?.avg_inference_time_ms ? `${store.data.avg_inference_time_ms.toFixed(1)} ms` : '--'"
-          icon="Timer"
-          accent="var(--accent-blue)"
-        />
-        <StatCard
-          title="素材总数"
-          subtitle="视频与图片资源"
-          :value="store.data?.total_media ?? '--'"
-          icon="Folder"
-          accent="var(--accent-yellow)"
-        />
-        <StatCard
-          title="重度抑郁占比"
-          subtitle="BDI-II ≥ 29 分"
-          :value="severePct()"
-          icon="Warning"
-          :accent="severityColors.severe"
-        />
+    <EmptyState
+      v-else-if="store.error"
+      icon="WarningFilled"
+      title="统计数据加载失败"
+      description="没有拿到 /api/stats 的响应，请确认后端服务是否已启动。"
+      :hint="store.error"
+      action-label="重试"
+      @action="store.load()"
+    />
+
+    <EmptyState
+      v-else-if="isEmpty"
+      icon="DataAnalysis"
+      title="暂无统计数据"
+      description="完成第一次辅助评估后，这里会显示累计次数、严重等级分布与 BDI 趋势。"
+      hint="数据来源：/api/stats"
+      action-label="去工作台"
+      @action="router.push('/workbench')"
+    />
+
+    <template v-else-if="store.data">
+      <!-- 1 张渐变 hero（106px）+ 3 张中性小卡（78px），对齐鸿蒙统计页的信息层级 -->
+      <section class="stats-hero">
+        <div class="stats-hero-main">
+          <span class="stats-hero-label">累计辅助评估</span>
+          <strong class="stats-hero-value mono-num">{{ store.data.total_analyses }}</strong>
+          <span class="stats-hero-sub">完成评估次数 · 素材累计 {{ store.data.total_media }} 个</span>
+        </div>
+        <div class="stats-hero-side">
+          <span class="stats-hero-chip">平均推理 {{ avgInference }}</span>
+          <span class="stats-hero-chip">重度占比 {{ severePct }}</span>
+        </div>
+      </section>
+
+      <div class="stats-kpis">
+        <section class="stats-kpi">
+          <span class="stats-kpi-label">平均推理耗时</span>
+          <strong class="stats-kpi-value mono-num">{{ avgInference }}</strong>
+          <span class="stats-kpi-note">MSSTformer 单次推理</span>
+        </section>
+        <section class="stats-kpi">
+          <span class="stats-kpi-label">素材总数</span>
+          <strong class="stats-kpi-value mono-num">{{ store.data.total_media }}</strong>
+          <span class="stats-kpi-note">视频与图片资源</span>
+        </section>
+        <section class="stats-kpi">
+          <span class="stats-kpi-label">重度抑郁占比</span>
+          <strong class="stats-kpi-value mono-num">{{ severePct }}</strong>
+          <span class="stats-kpi-note">BDI-II ≥ 29 分</span>
+        </section>
       </div>
 
-      <!-- 图表区 -->
-      <div class="charts-section">
-        <div class="charts-row">
-          <SeverityPieChart class="chart-card" />
-          <BdiTrendChart class="chart-card" />
-        </div>
+      <div class="stats-charts">
+        <SeverityPieChart class="stats-chart" />
+        <BdiTrendChart class="stats-chart" />
       </div>
 
-      <!-- 模型信息（折叠展示） -->
       <ModelMetricsCard />
-
-      <!-- 最近报告 -->
-      <RecentReportsTable />
-    </div>
-
-    <div class="app-bg" />
+    </template>
   </div>
 </template>
 
@@ -100,77 +118,113 @@ function severePct(): string {
 .stats-page {
   display: flex;
   flex-direction: column;
-  gap: 20px;
-  padding-top: 20px;
-  padding-bottom: 32px;
+  gap: var(--content-gap);
 }
 
-.stats-header {
+.stats-hero {
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: var(--space-4);
   flex-wrap: wrap;
+  min-height: 106px;
+  padding: var(--space-3) var(--space-5);
+  background: var(--gradient-kpi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
 }
 
-.stats-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: var(--text-primary);
-  margin-bottom: 4px;
-}
-
-.stats-date {
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-.stats-summary {
+.stats-hero-main {
   display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
 }
 
-.summary-chip {
-  font-size: 12px;
+.stats-hero-label {
+  font-size: var(--font-xs);
   color: var(--text-secondary);
-  padding: 6px 14px;
-  background: rgba(148, 163, 184, 0.06);
-  border: 1px solid var(--border-color);
-  border-radius: 20px;
 }
 
-.summary-chip strong {
-  color: var(--accent-primary);
-  margin: 0 2px;
+.stats-hero-value {
+  font-size: var(--font-metric);
+  line-height: 1.1;
+  color: var(--text-primary);
 }
 
-.stat-grid {
+.stats-hero-sub {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.stats-hero-side {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.stats-hero-chip {
+  padding: 4px 10px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.stats-kpis {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--content-gap);
 }
 
-.charts-section {
-  margin-top: 4px;
+.stats-kpi {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 78px;
+  padding: var(--space-2) var(--space-4);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
 }
 
-.charts-row {
+.stats-kpi-label {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.stats-kpi-value {
+  font-size: var(--font-metric-sm);
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.stats-kpi-note {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+}
+
+.stats-charts {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 14px;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--content-gap);
+  align-items: stretch;
 }
 
-.chart-card {
-  min-height: 320px;
+.stats-chart {
+  min-width: 0;
 }
 
-@media (max-width: 1100px) {
-  .stat-grid { grid-template-columns: repeat(2, 1fr); }
-}
+@media (max-width: 1023px) {
+  .stats-kpis {
+    grid-template-columns: 1fr;
+  }
 
-@media (max-width: 768px) {
-  .charts-row { grid-template-columns: 1fr; }
-  .stat-grid { grid-template-columns: 1fr; }
+  .stats-charts {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

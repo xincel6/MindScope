@@ -180,3 +180,7 @@ infer-engine-sm120a/
 !dashboard/backend/models.py
 !dashboard/src/components/stats/ModelMetricsCard.vue
 !harmony/entry/src/main/ets/types/model.ts
+
+# Web UI 重构阶段快照（不入库）
+_backup/web-ui/
+_backup/ui-check/

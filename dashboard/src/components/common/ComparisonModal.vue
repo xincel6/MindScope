@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import type { ReportListItem } from '@/api/index'
-import { severityColors } from '@/stores/dashboard'
+import { severityTextColorOf, severityTextColors } from '@/stores/dashboard'
 
 const props = defineProps<{
   visible: boolean
@@ -26,11 +26,11 @@ const delta = computed(() => {
 })
 
 const deltaColor = computed(() => {
-  if (delta.value === null) return '#94a3b8'
+  if (delta.value === null) return 'var(--text-secondary)'
   // Lower BDI is better (less depression)
-  if (delta.value < 0) return severityColors.none
-  if (delta.value > 0) return severityColors.severe
-  return '#94a3b8'
+  if (delta.value < 0) return severityTextColors.none
+  if (delta.value > 0) return severityTextColors.severe
+  return 'var(--text-secondary)'
 })
 
 const deltaLabel = computed(() => {
@@ -45,7 +45,7 @@ const deltaLabel = computed(() => {
     :model-value="visible"
     @update:model-value="emit('update:visible', $event)"
     title="诊断报告对比"
-    width="760px"
+    width="min(760px, calc(100vw - 32px))"
     :close-on-click-modal="false"
     class="comparison-dialog"
   >
@@ -57,11 +57,11 @@ const deltaLabel = computed(() => {
           <div class="comp-media-name">{{ reportA.media_name }}</div>
           <div class="comp-date">{{ reportA.detected_at }}</div>
         </div>
-        <div class="comp-score" :style="{ color: severityColors[reportA.severity] }">
+        <div class="comp-score" :style="{ color: severityTextColorOf(reportA.severity) }">
           {{ reportA.bdi_score.toFixed(1) }}
           <span class="comp-max">/ 63</span>
         </div>
-        <el-tag :color="severityColors[reportA.severity]" effect="dark" round size="large">
+        <el-tag effect="light" round size="large" :class="`sev-${reportA.severity}`">
           {{ labels[reportA.severity] ?? reportA.severity }}
         </el-tag>
         <div class="comp-inf">
@@ -84,11 +84,11 @@ const deltaLabel = computed(() => {
           <div class="comp-media-name">{{ reportB.media_name }}</div>
           <div class="comp-date">{{ reportB.detected_at }}</div>
         </div>
-        <div class="comp-score" :style="{ color: severityColors[reportB.severity] }">
+        <div class="comp-score" :style="{ color: severityTextColorOf(reportB.severity) }">
           {{ reportB.bdi_score.toFixed(1) }}
           <span class="comp-max">/ 63</span>
         </div>
-        <el-tag :color="severityColors[reportB.severity]" effect="dark" round size="large">
+        <el-tag effect="light" round size="large" :class="`sev-${reportB.severity}`">
           {{ labels[reportB.severity] ?? reportB.severity }}
         </el-tag>
         <div class="comp-inf">
@@ -105,13 +105,13 @@ const deltaLabel = computed(() => {
 
 <style scoped>
 .comparison-dialog :deep(.el-dialog) {
-  --el-dialog-bg-color: var(--bg-secondary);
-  --el-dialog-border-color: var(--border-color);
+  --el-dialog-bg-color: var(--bg-card);
+  --el-dialog-border-color: var(--border);
 }
 
 .comparison-dialog :deep(.el-dialog__title) {
-  color: var(--accent-cyan);
-  font-size: 15px;
+  color: var(--text-primary);
+  font-size: var(--font-base);
 }
 
 .comparison-body {
@@ -124,9 +124,9 @@ const deltaLabel = computed(() => {
   flex: 1;
   text-align: center;
   padding: 24px 16px;
-  background: rgba(0, 0, 0, 0.2);
-  border-radius: 12px;
-  border: 1px solid var(--border-color);
+  background: var(--bg-inset);
+  border-radius: var(--radius-card);
+  border: 1px solid var(--border);
 }
 
 .comp-header {
@@ -134,28 +134,28 @@ const deltaLabel = computed(() => {
 }
 
 .comp-label {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   letter-spacing: 1px;
-  text-transform: uppercase;
   margin-bottom: 4px;
 }
 
 .comp-media-name {
-  font-size: 14px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 2px;
+  overflow-wrap: anywhere;
 }
 
 .comp-date {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
 }
 
 .comp-score {
-  font-size: 48px;
+  font-size: var(--font-metric);
   font-weight: 700;
   line-height: 1;
   font-family: var(--font-mono);
@@ -163,15 +163,15 @@ const deltaLabel = computed(() => {
 }
 
 .comp-max {
-  font-size: 16px;
+  font-size: var(--font-base);
   font-weight: 400;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .comp-inf {
   margin-top: 12px;
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   font-family: var(--font-mono);
 }
 
@@ -185,21 +185,40 @@ const deltaLabel = computed(() => {
 }
 
 .delta-arrow {
-  font-size: 18px;
+  font-size: var(--font-base);
   font-weight: 700;
   font-family: var(--font-mono);
 }
 
 .delta-hint {
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   margin-top: 2px;
 }
 
 .comp-empty {
   text-align: center;
   padding: 40px;
-  color: var(--text-muted);
-  font-size: 14px;
+  color: var(--text-secondary);
+  font-size: var(--font-sm);
+}
+
+@media (max-width: 640px) {
+  .comparison-body {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .comp-col {
+    width: 100%;
+    box-sizing: border-box;
+    padding: var(--space-4) var(--space-3);
+  }
+
+  .comp-divider {
+    flex-direction: row;
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+  }
 }
 </style>

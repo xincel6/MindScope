@@ -1,143 +1,167 @@
 <script setup lang="ts">
+/**
+ * 模型信息（可折叠）
+ * ================================================================
+ * 规则：卡片里的每个数字/取值都必须能指到后端源码的某一行。
+ * P2 删掉的旧值（无出处，已确认后端不存在）：
+ *   参数量、FLOPs、推理延迟常数、「MSMHSA · MSSTFF · MSGFA」核心模块、「ONNX 可导出」
+ *   —— `LMTformer_model/LMTformer.py` 里没有这些类名，也没有导出脚本。
+ * 延迟不写常数：真实耗时应看「本次推理指标」里的实测值。
+ */
+import { ref } from 'vue'
+
+interface ModelRow {
+  label: string
+  value: string
+  source: string
+}
+
+const active = ref<string[]>([])
+
+const rows: ModelRow[] = [
+  {
+    label: '权重文件',
+    value: 'best.pt',
+    source: 'backend/config.py:120 MODEL_CHECKPOINT',
+  },
+  {
+    label: '模型定义',
+    value: 'LMTformer',
+    source: 'backend/LMTformer_model/LMTformer.py:37',
+  },
+  {
+    label: '输入规格',
+    value: '24 帧 × 128×128 × 3 通道',
+    source: 'backend/services/inference.py:46 image_size=(24,128,128) · config.py:115 FRAMES_PER_BATCH=24',
+  },
+  {
+    label: 'Patch 划分',
+    value: 'patches = (2, 4, 4)',
+    source: 'backend/services/inference.py:46 patches=(2,4,4)',
+  },
+  {
+    label: '嵌入维度',
+    value: 'dim 32 · 4 头 · 12 层',
+    source: 'backend/services/inference.py:46-54 dim=32 / num_heads=4 / num_layers=12',
+  },
+  {
+    label: '输出内容',
+    value: '每个片段 1 个 BDI-II 总分 + 12 张 16×16 热力图',
+    source: 'backend/services/inference.py:7-14 文件头说明（clip 级回归，热力图每个 token 覆盖 2 帧）',
+  },
+  {
+    label: '运行设备',
+    value: 'CUDA 可用则 GPU，否则 CPU',
+    source: 'backend/services/inference.py:44 torch.device("cuda" if cuda_available else "cpu")',
+  },
+]
 </script>
 
 <template>
-  <div class="compute-section glass-card">
-    <div class="section-title">MSSTformer 模型算力</div>
-    <div class="compute-grid">
-      <div class="compute-item">
-        <div class="compute-value mono-num" style="color:var(--accent-cyan)">0.12<span class="unit">M</span></div>
-        <div class="compute-label">参数量</div>
-        <div class="compute-sub">Params</div>
-      </div>
-      <div class="compute-item">
-        <div class="compute-value mono-num" style="color:#3b82f6">~0.35<span class="unit">G</span></div>
-        <div class="compute-label">FLOPs</div>
-        <div class="compute-sub">单次推理计算量</div>
-      </div>
-      <div class="compute-item">
-        <div class="compute-value mono-num" style="color:#22c55e">~25<span class="unit">ms</span></div>
-        <div class="compute-label">推理延迟</div>
-        <div class="compute-sub">24帧批次</div>
-      </div>
-      <div class="compute-item">
-        <div class="compute-value mono-num" style="color:#f59e0b">32<span class="unit">dim</span></div>
-        <div class="compute-label">嵌入维度</div>
-        <div class="compute-sub">4头 · 12层</div>
-      </div>
-    </div>
-    <div class="compute-arch">
-      <div class="arch-row">
-        <span class="arch-label">输入规格</span>
-        <span class="arch-val mono-num">24帧 × 128×128 × 3通道</span>
-      </div>
-      <div class="arch-row">
-        <span class="arch-label">Patch 划分</span>
-        <span class="arch-val mono-num">(2, 4, 4) → 12×4×4 = 192 时空块</span>
-      </div>
-      <div class="arch-row">
-        <span class="arch-label">骨干网络</span>
-        <span class="arch-val">3D CNN Stem (3级池化) → 3级 Multi-Scale Transformer</span>
-      </div>
-      <div class="arch-row">
-        <span class="arch-label">核心模块</span>
-        <span class="arch-val">MSMHSA · MSSTFF · MSGFA · 自适应平均池化 · MLP</span>
-      </div>
-      <div class="arch-row">
-        <span class="arch-label">部署方式</span>
-        <span class="arch-val">端侧推理 (CPU) · 支持 GPU 加速 · ONNX 可导出</span>
-      </div>
-    </div>
-    <div class="compute-note">
-      <el-icon :size="12"><InfoFilled /></el-icon>
-      <span>轻量化多尺度 Transformer · 端云协同架构 · 适合临床边缘部署场景</span>
-    </div>
+  <div class="model-info glass-card">
+    <el-collapse v-model="active" class="model-collapse">
+      <el-collapse-item name="info">
+        <template #title>
+          <span class="model-info-title">模型信息</span>
+          <span class="model-info-sub">每个取值都标注了后端来源</span>
+        </template>
+
+        <div class="model-rows">
+          <div v-for="row in rows" :key="row.label" class="model-row">
+            <span class="row-label">{{ row.label }}</span>
+            <div class="row-body">
+              <span class="row-value mono-num">{{ row.value }}</span>
+              <span class="row-source">{{ row.source }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="model-note">
+          <el-icon :size="12"><InfoFilled /></el-icon>
+          <span>
+            参数量 / FLOPs 后端未提供，所以这里不写；推理延迟请看「智能分析 · 本次推理指标」里的实测值。
+          </span>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
 <style scoped>
-.compute-section {
-  padding: 16px;
+.model-info {
+  padding: 4px 16px;
   margin-bottom: 20px;
 }
 
-.compute-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 14px;
+.model-collapse {
+  --el-collapse-border-color: var(--border);
 }
 
-.compute-item {
-  text-align: center;
-  padding: 14px 8px;
-  background: var(--bg-muted);
-  border-radius: 8px;
-  border: 1px solid var(--border-color);
+.model-info-title {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-primary);
 }
 
-.compute-value {
-  font-size: 28px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  margin-bottom: 2px;
-}
-
-.unit {
-  font-size: 14px;
+.model-info-sub {
+  margin-left: 10px;
+  font-size: var(--font-xs);
   font-weight: 400;
-  opacity: 0.6;
-  margin-left: 2px;
-}
-
-.compute-label {
-  font-size: 12px;
   color: var(--text-secondary);
-  margin-bottom: 2px;
 }
 
-.compute-sub {
-  font-size: 10px;
-  color: var(--text-muted);
-}
-
-.compute-arch {
-  padding: 10px 14px;
-  background: var(--bg-muted);
-  border-radius: 6px;
-  border: 1px solid var(--border-color);
-  margin-bottom: 10px;
-}
-
-.arch-row {
+.model-rows {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 4px 0;
-  font-size: 11px;
+  flex-direction: column;
 }
 
-.arch-row + .arch-row {
-  border-top: 1px solid rgba(148, 163, 184, 0.06);
+.model-row {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
 }
 
-.arch-label {
-  color: var(--text-muted);
-  flex-shrink: 0;
+.model-row:first-child {
+  border-top: none;
 }
 
-.arch-val {
+.row-label {
+  font-size: var(--font-xs);
   color: var(--text-secondary);
-  text-align: right;
+  padding-top: 2px;
 }
 
-.compute-note {
+.row-body {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row-value {
+  font-size: var(--font-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.row-source {
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.model-note {
+  display: flex;
+  align-items: flex-start;
   gap: 4px;
+  margin-top: 10px;
   padding-top: 10px;
-  border-top: 1px solid rgba(148, 163, 184, 0.08);
-  font-size: 10px;
-  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
+  line-height: 1.55;
 }
 </style>

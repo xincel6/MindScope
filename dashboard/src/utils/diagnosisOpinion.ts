@@ -37,34 +37,27 @@ export interface OpinionEvidence {
 }
 
 export interface OpinionSubScales {
-  cognitive: number
-  somatic: number
-  behavioral: number
-  dominant: 'cognitive' | 'somatic' | 'behavioral'
-  dominantLabel: string
-  dominantMax: number
+  /** 永远是 false：模型没有量表分项输出，这个接口只用来向 UI 说明「为什么没有」 */
+  available: false
+  /** 展示用主文案 */
+  label: string
+  /** 展示用补充说明 */
+  detail: string
 }
 
-const SUB_MAX = { cognitive: 30, somatic: 22, behavioral: 11 } as const
-
-/** BDI-II 维度估计：沿用报告页的文献因子负荷（认知 48% / 躯体 35% / 行为 余量） */
-export function buildSubScales(total: number): OpinionSubScales {
-  const cognitive = Math.round(total * 0.48)
-  const somatic = Math.round(total * 0.35)
-  const behavioral = total - cognitive - somatic
-  const entries = [
-    { key: 'cognitive' as const, label: '认知-情感', value: cognitive },
-    { key: 'somatic' as const, label: '躯体症状', value: somatic },
-    { key: 'behavioral' as const, label: '行为表现', value: behavioral },
-  ]
-  const dominant = entries.reduce((a, b) => (b.value > a.value ? b : a))
+/**
+ * 量表分项 —— 模型没有这个输出。
+ *
+ * 旧实现按 BDI-II 文献因子负荷把总分按固定比例拆成三维，
+ * 那是「用结构方程系数倒推一个不存在的输出」：数字看起来精确，但它不对应任何一次推理，
+ * 和临床量表施测也没有关系。`dashboard/backend/**.py`（排除 venv）与 `harmony/**.ets`
+ * 全仓 0 处 subscale，说明后端从未产出分项 → 这里只返回「不可用」，不再造数。
+ */
+export function buildSubScales(): OpinionSubScales {
   return {
-    cognitive,
-    somatic,
-    behavioral,
-    dominant: dominant.key,
-    dominantLabel: dominant.label,
-    dominantMax: SUB_MAX[dominant.key],
+    available: false,
+    label: '本模型未输出量表分项',
+    detail: 'LMTformer 只回归 BDI-II 总分；认知-情感 / 躯体症状 / 行为表现三个维度需要正式量表施测。',
   }
 }
 
@@ -109,7 +102,7 @@ export function buildEvidence(input: EvidenceInput): OpinionEvidence[] {
   const range = input.history.length
     ? Math.max(...input.history) - Math.min(...input.history)
     : 0
-  const scales = buildSubScales(input.score)
+  const scales = buildSubScales()
 
   return [
     {
@@ -137,9 +130,9 @@ export function buildEvidence(input: EvidenceInput): OpinionEvidence[] {
       key: 'subscale',
       index: '03',
       label: '量表维度',
-      value: `${scales.dominantLabel} ${scales[scales.dominant]}/${scales.dominantMax}`,
-      hint: '按文献因子负荷推算',
-      available: input.score > 0,
+      value: scales.label,
+      hint: '模型只回归 BDI-II 总分',
+      available: scales.available,
     },
     {
       key: 'subject',

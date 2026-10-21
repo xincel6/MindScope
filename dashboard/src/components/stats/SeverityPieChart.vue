@@ -3,8 +3,11 @@ import { computed } from 'vue'
 import { useStatsStore } from '@/stores/stats'
 import { severityColors } from '@/stores/dashboard'
 import { chartTheme } from '@/utils/chartTheme'
+import { usePrefersReducedMotion } from '@/composables/usePrefersReducedMotion'
+import EmptyState from '@/components/common/EmptyState.vue'
 
 const store = useStatsStore()
+const reducedMotion = usePrefersReducedMotion()
 
 const option = computed(() => {
   if (!store.data?.severity_distribution) return {}
@@ -24,6 +27,8 @@ const option = computed(() => {
 
   return {
     backgroundColor: 'transparent',
+    // 系统减弱动效时关闭 ECharts 入场动画（CSS reduce 管不到 canvas）
+    animation: !reducedMotion.value,
     tooltip: {
       trigger: 'item' as const,
       backgroundColor: chartTheme.tooltipBg,
@@ -33,7 +38,7 @@ const option = computed(() => {
     },
     legend: {
       bottom: 0,
-      textStyle: { color: chartTheme.axis, fontSize: 10 },
+      textStyle: { color: chartTheme.axis, fontSize: 11 },
     },
     series: [
       {
@@ -55,11 +60,22 @@ const option = computed(() => {
 <template>
   <div class="severity-pie glass-card">
     <div class="section-title">严重等级分布</div>
-    <div v-if="store.data?.total_analyses" class="pie-total">
-      <span class="total-num mono-num">{{ store.data.total_analyses }}</span>
-      <span class="total-label">例分析</span>
+    <div v-if="store.data?.total_analyses">
+      <div class="pie-total">
+        <span class="total-num mono-num">{{ store.data.total_analyses }}</span>
+        <span class="total-label">例分析</span>
+      </div>
+      <VChart :option="option" autoresize class="pie-chart" />
     </div>
-    <VChart :option="option" autoresize class="pie-chart" />
+    <!-- 0 例时画空坐标系等于「看起来有数据但全是 0」，这里直接给空态 -->
+    <div v-else class="pie-empty">
+      <EmptyState
+        icon="PieChart"
+        title="暂无分析数据"
+        description="完成第一次分析后，这里会按严重等级统计分布。"
+        hint="数据来源：/api/stats · severity_distribution"
+      />
+    </div>
   </div>
 </template>
 
@@ -71,6 +87,10 @@ const option = computed(() => {
 
 .pie-chart {
   width: 100%;
+  height: 220px;
+}
+
+.pie-empty {
   height: 220px;
 }
 
@@ -86,13 +106,13 @@ const option = computed(() => {
 
 .total-num {
   display: block;
-  font-size: 22px;
+  font-size: var(--font-title);
   font-weight: 700;
-  color: var(--accent-cyan);
+  color: var(--color-primary-text);
 }
 
 .total-label {
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
 }
 </style>

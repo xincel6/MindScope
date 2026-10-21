@@ -22,12 +22,12 @@ const labels = {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--font-xs);
   color: var(--text-secondary);
   padding: 3px 10px;
-  border-radius: 12px;
-  background: rgba(148, 163, 184, 0.06);
-  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: var(--radius-pill);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
   letter-spacing: 0.5px;
 }
 </style>

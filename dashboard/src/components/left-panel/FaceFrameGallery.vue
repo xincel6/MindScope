@@ -1,13 +1,17 @@
 <script setup lang="ts">
 import { ref, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { Picture } from '@element-plus/icons-vue'
 import { useDashboardStore, type FaceFrameSnapshot } from '@/stores/dashboard'
 import { analyzeFaceBase64 } from '@/api/index'
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   layout?: 'side' | 'compact'
+  /** 嵌进工作台热力卡时不重复白卡 / 边框 / 内边距 */
+  embedded?: boolean
 }>(), {
   layout: 'side',
+  embedded: false,
 })
 
 const store = useDashboardStore()
@@ -16,6 +20,13 @@ const LS_KEY = 'face-gallery-collapsed'
 const collapsed = ref(false)
 const selectedKey = ref<string | null>(null)
 const singleLoading = ref(false)
+// P5 T1：base64 帧理论上不会 404，但损坏/解码失败时同样切成中性占位，
+// 避免 alt（此处为空）或破图图标破坏 1:1 缩略图栅格。
+const brokenFrames = ref<Set<string>>(new Set())
+
+function markFrameBroken(key: string) {
+  brokenFrames.value.add(key)
+}
 
 onMounted(() => {
   collapsed.value = localStorage.getItem(LS_KEY) === '1'
@@ -29,6 +40,7 @@ function toggleCollapse() {
 function clearFrames() {
   store.clearFaceFrameHistory()
   selectedKey.value = null
+  brokenFrames.value.clear()
 }
 
 watch(
@@ -44,10 +56,6 @@ function selectItem(item: FaceFrameSnapshot) {
 }
 
 async function runSingleFrameDetect() {
-  if (store.isDemo) {
-    ElMessage.warning('演示模式无真实推理，请关闭演示并连接后端后使用单帧检测')
-    return
-  }
   const item = store.faceFrameHistory.find((x) => x.key === selectedKey.value)
   if (!item?.b64) {
     ElMessage.warning('请先点击选择一个人脸帧')
@@ -97,7 +105,11 @@ async function runSingleFrameDetect() {
       </el-icon>
     </button>
 
-    <div v-show="layout === 'compact' || !collapsed" class="face-gallery-inner glass-card glass-card--flat">
+    <div
+      v-show="layout === 'compact' || !collapsed"
+      class="face-gallery-inner"
+      :class="embedded ? 'face-gallery-inner--embedded' : 'glass-card glass-card--flat'"
+    >
       <div class="fg-header">
         <span class="fg-title">关键人脸帧</span>
         <div class="fg-header-actions">
@@ -132,7 +144,21 @@ async function runSingleFrameDetect() {
             :class="{ active: selectedKey === item.key }"
             @click="selectItem(item)"
           >
-            <img :src="`data:image/jpeg;base64,${item.b64}`" alt="" />
+            <img
+              v-if="!brokenFrames.has(item.key)"
+              :src="`data:image/jpeg;base64,${item.b64}`"
+              alt=""
+              @error="markFrameBroken(item.key)"
+            />
+            <span
+              v-else
+              class="thumb-fallback thumb-fallback--frame"
+              role="img"
+              :aria-label="`第 ${item.frameId} 帧：预览不可用`"
+            >
+              <el-icon :size="18"><Picture /></el-icon>
+              <span class="thumb-fallback__text">预览不可用</span>
+            </span>
             <span class="fg-meta">#{{ item.frameId }} · {{ item.score }}</span>
           </button>
         </div>
@@ -192,7 +218,7 @@ async function runSingleFrameDetect() {
 }
 
 .fg-grid--horizontal .fg-meta {
-  font-size: 9px;
+  font-size: var(--font-xs);
   padding: 2px 4px;
 }
 
@@ -215,10 +241,10 @@ async function runSingleFrameDetect() {
   width: 32px;
   margin-right: 4px;
   align-self: stretch;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: rgba(56, 189, 248, 0.08);
-  color: var(--accent-cyan);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-tag);
+  background: var(--bg-inset);
+  color: var(--color-primary-text);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -227,7 +253,7 @@ async function runSingleFrameDetect() {
 }
 
 .collapse-toggle:hover {
-  background: rgba(56, 189, 248, 0.14);
+  background: var(--bg-press);
 }
 
 .face-gallery-inner {
@@ -238,6 +264,10 @@ async function runSingleFrameDetect() {
   padding: 10px;
   gap: 8px;
   overflow: hidden;
+}
+
+.face-gallery-inner--embedded {
+  padding: var(--space-2) 0 0;
 }
 
 .fg-header {
@@ -255,29 +285,29 @@ async function runSingleFrameDetect() {
 
 .fg-clear {
   padding: 2px 8px;
-  font-size: 11px;
-  color: var(--text-muted);
-  background: rgba(248, 113, 113, 0.12);
-  border: 1px solid rgba(248, 113, 113, 0.35);
-  border-radius: 4px;
+  font-size: var(--font-xs);
+  color: var(--severity-severe-text);
+  background: var(--color-danger-soft);
+  border: 1px solid color-mix(in srgb, var(--color-danger) 28%, transparent);
+  border-radius: var(--radius-tag);
   cursor: pointer;
   transition: background 0.2s, color 0.2s;
 }
 
 .fg-clear:hover {
-  color: #fecaca;
-  background: rgba(248, 113, 113, 0.22);
+  color: var(--severity-severe-text);
+  background: color-mix(in srgb, var(--color-danger) 14%, transparent);
 }
 
 .fg-title {
-  font-size: 13px;
+  font-size: var(--font-sm);
   font-weight: 600;
   color: var(--text-secondary);
 }
 
 .fg-badge {
-  font-size: 11px;
-  color: var(--accent-red);
+  font-size: var(--font-xs);
+  color: var(--color-danger);
   animation: pulse-soft 1.2s ease-in-out infinite;
 }
 
@@ -293,8 +323,8 @@ async function runSingleFrameDetect() {
 
 .fg-desc {
   margin: 0;
-  font-size: 11px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--text-secondary);
   line-height: 1.45;
 }
 
@@ -306,8 +336,8 @@ async function runSingleFrameDetect() {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: var(--text-muted);
-  font-size: 12px;
+  color: var(--text-secondary);
+  font-size: var(--font-xs);
   text-align: center;
   padding: 12px 4px;
 }
@@ -327,21 +357,28 @@ async function runSingleFrameDetect() {
 .fg-thumb {
   position: relative;
   border: 2px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-tag);
   overflow: hidden;
   padding: 0;
   cursor: pointer;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--bg-inset);
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 
 .fg-thumb:hover {
-  border-color: rgba(56, 189, 248, 0.35);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, transparent);
 }
 
 .fg-thumb.active {
-  border-color: var(--accent-cyan);
-  box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 20%, transparent);
+}
+
+.fg-thumb:focus-visible,
+.collapse-toggle:focus-visible,
+.fg-clear:focus-visible {
+  outline: 2px solid var(--color-primary-text);
+  outline-offset: 2px;
 }
 
 .fg-thumb img {
@@ -353,10 +390,10 @@ async function runSingleFrameDetect() {
 
 .fg-meta {
   display: block;
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: var(--font-xs);
+  color: var(--bg-card);
   padding: 4px 6px;
-  background: rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--text-primary) 55%, transparent);
   text-align: center;
   font-family: var(--font-mono, monospace);
 }
