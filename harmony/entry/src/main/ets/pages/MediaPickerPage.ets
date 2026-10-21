@@ -9,7 +9,7 @@
  * param.pickedName = 'interview.mp4';
  * ```
  *
- * 布局：① 选择卡片 ② 已选素材预览 ③ 上传状态（进度 / 错误） ④ 主按钮 ⑤ 格式说明。
+ * 布局：① 选择卡片（类型图标用 SVG：加图 / 图片 / 视频）② 已选素材预览 ③ 上传状态（进度 / 错误） ④ 主按钮 ⑤ 格式说明。
  * 页面自己**只有**一个本地状态：`submitting`（回调返回前的兜底防连点）。
  * 其余全部来自参数 —— 因为"选中的素材"属于业务数据，应由窗口层持有。
  *
@@ -105,9 +105,20 @@ export struct MediaPickerPage {
       });
   }
 
-  /** 空态图标字形（本轮不引入图片资源，用单字代替） */
-  private emptyGlyph(): string {
-    return '素';
+  /**
+   * 卡片前的类型图标（本轮从"单字占位"换成 SVG 资源）
+   *
+   * ★ 为什么换：`素` / `图` / `视` 三个汉字当图标，在真机上就是三个不同宽度的方块字，
+   *   摆在 44×44 的浅薄荷底砖里既不像图标，也和底部页签那套线性图标不是一套东西；
+   *   空态那个"素"尤其容易被读成页面名而不是动作。
+   * ★ 三份 SVG 的颜色都烤成主色（`#0D9488`），没有走 `Image.fillColor()`：
+   *   它只改填充不改描边，线性图标会"换了个色还是灰的"（同 `PageRoutes.MAIN_TABS` 的注释）。
+   */
+  private pickIcon(): Resource {
+    if (!this.pageParam.hasPicked) {
+      return $r('app.media.media_add');
+    }
+    return this.pageParam.pickedIsVideo ? $r('app.media.media_video') : $r('app.media.media_image');
   }
 
   build() {
@@ -130,11 +141,14 @@ export struct MediaPickerPage {
             }
           }) {
             Row({ space: UiTheme.gapM }) {
-              // 素材图标底：选中后按类型显示"图/视"字形
+              // 素材图标底：空态画"加一张图"，选中后按类型换成图片 / 视频图标
               Column() {
-                Text(this.pageParam.hasPicked ? (this.pageParam.pickedIsVideo ? '视' : '图') : this.emptyGlyph())
-                  .fontSize(20)
-                  .fontColor(UiTheme.primary)
+                Image(this.pickIcon())
+                  .width(22)
+                  .height(22)
+                  .objectFit(ImageFit.Contain)
+                  .draggable(false)
+                  .interpolation(ImageInterpolation.High)
               }
               .width(44)
               .height(44)
@@ -185,9 +199,13 @@ export struct MediaPickerPage {
                 // 图片能直接预览本地 URI；视频本轮不给播放器，用占位块表达类型
                 if (this.pageParam.pickedIsVideo) {
                   Column({ space: UiTheme.gapS }) {
-                    Text('视')
-                      .fontSize(28)
-                      .fontColor(UiTheme.textSecondary)
+                    // 视频没有缩略图可画，用一枚视频图标表达类型（播放器下轮实现）
+                    Image($r('app.media.media_video'))
+                      .width(40)
+                      .height(40)
+                      .objectFit(ImageFit.Contain)
+                      .draggable(false)
+                      .interpolation(ImageInterpolation.High)
                     Text('视频素材 · 播放器下轮实现')
                       .fontSize(UiTheme.fontSizeCaption)
                       .fontColor(UiTheme.textSecondary)
