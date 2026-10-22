@@ -14,7 +14,9 @@
 import { ApiConfig } from '../common/ApiConfig';
 import { AuthApi, AuthRule } from '../network/AuthApi';
 import { ApiError, ApiErrorKind, appError, isNetworkFailure, isUnauthorized, toApiError } from '../network/ApiError';
-import { ActionResultModel, ApiStatus, AuthFailKind, Mapper, TokenOutDto, UserOutDto, UserModel } from '../types/Index';
+import {
+  ActionResultModel, ApiStatus, AuthFailKind, Mapper, MessageOutDto, TokenOutDto, UserOutDto, UserModel
+} from '../types/Index';
 import { AuthState } from '../types/storeState';
 import { BaseStore } from './BaseStore';
 
@@ -91,7 +93,8 @@ export class AuthStore extends BaseStore {
    * @returns 成功返回 ok=true；失败返回 ok=false 且 message 为后端 detail 文案
    */
   public async login(username: string, password: string): Promise<ActionResultModel> {
-    const local: string = this.validate(username, password, false);
+    // ★ 登录只校验用户名与密码长度（邮箱/验证码是注册才有的字段，传空串跳过）
+    const local: string = this.validate(username, password, '', '');
     if (local.length > 0) {
       this.markFail(AuthFailKind.invalid, 0, local);
       return AuthStore.fail(local);
@@ -110,10 +113,16 @@ export class AuthStore extends BaseStore {
 
   /**
    * 注册 · **注册即登录**，后端直接返回 token
-   * @param email 传空串表示不填邮箱（内部会发 null）
+   * @param email 必填（2026-10-21 起后端强制邮箱绑定）
+   * @param verificationCode 邮箱收到的 6 位验证码，必填
    */
-  public async register(username: string, password: string, email: string): Promise<ActionResultModel> {
-    const local: string = this.validate(username, password, true);
+  public async register(
+    username: string,
+    password: string,
+    email: string,
+    verificationCode: string
+  ): Promise<ActionResultModel> {
+    const local: string = this.validate(username, password, email, verificationCode);
     if (local.length > 0) {
       this.markFail(AuthFailKind.invalid, 0, local);
       return AuthStore.fail(local);
@@ -122,11 +131,66 @@ export class AuthStore extends BaseStore {
     this.clearFail();
     this.beginLoad();
     try {
-      const token: TokenOutDto = await AuthApi.register(username, password, email);
+      const token: TokenOutDto = await AuthApi.register(username, password, email, verificationCode);
       await this.applyToken(token);
       return AuthStore.done(`注册成功，欢迎 ${this.displayName()}`);
     } catch (err) {
       return this.handleFailure(err as Object);
+    }
+  }
+
+  /**
+   * 发送验证码 · 注册与找回密码共用（`purpose`: 'register' / 'reset'）
+   *
+   * ★ 为什么不像 login/register 那样写 `errorMsg` / `failKind`：
+   *   发码是表单里的**辅助动作**，它的成败不该占据"登录失败"那条通道 ——
+   *   否则用户只是点了下"获取验证码"，登录页却弹出一个"登录失败"的弹窗，
+   *   而他根本没点登录。展示方式由页面自己决定（返回值里带着文案）。
+   * ★ 也不碰 `loading`：同一个 store 的 loading 驱动着登录按钮的"登录中…"，
+   *   发信期间让登录按钮变成"登录中…"是误导。忙碌态由页面本地字段管。
+   */
+  public async sendCode(email: string, purpose: string): Promise<ActionResultModel> {
+    const emailError: string = AuthRule.checkEmail(email);
+    if (emailError.length > 0) {
+      return AuthStore.fail(emailError);
+    }
+    try {
+      const out: MessageOutDto = await AuthApi.sendCode(email, purpose);
+      return AuthStore.done(out.message);
+    } catch (err) {
+      // 429 冷却 / 409 邮箱已注册 / 503 未配邮件服务 / 400 格式错 / 网络错
+      return AuthStore.fail(toApiError(err as Object).message);
+    }
+  }
+
+  /**
+   * 邮箱找回密码 · 流程：sendCode(reset) → 本方法
+   *
+   * 同样不写登录态通道（见 `sendCode` 注释）。成功只改密码，
+   * **不**主动让已签发的令牌失效 —— 服务端没有黑名单，旧令牌会用到自然过期。
+   */
+  public async resetPassword(
+    email: string,
+    verificationCode: string,
+    newPassword: string
+  ): Promise<ActionResultModel> {
+    const emailError: string = AuthRule.checkEmail(email);
+    if (emailError.length > 0) {
+      return AuthStore.fail(emailError);
+    }
+    const codeError: string = AuthRule.checkCode(verificationCode);
+    if (codeError.length > 0) {
+      return AuthStore.fail(codeError);
+    }
+    const passwordError: string = AuthRule.checkPassword(newPassword);
+    if (passwordError.length > 0) {
+      return AuthStore.fail(passwordError);
+    }
+    try {
+      const out: MessageOutDto = await AuthApi.resetPassword(email, verificationCode, newPassword);
+      return AuthStore.done(out.message);
+    } catch (err) {
+      return AuthStore.fail(toApiError(err as Object).message);
     }
   }
 
@@ -246,7 +310,12 @@ export class AuthStore extends BaseStore {
   // ────────────────── 内部实现（全部下压）──────────────────
 
   /** 本地校验 · 规则与后端 auth.py 完全一致，省一次往返 */
-  private validate(username: string, password: string, needEmailCheck: boolean): string {
+  private validate(
+    username: string,
+    password: string,
+    email: string,
+    verificationCode: string
+  ): string {
     const nameErr: string = AuthRule.checkUsername(username);
     if (nameErr.length > 0) {
       return nameErr;
@@ -254,6 +323,15 @@ export class AuthStore extends BaseStore {
     const pwdErr: string = AuthRule.checkPassword(password);
     if (pwdErr.length > 0) {
       return pwdErr;
+    }
+    // 邮箱与验证码自 2026-10-21 起为必填：邮箱是唯一的账号找回通道
+    const emailErr: string = AuthRule.checkEmail(email);
+    if (emailErr.length > 0) {
+      return emailErr;
+    }
+    const codeErr: string = AuthRule.checkCode(verificationCode);
+    if (codeErr.length > 0) {
+      return codeErr;
     }
     return '';
   }

@@ -30,11 +30,12 @@ import { AppBootstrap } from '../common/AppBootstrap';
 import { UiTheme } from '../common/UiTheme';
 import { AppStore } from '../store/AppStore';
 import { ActionResultModel, AuthFailKind, BootPhase } from '../types/Index';
-import { LoginPageParam, MainPageParam, RegisterPageParam } from '../types/PageParams';
+import { LoginPageParam, MainPageParam, RegisterPageParam, ForgotPasswordPageParam } from '../types/PageParams';
 import { StandbyView } from '../components/StandbyView';
-import { LOGIN_ROUTE, REGISTER_ROUTE } from './PageRoutes';
+import { LOGIN_ROUTE, REGISTER_ROUTE, FORGOT_PASSWORD_ROUTE } from './PageRoutes';
 import { LoginPage } from './LoginPage';
 import { RegisterPage } from './RegisterPage';
+import { ForgotPasswordPage } from './ForgotPasswordPage';
 import { MainPage } from './MainPage';
 import { window } from '@kit.ArkUI';
 import { BusinessError } from '@kit.BasicServicesKit';
@@ -84,6 +85,9 @@ struct Index {
   /** 注册页参数 · 同上，页面级缓存 */
   private registerParam: RegisterPageParam = new RegisterPageParam();
 
+  /** 找回密码页参数 · 同上，页面级缓存（2026-10-21 新增） */
+  private forgotPasswordParam: ForgotPasswordPageParam = new ForgotPasswordPageParam();
+
   /** 主界面参数 · 同上。主界面的入参里只有只读展示文案，定期同步即可 */
   private mainParam: MainPageParam = new MainPageParam();
 
@@ -92,6 +96,9 @@ struct Index {
 
   /** 注册页的回调是否已挂载 */
   private registerActionsAttached: boolean = false;
+
+  /** 找回密码页的回调是否已挂载 */
+  private forgotPasswordActionsAttached: boolean = false;
 
   /** 探活重连是否进行中 */
   @Local retrying: boolean = false;
@@ -289,7 +296,7 @@ struct Index {
     const target: string = this.serverLabel;
     const statusText: string = status > 0 ? `${status}` : '—';
     if (kind === AuthFailKind.credentials) {
-      return `服务端 ${target} 已回应 HTTP ${statusText}：用户名或密码不匹配（后端不区分"账号不存在"与"密码错"）。可点密码框右侧「显示」核对输入，并确认账号是注册在这台服务器上。`;
+      return `服务端 ${target} 已回应 HTTP ${statusText}：用户名或密码不匹配（后端不区分"账号不存在"与"密码错"）。请确认账号是注册在这台服务器上；忘记密码可点下方「忘记密码？」用邮箱重置。`;
     }
     if (kind === AuthFailKind.disabled) {
       return `服务端 ${target} 已回应 HTTP ${statusText}：账号已被禁用，请联系管理员。`;
@@ -496,6 +503,12 @@ struct Index {
       return true;
     };
 
+    // ★ 2026-10-21 新增：忘记密码入口 → 压入找回密码页
+    param.onForgotPassword = () => {
+      this.syncForgotPasswordParam();
+      this.loginStack.pushPathByName(FORGOT_PASSWORD_ROUTE, this.forgotPasswordParam);
+    };
+
     param.onRetry = async (): Promise<string> => {
       return await this.checkServer();
     };
@@ -506,9 +519,13 @@ struct Index {
     const param: RegisterPageParam = this.registerParam;
     if (!this.registerActionsAttached) {
       this.registerActionsAttached = true;
-      param.onRegister = async (username: string, password: string, email: string): Promise<boolean> => {
+      // ★ 注册签名比登录多一个 verificationCode（2026-10-21 起邮箱与验证码均必填）
+      param.onRegister = async (
+        username: string, password: string, email: string, verificationCode: string
+      ): Promise<boolean> => {
         // ★ 注册即登录：AuthStore.register 内部拿到 token 后会立刻再调 /api/auth/me
-        const result: ActionResultModel = await AppStore.get().auth().register(username, password, email);
+        const result: ActionResultModel = await AppStore.get().auth()
+          .register(username, password, email, verificationCode);
         AppStore.get().sync();
         if (!result.ok) {
           this.refreshUi();
@@ -517,6 +534,11 @@ struct Index {
         await AppStore.get().loadAll();
         this.refreshUi();
         return true;
+      };
+      // 发验证码：返回空串 = 成功，非空 = 失败文案（页面就地展示，不弹登录失败窗）
+      param.onSendCode = async (email: string, purpose: string): Promise<string> => {
+        const result: ActionResultModel = await AppStore.get().auth().sendCode(email, purpose);
+        return result.ok ? '' : result.message;
       };
       param.onBackToLogin = () => {
         // 出栈回登录页；栈里没有登录页时保持不变（不会崩）
@@ -529,6 +551,38 @@ struct Index {
     param.authErrorTitle = this.authErrorTitle === '登录失败' || this.authErrorTitle === '需要重新登录'
       ? '注册失败' : this.authErrorTitle;
     param.authErrorHint = this.authErrorHint;
+  }
+
+  /**
+   * 找回密码页参数 · 挂载两个动作回调 + 同步忙碌态
+   *
+   * ★ `busy` 只是兜底：`AuthStore.sendCode` / `resetPassword` 刻意不写 `loading`
+   *   （见它们的方法注释 —— 发码是表单内的辅助动作，不该占用登录态通道），
+   *   所以正常情况下这个字段恒为 false。真正锁住表单的是页面自己的
+   *   `sendingCode` / `submitting` 两个本地字段。
+   *   这里仍然同步一次：万一用户是在"登录请求进行中"跳到本页的，
+   *   表单应该跟着锁住，而不是允许在登录回调落地前改密码。
+   */
+  private syncForgotPasswordParam(): void {
+    const param: ForgotPasswordPageParam = this.forgotPasswordParam;
+    if (!this.forgotPasswordActionsAttached) {
+      this.forgotPasswordActionsAttached = true;
+      param.onSendCode = async (email: string, purpose: string): Promise<string> => {
+        const result: ActionResultModel = await AppStore.get().auth().sendCode(email, purpose);
+        return result.ok ? '' : result.message;
+      };
+      param.onReset = async (
+        email: string, verificationCode: string, newPassword: string
+      ): Promise<string> => {
+        const result: ActionResultModel = await AppStore.get().auth()
+          .resetPassword(email, verificationCode, newPassword);
+        return result.ok ? '' : result.message;
+      };
+      param.onBackToLogin = () => {
+        this.loginStack.popToIndex(0);
+      };
+    }
+    param.busy = this.app.auth().loading;
   }
 
   /** 主界面参数 · 同步只读展示文案（用户名 / 服务端地址） */
@@ -618,6 +672,19 @@ struct Index {
       // 注册页允许返回（回到登录页），因此这里**不**拦截
       // ★ 注册页是浅灰底（登录页是青绿底），状态栏图标必须跟着换深色，
       //   否则进到注册页后时间/电量就"消失"了（实测白图标压在 #F2F3F7 上）
+      .onShown(() => {
+        this.applyBarStyle(false);
+      })
+      .onHidden(() => {
+        this.applyBarStyle(true);
+      })
+    } else if (name === FORGOT_PASSWORD_ROUTE && param instanceof ForgotPasswordPageParam) {
+      NavDestination() {
+        ForgotPasswordPage({ pageParam: param as ForgotPasswordPageParam })
+      }
+      .hideTitleBar(true)
+      .backgroundColor(UiTheme.pageBackground)
+      // 与注册页同一套状态栏处理：浅灰底 → 深色图标；离开 → 回白色
       .onShown(() => {
         this.applyBarStyle(false);
       })

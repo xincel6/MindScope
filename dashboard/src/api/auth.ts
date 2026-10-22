@@ -23,9 +23,10 @@ export async function loginApi(username: string, password: string): Promise<Toke
 }
 
 /**
- * 后端签名：`POST /api/auth/register`，body 必须带 `verification_code`
- * （`backend/schemas.py` 的 `UserRegister`，6 位邮箱验证码，5 分钟有效）。
- * 邮箱因此是必填项，不再是「选填」。
+ * 注册 · 邮箱与验证码自 2026-10-21 起为必填
+ *
+ * 邮箱是账号唯一的找回通道；验证码证明"这个邮箱真的是你的"。
+ * 后端少任何一个字段都会回 422。
  */
 export async function registerApi(
   username: string,
@@ -48,18 +49,42 @@ export async function registerApi(
 }
 
 /**
- * 后端签名：`POST /api/auth/send-code`，body `{ email }`，202 返回 `{ message }`。
- * 同一邮箱 60 秒内不能重发（429）；服务端未配置 SMTP 时返回 503。
+ * 发送验证码 · purpose: 'register' | 'reset'
+ *
+ * 常见失败（都会带中文 detail，直接抛给调用方展示）：
+ *   409 该邮箱已被注册（register 用途）
+ *   429 发送太频繁（60 秒冷却）
+ *   503 服务端未配置邮件服务
  */
-export async function sendCodeApi(email: string): Promise<string> {
+export async function sendCodeApi(email: string, purpose: 'register' | 'reset'): Promise<string> {
   const res = await apiFetch('/api/auth/send-code', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, purpose }),
   })
-  if (!res.ok) throw new Error(await parseApiError(res, '发送验证码失败'))
   const data = await res.json().catch(() => ({}))
-  return typeof data?.message === 'string' ? data.message : '验证码已发送'
+  if (!res.ok) throw new Error(await parseApiError(res, '验证码发送失败'))
+  return data.message ?? '验证码已发送'
+}
+
+/** 邮箱找回密码 · 成功后旧密码立即失效（已签发令牌仍有效到自然过期） */
+export async function resetPasswordApi(
+  email: string,
+  verificationCode: string,
+  newPassword: string,
+): Promise<string> {
+  const res = await apiFetch('/api/auth/reset-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      verification_code: verificationCode,
+      new_password: newPassword,
+    }),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(await parseApiError(res, '重置失败'))
+  return data.message ?? '密码已重置'
 }
 
 export async function fetchMeApi(): Promise<AuthUser> {

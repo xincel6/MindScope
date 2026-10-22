@@ -47,17 +47,43 @@ export enum MainTab {
 }
 
 /**
- * 鉴权动作签名 · 登录与注册共用
+ * 登录动作签名
  *
- * 页面把用户输入交给窗口层，窗口层负责调 `AuthStore` 并把结果转成 boolean：
- *  - 返回 `true`  → 鉴权成功（窗口层已落地登录态，界面会自动切换）
+ * 页面把用户输入交给窗口层，窗口层负责调 `AuthStore.login` 并把结果转成 boolean：
+ *  - 返回 `true`  → 登录成功（窗口层已落地登录态，界面会自动切换）
  *  - 返回 `false` → 失败（页面保持原样，错误文案由窗口层回填到参数里）
  *
  * @param username 用户名（页面已按 `AuthRule` 做过本地校验）
  * @param password 密码
- * @param email    邮箱；登录时传空串，注册时可空（窗口层会转成 null 发给服务端）
+ * @param email    恒传空串（登录只用用户名 + 密码；占位是为了与注册签名同形）
  */
 export type AuthAction = (username: string, password: string, email: string) => Promise<boolean>;
+
+/**
+ * 注册动作签名 · 比登录多两个参数
+ *
+ * 自 2026-10-21 起邮箱与验证码都是**必填**：邮箱是这个项目唯一的账号找回通道，
+ * 后端 `UserRegister` 少了任何一个都会回 422。
+ *
+ * @param email            邮箱（必填，页面已按 `AuthRule.checkEmail` 校验）
+ * @param verificationCode 6 位验证码（必填，页面已按 `AuthRule.checkCode` 校验）
+ */
+export type RegisterAction = (
+  username: string, password: string, email: string, verificationCode: string
+) => Promise<boolean>;
+
+/**
+ * 发验证码动作签名 · 注册与找回密码共用
+ *
+ * 与登录/注册不同，这里**不返回 boolean**：发码失败（429 冷却 / 409 邮箱已注册 /
+ * 503 未配邮件服务）是"表单内的局部问题"，用户改一改就能重试，不该把登录页
+ * 的失败弹窗拽出来。约定：
+ *  - 返回空串 → 发送成功（页面开始 60 秒倒计时）
+ *  - 返回非空 → 失败文案（页面就地展示，不弹窗）
+ *
+ * @param purpose 'register' 注册 / 'reset' 找回密码
+ */
+export type SendCodeAction = (email: string, purpose: string) => Promise<string>;
 
 // ══════════════════════════════════════════════════════════════════
 //  一、登录页参数
@@ -101,6 +127,15 @@ export class LoginPageParam extends PageParam {
     return Promise.resolve(false);
   };
 
+  /**
+   * 点「忘记密码？」· 窗口层负责压入找回密码页
+   *
+   * ★ 2026-10-21 新增：密码找回走邮箱（服务端 `reset-password`），
+   *   老账户没有绑定邮箱，所以这个入口对它们无效 —— 页面上照常显示，
+   *   真到那一步服务端会用同一句话回复"验证码错误或已过期"。
+   */
+  public onForgotPassword: () => void = () => {};
+
   /** 点「重新连接服务端」· 窗口层负责调 `AppStore.checkHealth()`；返回空串表示探活成功 */
   public onRetry: () => Promise<string> = (): Promise<string> => {
     return Promise.resolve('');
@@ -127,7 +162,7 @@ export class LoginPageParam extends PageParam {
 
   /**
    * 失败弹窗的**诊断行**（本轮新增）· 窗口层拼好的一行事实陈述，例如：
-   *   "服务端 100.122.178.113:8000 已回应 HTTP 401 —— 账号密码不匹配，可点「显示」核对密码"
+   *   "服务端 100.122.178.113:8000 已回应 HTTP 401 —— 账号密码不匹配，请确认账号是注册在这台服务器上"
    *   "请求没有到达服务端（100.122.178.113:8000）—— 检查网络/服务端是否启动"
    * ★ 作用：把「密码错」与「连不上服务端」在界面上彻底分开，
    *   这是本轮修「一直点登录都提示密码错误」时最缺的一条信息。
@@ -162,6 +197,9 @@ export class LoginPageParam extends PageParam {
  *   `AuthStore.register()` 内部已经接着调了 `/api/auth/me` 把用户信息补齐，
  *   所以窗口层只要调用它，页面侧就表现为"注册完成后自动登录"。
  *
+ * ★ 2026-10-21 起邮箱与验证码**均为必填**（后端 `UserRegister` 强制）：
+ *   邮箱是唯一的账号找回通道，验证码证明"这个邮箱真的是你的"。
+ *
  * ★ 本轮加 `@ObservedV2`：理由与登录页完全相同（失败文案是在页面挂载之后才回填的）。
  */
 @ObservedV2
@@ -170,10 +208,21 @@ export class RegisterPageParam extends PageParam {
 
   /**
    * 点「注册」· 窗口层负责调 `AuthStore.register`（内部即自动登录）
-   * @param email 空串表示用户没填邮箱（后端 `email` 为 Optional，窗口层会转成 null）
+   * @param email            必填
+   * @param verificationCode 必填，6 位数字
    */
-  public onRegister: AuthAction = (username: string, password: string, email: string): Promise<boolean> => {
+  public onRegister: RegisterAction = (
+    username: string, password: string, email: string, verificationCode: string
+  ): Promise<boolean> => {
     return Promise.resolve(false);
+  };
+
+  /**
+   * 点「获取验证码」· 窗口层负责调 `AuthStore.sendCode(email, 'register')`
+   * @returns 空串 = 发送成功；非空 = 失败文案（页面就地展示）
+   */
+  public onSendCode: SendCodeAction = (email: string, purpose: string): Promise<string> => {
+    return Promise.resolve('');
   };
 
   /** 点「已有账号？返回登录」· 窗口层负责出栈 */
@@ -201,6 +250,66 @@ export class RegisterPageParam extends PageParam {
   /** 失败弹窗诊断行 · 与登录页同一套（见 `LoginPageParam.authErrorHint`） */
   @Trace authErrorHint: string = '';
 }
+
+// ══════════════════════════════════════════════════════════════════
+//  二·补、找回密码页参数
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * 找回密码页参数（`pages/ForgotPasswordPage.ets`）
+ *
+ * 流程（与服务端 `POST /api/auth/send-code` + `POST /api/auth/reset-password` 对应）：
+ * ```text
+ *   ① 填邮箱        → onSendCode(email, 'reset') → 60 秒倒计时
+ *   ② 填新密码 + 码  → onReset(email, code, newPassword) → 成功
+ *   ③ 成功           → 页面提示"已重置"，用户点「返回登录」手动回登录页
+ * ```
+ *
+ * ★ 为什么不重置完自动跳登录页：用户此刻手里只有新密码，让他**自己点一下返回**
+ *   比自动跳转更容易理解"刚刚发生了什么"。自动跳还会带来"我明明在改密码，
+ *   怎么突然回到登录页"的困惑。
+ *
+ * ★ 老账户（未绑定邮箱）走到第①步就会失败：服务端对未注册邮箱返回 202 但**不发信**，
+ *   用户永远收不到码。这是已知限制（"老账户先不管"），页面上用一行小字说明。
+ */
+@ObservedV2
+export class ForgotPasswordPageParam extends PageParam {
+  // ── 动作回调（push 之前挂一次 → 普通字段）──
+
+  /**
+   * 点「获取验证码」· 窗口层负责调 `AuthStore.sendCode(email, 'reset')`
+   * @returns 空串 = 发送成功；非空 = 失败文案（页面就地展示）
+   */
+  public onSendCode: SendCodeAction = (email: string, purpose: string): Promise<string> => {
+    return Promise.resolve('');
+  };
+
+  /**
+   * 点「重置密码」· 窗口层负责调 `AuthStore.resetPassword`
+   * @returns 空串 = 重置成功；非空 = 失败文案（页面就地展示）
+   */
+  public onReset: ResetPasswordAction = (
+    email: string, verificationCode: string, newPassword: string
+  ): Promise<string> => {
+    return Promise.resolve('');
+  };
+
+  /** 点「返回登录」· 窗口层负责出栈 */
+  public onBackToLogin: () => void = () => {};
+
+  // ── 挂载后会变 → 必须 @Trace ──
+
+  /** 是否正在提交（按钮禁用 + 文案变化） */
+  @Trace busy: boolean = false;
+}
+
+/**
+ * 重置密码动作签名 · 与 `SendCodeAction` 同一套约定：
+ * 返回空串表示成功，非空为要就地展示的失败文案（不弹登录失败窗）。
+ */
+export type ResetPasswordAction = (
+  email: string, verificationCode: string, newPassword: string
+) => Promise<string>;
 
 // ══════════════════════════════════════════════════════════════════
 //  三、主界面参数

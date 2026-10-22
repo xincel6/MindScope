@@ -77,12 +77,15 @@ class EmailVerification(Base):
     ★ `attempts` 累计失败次数，满 5 次由服务层把记录标记为 consumed（作废），
       防止把 5 分钟有效期当成暴力破解窗口。
     ★ `consumed` 一码一用：校验通过立即置位，重放同样的码会因查不到有效记录而失败。
+    ★ `purpose` 区分"注册"与"找回密码"两种用途，校验时按用途取码，
+      避免两个流程的码互相顶掉（`register` / `reset`）。
     """
 
     __tablename__ = "email_verifications"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     email: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    purpose: Mapped[str] = mapped_column(String(16), default="register", nullable=False)
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     consumed: Mapped[bool] = mapped_column(default=False, nullable=False)

@@ -28,7 +28,8 @@ export {
 
 // ── Wire DTO（唯一允许 snake_case 的一层）──
 export {
-  LoginReqDto, RegisterReqDto, TokenOutDto, UserOutDto, MediaItemOutDto, MediaListOutDto,
+  LoginReqDto, RegisterReqDto, SendCodeReqDto, ResetPasswordReqDto, MessageOutDto,
+  TokenOutDto, UserOutDto, MediaItemOutDto, MediaListOutDto,
   UploadImageOutDto, UpdatePatientReqDto, ReportOutDto, ReportListItemDto, ReportListOutDto,
   BdiTrendPointDto, StatsOutDto, AnalysisReqDto, AnalysisResDto, FaceB64ReqDto, FaceAnalyzeOutDto,
   AnalysisFrameDto, WsInboundDto, HealthOutDto, ErrorBodyDto

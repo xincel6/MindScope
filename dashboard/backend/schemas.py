@@ -18,9 +18,28 @@ class UserRegister(BaseModel):
 
 
 class SendCodeIn(BaseModel):
-    """POST /api/auth/send-code 的请求体 · 只需要邮箱。"""
+    """POST /api/auth/send-code 的请求体 · 只需要邮箱。
+
+    purpose: "register"（默认，兼容旧客户端）/ "reset"（找回密码）。
+    两种用途的互斥规则不同：register 要求邮箱未注册，reset 要求邮箱已注册。
+    """
 
     email: str
+    purpose: str = "register"
+
+
+class ResetPasswordIn(BaseModel):
+    """POST /api/auth/reset-password 的请求体 · 邮箱 + 验证码 + 新密码。"""
+
+    email: str
+    verification_code: str
+    new_password: str
+
+
+class MessageOut(BaseModel):
+    """只有一句话的响应（重置密码成功提示等）。"""
+
+    message: str
 
 
 class UserLogin(BaseModel):
