@@ -8,11 +8,11 @@
  *   ③ 拿到的令牌能不能取用户？ → GET /api/auth/me
  *
  * 用法：
- *   node harmony/scripts/check-login.mjs <用户名> <密码> [http://host:port]
+ *   node harmony/scripts/check-login.mjs <用户名> <密码> [https://host]
  *
  * 例：
  *   node harmony/scripts/check-login.mjs gzm 123456
- *   node harmony/scripts/check-login.mjs gzm 123456 http://192.168.0.123:8000
+ *   node harmony/scripts/check-login.mjs gzm 123456 https://xincell1013.xyz
  *
  * 退出码：
  *   0 = 登录成功  1 = 账号/密码不匹配  2 = 服务端不可达  3 = 其它异常
@@ -31,10 +31,10 @@
  *   这里统一用 `process.exitCode`，让 Node 自己退出。
  */
 
-const DEFAULT_BASE = 'http://100.122.178.113:8000';
+const DEFAULT_BASE = 'https://xincell1013.xyz';
 
 function usage() {
-  console.log('用法: node harmony/scripts/check-login.mjs <用户名> <密码> [http://host:port]');
+  console.log('用法: node harmony/scripts/check-login.mjs <用户名> <密码> [https://host]');
   console.log(`默认服务端: ${DEFAULT_BASE}（与鸿蒙端 ApiConfig 的默认值一致）`);
 }
 
@@ -80,7 +80,7 @@ async function check(username, password, base) {
     }
   } catch (err) {
     console.log(`❌ 连不上：${err && err.message ? err.message : err}`);
-    console.log('   排查：后端是否启动？地址是否正确（本机 127.0.0.1 / 局域网 192.168.x.x / Tailscale 100.x.x.x）？');
+    console.log('   排查：域名解析是否指向当前 FRP 节点？HTTPS 证书是否有效？后端与隧道是否在运行？');
     console.log('   结论：这是**网络或地址**问题，不是密码问题。');
     return 2;
   }

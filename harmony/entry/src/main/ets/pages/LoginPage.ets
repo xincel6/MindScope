@@ -9,7 +9,7 @@
  * param.authBusy = AppStore.get().auth().loading;
  * param.authError = AppStore.get().auth().errorMsg;
  * param.authErrorTitle / authErrorHint          // 失败弹窗的标题与诊断行
- * param.serverLabel = '100.122.178.113:8000';   // 底部常驻的服务端地址
+ * param.serverLabel = 'xincell1013.xyz:443';     // 底部常驻的服务端地址
  * ```
  *
  * ══════════════════ 本轮（待机页转场 · 登录页重构）的版式 ══════════════════
@@ -27,7 +27,7 @@
  * │ │ [密码          显示]      │ │
  * │ │ [      登录      ]        │ │
  * │ │  还没有账号？立即注册       │ │
- * │ │ 服务端 100.122.178.113    │ │
+ * │ │ 服务端 xincell1013.xyz    │ │
  * │ ╰──────────────────────────╯ │
  * └──────────────────────────────┘
  * ```

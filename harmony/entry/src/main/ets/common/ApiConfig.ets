@@ -1,13 +1,15 @@
 /**
  * 服务端地址与运行期配置 · 全工程**唯一**的地址拼装处
  *
- * ★ 服务端**已部署完成**（鸿蒙组服务器，监听 0.0.0.0:8000），默认地址指向它：
- *     Tailscale（推荐 · 任意网络可达）：100.122.178.113:8000
- *     局域网（手机与服务器同一 Wi-Fi）：192.168.0.123:8000
- *   默认烧 **Tailscale** 地址；换地址二选一：
+ * ★ 默认走已备案的公网域名，不再依赖 Tailscale：
+ *     REST：https://xincell1013.xyz
+ *     WS： wss://xincell1013.xyz/ws/analysis
+ *   TLS 在 SakuraFrp 侧终止，后端仍只监听服务器本机 8000。
+ *   换地址二选一：
  *     ① 代码：改下面的 `host` / `port`
- *     ② 运行期：设置页走 `AppStore.changeServer(host, port)` → 落到 `saveHost`（已持久化，重装才会丢）
- *   ★ 后端已监听 0.0.0.0（systemd 用户服务 `mindscope.service`），客户端换地址不必动服务端。
+ *     ② 运行期：`AppStore.changeServer(host, port)` → 落到 `saveHost`（已持久化，重装才会丢）
+ *   端口 443 自动使用 HTTPS/WSS；其它端口保留 HTTP/WS，便于局域网调试。
+ *   旧版本保存的 Tailscale 地址会在 `load()` 时一次性迁移到公网域名。
  *
  * ★ 令牌在内存里留一份副本：WebSocket 的 token 通过**子协议头**携带
  *   （`Sec-WebSocket-Protocol: auth.<jwt>`，见 `wsSubprotocol()`），
@@ -32,9 +34,9 @@ class PrefKey {
 export interface NetConfig {
   host: string;
   port: number;
-  /** 形如 http://100.122.178.113:8000 */
+  /** 形如 https://xincell1013.xyz */
   baseUrl: string;
-  /** 形如 ws://100.122.178.113:8000 */
+  /** 形如 wss://xincell1013.xyz */
   wsBase: string;
 }
 
@@ -42,14 +44,17 @@ export interface NetConfig {
 export class ApiConfig {
   // ────────────────── 对外只读状态 ──────────────────
 
-  /**
-   * 服务端主机 · 默认指向已部署的鸿蒙组服务器
-   * ★ 已烧 Tailscale 地址；现场只有局域网时改设置页或这里换成 192.168.0.123
-   */
-  public static host: string = '100.122.178.113';
+  /** 默认公网服务端 · 网站与 App 共用同一后端 */
+  private static readonly defaultHost: string = 'xincell1013.xyz';
+  private static readonly defaultPort: number = 443;
+  private static readonly legacyTailscaleHost: string = '100.122.178.113';
+  private static readonly legacyTailscalePort: number = 8000;
 
-  /** 服务端端口（服务端监听 0.0.0.0:8000） */
-  public static port: number = 8000;
+  /** 服务端主机 · 默认指向已备案域名 */
+  public static host: string = ApiConfig.defaultHost;
+
+  /** 服务端端口 · 443 自动启用 HTTPS/WSS */
+  public static port: number = ApiConfig.defaultPort;
 
   /** 令牌内存副本 · 供 WS 同步拼 query 使用 */
   public static token: string = '';
@@ -62,14 +67,51 @@ export class ApiConfig {
 
   // ────────────────── 地址拼装 ──────────────────
 
-  /** REST 基地址 */
-  public static baseUrl(): string {
-    return `http://${ApiConfig.host}:${ApiConfig.port}`;
+  /** 是否使用 TLS · 公网默认 443；其它端口保留明文以便局域网调试 */
+  private static useTls(): boolean {
+    return ApiConfig.port === 443;
   }
 
-  /** WS 基地址 */
+  /** 标准端口不进 URL，避免生成 https://域名:443 这类多余形式 */
+  private static portSuffix(): string {
+    return ApiConfig.port === 443 || ApiConfig.port === 80 ? '' : `:${ApiConfig.port}`;
+  }
+
+  /** 归一化主机名：去掉协议前缀、尾部斜杠与空白；空值回退默认域名 */
+  private static normalizeHost(raw: preferences.ValueType): string {
+    if (typeof raw !== 'string') {
+      return ApiConfig.defaultHost;
+    }
+    let host: string = raw.trim();
+    host = host.replace(/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//, '');
+    host = host.replace(/\/+$/, '');
+    return host.length > 0 ? host : ApiConfig.defaultHost;
+  }
+
+  /** 归一化端口：兼容旧版本存成字符串的端口；非法值回退 443 */
+  private static normalizePort(raw: preferences.ValueType): number {
+    let port: number = -1;
+    if (typeof raw === 'number') {
+      port = raw;
+    } else if (typeof raw === 'string' && raw.trim().length > 0) {
+      port = parseInt(raw.trim(), 10);
+    }
+    if (!Number.isFinite(port) || port < 1 || port > 65535) {
+      return ApiConfig.defaultPort;
+    }
+    return Math.floor(port);
+  }
+
+  /** REST 基地址 */
+  public static baseUrl(): string {
+    const scheme: string = ApiConfig.useTls() ? 'https' : 'http';
+    return `${scheme}://${ApiConfig.host}${ApiConfig.portSuffix()}`;
+  }
+
+  /** WS 基地址 · 与 REST 使用同一套 TLS 判定 */
   public static wsBase(): string {
-    return `ws://${ApiConfig.host}:${ApiConfig.port}`;
+    const scheme: string = ApiConfig.useTls() ? 'wss' : 'ws';
+    return `${scheme}://${ApiConfig.host}${ApiConfig.portSuffix()}`;
   }
 
   /**
@@ -135,13 +177,29 @@ export class ApiConfig {
       return;
     }
     try {
-      const host: preferences.ValueType = await pref.get(PrefKey.host, ApiConfig.host);
-      const port: preferences.ValueType = await pref.get(PrefKey.port, ApiConfig.port);
-      const savedAt: preferences.ValueType = await pref.get(PrefKey.tokenSavedAt, 0);
-      ApiConfig.host = host as string;
-      ApiConfig.port = port as number;
+      const rawHost: preferences.ValueType = await pref.get(PrefKey.host, ApiConfig.defaultHost);
+      const rawPort: preferences.ValueType = await pref.get(PrefKey.port, ApiConfig.defaultPort);
+      const savedHost: string = ApiConfig.normalizeHost(rawHost);
+      const savedPort: number = ApiConfig.normalizePort(rawPort);
+      // 旧安装无论端口被手工改成多少，只要主机还是 Tailscale 地址就迁回公网域名
+      const migrateTailscale: boolean = savedHost === ApiConfig.legacyTailscaleHost;
+      ApiConfig.host = migrateTailscale ? ApiConfig.defaultHost : savedHost;
+      ApiConfig.port = migrateTailscale ? ApiConfig.defaultPort : savedPort;
 
-      // ── 令牌：优先安全存储（Asset Store Kit）──
+      if (migrateTailscale) {
+        await pref.put(PrefKey.host, ApiConfig.defaultHost);
+        await pref.put(PrefKey.port, ApiConfig.defaultPort);
+        await pref.flush();
+        Logger.i(`旧 Tailscale 地址已迁移 · ${ApiConfig.baseUrl()}`);
+      }
+    } catch (err) {
+      // 地址损坏不能连坐令牌恢复：失败时保留默认域名，继续读令牌
+      Logger.e('ApiConfig.load 读取地址失败，保留默认地址', err as BusinessError);
+    }
+
+    // ── 令牌：优先安全存储（Asset Store Kit）──
+    try {
+      const savedAt: preferences.ValueType = await pref.get(PrefKey.tokenSavedAt, 0);
       let token: string = await SecureTokenStore.get();
 
       if (token.length === 0) {
@@ -160,25 +218,27 @@ export class ApiConfig {
       }
 
       ApiConfig.token = token;
-      ApiConfig.tokenSavedAt = savedAt as number;
+      ApiConfig.tokenSavedAt = typeof savedAt === 'number' ? savedAt : 0;
       Logger.i(`ApiConfig 已加载 · ${ApiConfig.baseUrl()} · token=${ApiConfig.token.length > 0 ? '已就绪' : '空'}`
         + ` · 存储=${SecureTokenStore.isAvailable() ? '安全存储' : 'preferences(降级)'}`);
     } catch (err) {
-      Logger.e('ApiConfig.load 失败', err as BusinessError);
+      Logger.e('ApiConfig.load 读取令牌失败', err as BusinessError);
     }
   }
 
-  /** 运行期切换服务端地址（答辩现场改 IP 不必重装） */
+  /** 运行期切换服务端地址（443 自动 HTTPS/WSS，其它端口用于局域网调试） */
   public static async saveHost(host: string, port: number): Promise<void> {
-    ApiConfig.host = host;
-    ApiConfig.port = port;
+    const normalizedHost: string = ApiConfig.normalizeHost(host);
+    const normalizedPort: number = ApiConfig.normalizePort(port);
+    ApiConfig.host = normalizedHost;
+    ApiConfig.port = normalizedPort;
     const pref: preferences.Preferences | null = ApiConfig.pref;
     if (pref === null) {
       return;
     }
     try {
-      await pref.put(PrefKey.host, host);
-      await pref.put(PrefKey.port, port);
+      await pref.put(PrefKey.host, normalizedHost);
+      await pref.put(PrefKey.port, normalizedPort);
       await pref.flush();
       Logger.i(`ApiConfig 地址已保存 · ${ApiConfig.baseUrl()}`);
     } catch (err) {

@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { sendCodeApi } from '@/api/auth'
 import { getApiBase, getApiBaseSync } from '@/api/baseResolver'
+import SiteFooter from '@/components/layout/SiteFooter.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -308,12 +309,15 @@ const features = [
         </div>
       </main>
     </div>
+    <SiteFooter />
   </div>
 </template>
 
 <style scoped>
 .login-page {
   position: relative;
+  display: flex;
+  flex-direction: column;
   min-height: 100vh;
   width: 100%;
   overflow: auto;
@@ -324,8 +328,9 @@ const features = [
   position: relative;
   z-index: 1;
   display: grid;
+  flex: 1;
   grid-template-columns: 1fr 480px;
-  min-height: 100vh;
+  min-height: calc(100vh - 45px);
 }
 
 .login-brand-panel {

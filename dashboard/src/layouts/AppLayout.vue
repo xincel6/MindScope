@@ -2,6 +2,7 @@
 import { provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import SideNav from '@/components/layout/SideNav.vue'
+import SiteFooter from '@/components/layout/SiteFooter.vue'
 import { useAnalysisSocket } from '@/composables/useAnalysisSocket'
 
 const route = useRoute()
@@ -44,6 +45,7 @@ watch(
 
     <main ref="mainRef" class="app-main">
       <router-view />
+      <SiteFooter />
     </main>
   </div>
 </template>

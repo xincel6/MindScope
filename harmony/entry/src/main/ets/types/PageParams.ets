@@ -127,8 +127,8 @@ export class LoginPageParam extends PageParam {
 
   /**
    * 失败弹窗的**诊断行**（本轮新增）· 窗口层拼好的一行事实陈述，例如：
-   *   "服务端 100.122.178.113:8000 已回应 HTTP 401 —— 账号密码不匹配，可点「显示」核对密码"
-   *   "请求没有到达服务端（100.122.178.113:8000）—— 检查网络/服务端是否启动"
+   *   "服务端 xincell1013.xyz:443 已回应 HTTP 401 —— 账号密码不匹配，可点「显示」核对密码"
+   *   "请求没有到达服务端（xincell1013.xyz:443）—— 检查网络/域名/隧道是否正常"
    * ★ 作用：把「密码错」与「连不上服务端」在界面上彻底分开，
    *   这是本轮修「一直点登录都提示密码错误」时最缺的一条信息。
    */
@@ -141,7 +141,7 @@ export class LoginPageParam extends PageParam {
   @Trace retrying: boolean = false;
 
   /**
-   * 当前服务端地址文案（本轮新增 · 形如 100.122.178.113:8000）
+   * 当前服务端地址文案（本轮新增 · 形如 xincell1013.xyz:443）
    * ★ 登录页底部常驻一行小字：用户/开发者一眼能看到"这台手机连的是哪台服务器"。
    *   账号在 A 服务器、App 连 B 服务器时，401 的唯一解释就是"账号不在这一台"。
    */
@@ -222,7 +222,7 @@ export class MainPageParam extends PageParam {
   /** 当前用户名 · 供"我的"页展示 */
   public userName: string = '';
 
-  /** 服务端地址展示文案 · 形如 100.122.178.113:8000 */
+  /** 服务端地址展示文案 · 形如 xincell1013.xyz:443 */
   public serverLabel: string = '';
 
   /**
@@ -352,7 +352,7 @@ export class ProfilePageParam extends TabPageParam {
   /** 注册日期 "YYYY-MM-DD" · 未取到为空串 */
   public registeredAt: string = '';
 
-  /** 服务端地址展示文案 · 形如 100.122.178.113:8000 */
+  /** 服务端地址展示文案 · 形如 xincell1013.xyz:443 */
   public serverLabel: string = '';
 
   /** 应用版本展示文案 · 形如 1.0.0(1000000) */

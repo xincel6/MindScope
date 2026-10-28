@@ -228,13 +228,16 @@ struct Index {
     if (this.phase !== 'auth' || this.authError.length > 0) {
       return '';
     }
-    return this.app.offline ? `无法连接服务端 ${this.app.serverHost}:${this.app.serverPort}` : '';
+    return this.app.offline ? `无法连接服务端 ${this.serverLabel}` : '';
   }
 
   /** 当前服务端地址文案（登录页底部常驻显示 · 排查 401 的第一现场信息） */
   @Computed
   get serverLabel(): string {
-    return `${this.app.serverHost}:${this.app.serverPort}`;
+    const port: number = this.app.serverPort;
+    const scheme: string = port === 443 ? 'https' : 'http';
+    const suffix: string = port === 443 || port === 80 ? '' : `:${port}`;
+    return `${scheme}://${this.app.serverHost}${suffix}`;
   }
 
   /**

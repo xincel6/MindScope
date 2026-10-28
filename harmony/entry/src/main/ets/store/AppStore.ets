@@ -860,7 +860,7 @@ export class AppStore {
       this.applyHealth(false);
       const result: ActionResultModel = {
         ok: false,
-        message: `无法连接 ${ApiConfig.baseUrl()}，请确认后端已启动且监听 0.0.0.0`
+        message: `无法连接 ${ApiConfig.baseUrl()}，请检查网络、域名解析、HTTPS 证书及后端隧道状态`
       };
       return result;
     } finally {

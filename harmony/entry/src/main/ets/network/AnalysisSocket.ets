@@ -4,7 +4,7 @@
  * 真实交互时序（docs/鸿蒙端网络层与类型共享方案.md 第 1.2 节）：
  * ```
  * ① HTTP POST /api/upload/image            → 拿到 media_id
- * ② WS   ws://host:8000/ws/analysis   +   Sec-WebSocket-Protocol: auth.<JWT>
+ * ② WSS  wss://xincell1013.xyz/ws/analysis   +   Sec-WebSocket-Protocol: auth.<JWT>
  *        ★ token 走子协议头，不落 URL 日志；服务端校验后回显同一子协议完成握手
  *        ★ 服务端 accept 后只等 15 秒，客户端必须在 on('open') 里立刻发 {"id":"<media_id>"}
  * ③ ◀ {"type":"status","message":"analysis_started","task_id":...}
