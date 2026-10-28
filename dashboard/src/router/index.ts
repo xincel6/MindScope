@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { isChunkLoadError, recoverFromChunkLoadError } from '@/utils/chunkLoadError'
 import AppLayout from '@/layouts/AppLayout.vue'
 
 const router = createRouter({
@@ -70,6 +71,13 @@ const router = createRouter({
     },
     { path: '/:pathMatch(.*)*', redirect: '/workbench' },
   ],
+})
+
+// 发布替换 dist 后，旧页面仍可能按旧 hash 去拿懒加载 chunk。
+// 这类失败不是“后端不可达”，整页重载一次可同时换掉旧 index 和资源清单。
+router.onError((error, to) => {
+  if (!isChunkLoadError(error)) return
+  recoverFromChunkLoadError(to.fullPath)
 })
 
 router.beforeEach(async (to) => {

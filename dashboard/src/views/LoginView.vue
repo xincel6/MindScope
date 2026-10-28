@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { sendCodeApi } from '@/api/auth'
 import { getApiBase, getApiBaseSync } from '@/api/baseResolver'
+import { isChunkLoadError } from '@/utils/chunkLoadError'
 import SiteFooter from '@/components/layout/SiteFooter.vue'
 
 const auth = useAuthStore()
@@ -27,11 +28,11 @@ const registerForm = reactive({
 const forgotForm = reactive({ email: '', code: '', password: '', confirm: '' })
 
 const loginError = ref('')
-const loginErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
+const loginErrorKind = ref<'' | 'auth' | 'network' | 'chunk' | 'other'>('')
 const registerError = ref('')
-const registerErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
+const registerErrorKind = ref<'' | 'auth' | 'network' | 'chunk' | 'other'>('')
 const forgotError = ref('')
-const forgotErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
+const forgotErrorKind = ref<'' | 'auth' | 'network' | 'chunk' | 'other'>('')
 const serverBase = ref('')
 const sendingCode = ref(false)
 const codeSent = ref(false)
@@ -39,6 +40,11 @@ const countdown = ref(0)
 let countdownTimer: ReturnType<typeof setInterval> | null = null
 
 const serverLabel = computed(() => serverBase.value || getApiBaseSync() || window.location.origin)
+const loginErrorTitle = computed(() => {
+  if (loginErrorKind.value === 'network') return '无法连接服务端'
+  if (loginErrorKind.value === 'chunk') return '页面资源加载失败'
+  return '登录失败'
+})
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
@@ -53,7 +59,8 @@ function validatePassword(pwd: string): string {
   return ''
 }
 
-function classifyError(e: unknown): 'auth' | 'network' | 'other' {
+function classifyError(e: unknown): 'auth' | 'network' | 'chunk' | 'other' {
+  if (isChunkLoadError(e)) return 'chunk'
   const message = e instanceof Error ? e.message : String(e)
   if (/401|用户名或密码|账号或密码|密码错误/i.test(message)) return 'auth'
   if (/failed to fetch|networkerror|load failed|fetch failed|network request failed|无法连接|网络/i.test(message)) {
@@ -62,8 +69,11 @@ function classifyError(e: unknown): 'auth' | 'network' | 'other' {
   return 'other'
 }
 
-function friendlyError(e: unknown, kind: 'auth' | 'network' | 'other'): string {
+function friendlyError(e: unknown, kind: 'auth' | 'network' | 'chunk' | 'other'): string {
   const message = e instanceof Error ? e.message : String(e)
+  if (kind === 'chunk') {
+    return '页面资源加载失败，正在自动刷新以获取最新版本。'
+  }
   if (kind === 'network') {
     return '请求没有到达服务端。请确认后端已启动、地址可达，然后重新登录。'
   }
@@ -311,12 +321,13 @@ const features = [
 
           <form v-if="mode === 'login'" class="auth-form" @submit.prevent="submitLogin">
             <div v-if="loginError" class="auth-error" role="alert">
-              <strong class="auth-error-title">
-                {{ loginErrorKind === 'network' ? '无法连接服务端' : '登录失败' }}
-              </strong>
+              <strong class="auth-error-title">{{ loginErrorTitle }}</strong>
               <span class="auth-error-text">{{ loginError }}</span>
               <span v-if="loginErrorKind === 'network'" class="auth-error-hint">
                 当前服务端地址：{{ serverLabel }}。请确认后端已启动且网络可达，然后点击「登录系统」重试。
+              </span>
+              <span v-else-if="loginErrorKind === 'chunk'" class="auth-error-hint">
+                若页面没有自动刷新，请按 Ctrl+F5 强制刷新后再登录。
               </span>
             </div>
             <div class="field">
