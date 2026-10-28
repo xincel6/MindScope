@@ -27,6 +27,14 @@ export const LOGIN_ROUTE: string = 'login';
 export const REGISTER_ROUTE: string = 'register';
 
 /**
+ * 找回密码页路由名（2026-10-21 新增）
+ *
+ * ★ 从登录页的"忘记密码？"进入，走邮箱验证码重置（`POST /api/auth/reset-password`）。
+ *   与注册页一样是二级页面：系统返回键即可回到登录页。
+ */
+export const FORGOT_PASSWORD_ROUTE: string = 'forgotPassword';
+
+/**
  * 素材选择页路由名（工作台二级页）
  * ★ 二级页面用 `pushPathByName` 入栈，系统返回键即可回到工作台，
  *   所以页面**不需要**自己实现"返回上一页"的栈操作。

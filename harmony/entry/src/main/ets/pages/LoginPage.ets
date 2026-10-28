@@ -24,10 +24,11 @@
  * │ │ 登录                      │ │     顶边 = `loginSheetTop`，圆角 28
  * │ │ 使用已注册的账号继续        │ │
  * │ │ [用户名]                  │ │
- * │ │ [密码          显示]      │ │
+ * │ │ [密码]                    │ │
  * │ │ [      登录      ]        │ │
  * │ │  还没有账号？立即注册       │ │
- * │ │ 服务端 xincell1013.xyz    │ │
+ * │ │  忘记密码？                │ │
+ * │ │ 服务端 https://xincell1013.xyz │ │
  * │ ╰──────────────────────────╯ │
  * └──────────────────────────────┘
  * ```
@@ -41,9 +42,13 @@
  * ② **两类失败分开说**：弹窗第三行明确写"服务端已回应 HTTP 401"（账号密码问题）
  *    还是"请求没有到达服务端"（网络/地址问题）；
  * ③ 用户名先去空白再校验（服务端是 strip 后精确匹配，两端口径一致）；
- * ④ 密码框保留「显示/隐藏」，并在键盘上直接按"前往"就能提交（`onSubmit`）；
+ * ④ 密码框恒为密文，键盘上直接按"前往"就能提交（`onSubmit`）；
  * ⑤ 输入框上方有标签，不再只靠 placeholder —— 填到一半时 placeholder 消失，
  *    用户会忘记这一栏是用户名还是邮箱。
+ *
+ * ★ 2026-10-21：按用户要求**移除**了密码框右侧的「显示/隐藏」切换
+ *   （原先留着它是为了"401 时方便自查密码"）。密码找回改走邮箱验证码
+ *   （见 `ForgotPasswordPage`），登录页只留"忘记密码？"一个出口。
  */
 
 import { AuthRule } from '../network/AuthApi';
@@ -83,7 +88,6 @@ export struct LoginPage {
   // ── 表单本地状态 ──
   @Local userName: string = '';
   @Local userPassword: string = '';
-  @Local passwordVisible: boolean = false;
   @Local formError: string = '';
   /** 回调返回前的兜底忙碌态（参数里的 authBusy 是权威来源） */
   @Local submitting: boolean = false;
@@ -257,10 +261,11 @@ export struct LoginPage {
       this.showAlert('无法提交', nameError, '用户名 3–32 位，可用字母、数字、下划线或中文');
       return;
     }
-    const passwordError: string = AuthRule.checkPassword(this.userPassword);
+    // ★ 登录只查长度，不查强度：老账户的弱密码必须还能登录（与后端同一条口径）
+    const passwordError: string = AuthRule.checkLoginPassword(this.userPassword);
     if (passwordError.length > 0) {
       this.formError = passwordError;
-      this.showAlert('无法提交', passwordError, '密码请输入 6 位以上，注意区分大小写');
+      this.showAlert('无法提交', passwordError, '密码至少 6 位，注意区分大小写');
       return;
     }
     this.formError = '';
@@ -355,41 +360,25 @@ export struct LoginPage {
             this.onInputChanged();
           })
 
-        // ③ 密码（默认密文，右侧可切换明文；键盘"前往"直接提交）
+        // ③ 密码（恒为密文 · 2026-10-21 移除「显示/隐藏」切换；键盘"前往"直接提交）
         this.fieldLabel('密码')
-        Row({ space: UiTheme.gapS }) {
-          TextInput({ placeholder: '请输入密码', text: this.userPassword })
-            .type(this.passwordVisible ? InputType.Normal : InputType.Password)
-            .height(UiTheme.controlHeight)
-            .layoutWeight(1)
-            .backgroundColor(UiTheme.fillSoft)
-            .borderRadius(UiTheme.buttonRadius)
-            .fontSize(UiTheme.fontSizeBody)
-            .fontColor(UiTheme.textPrimary)
-            .placeholderColor(UiTheme.textSecondary)
-            .enterKeyType(EnterKeyType.Go)
-            .enabled(!this.busy)
-            .onChange((value: string) => {
-              this.userPassword = value;
-              this.onInputChanged();
-            })
-            .onSubmit(() => {
-              this.submit();
-            })
-
-          // ★ 保留「显示/隐藏」：密码框看不见内容，是 401 最难自查的一环
-          Text(this.passwordVisible ? '隐藏' : '显示')
-            .fontSize(UiTheme.fontSizeBody)
-            .fontColor(UiTheme.primary)
-            .width(44)
-            .height(UiTheme.controlHeight)
-            .textAlign(TextAlign.Center)
-            .onClick(() => {
-              this.passwordVisible = !this.passwordVisible;
-            })
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Center)
+        TextInput({ placeholder: '请输入密码', text: this.userPassword })
+          .type(InputType.Password)
+          .height(UiTheme.controlHeight)
+          .backgroundColor(UiTheme.fillSoft)
+          .borderRadius(UiTheme.buttonRadius)
+          .fontSize(UiTheme.fontSizeBody)
+          .fontColor(UiTheme.textPrimary)
+          .placeholderColor(UiTheme.textSecondary)
+          .enterKeyType(EnterKeyType.Go)
+          .enabled(!this.busy)
+          .onChange((value: string) => {
+            this.userPassword = value;
+            this.onInputChanged();
+          })
+          .onSubmit(() => {
+            this.submit();
+          })
 
         // ④ 错误提示（弹窗会消失，这一行保证信息不丢）
         if (this.visibleError.length > 0) {
@@ -436,7 +425,7 @@ export struct LoginPage {
     .opacity(this.sheetOpacity)
   }
 
-  /** 白层底部：注册入口 + 连接失败的重试出口 + 当前服务端地址 */
+  /** 白层底部：注册入口 + 找回密码入口 + 连接失败的重试出口 + 当前服务端地址 */
   @Builder
   sheetFooter() {
     Column({ space: UiTheme.gapS }) {
@@ -457,6 +446,20 @@ export struct LoginPage {
       }
       .width('100%')
       .justifyContent(FlexAlign.Center)
+
+      // ★ 忘记密码入口（2026-10-21 新增）：找回走邮箱验证码，见 ForgotPasswordPage。
+      //   未绑定邮箱的老账户走不通，所以放在注册入口下面，不占主视觉。
+      Text('忘记密码？')
+        .fontSize(UiTheme.fontSizeCaption)
+        .fontColor(UiTheme.textSecondary)
+        .width('100%')
+        .textAlign(TextAlign.Center)
+        .onClick(() => {
+          if (this.busy) {
+            return;
+          }
+          this.pageParam.onForgotPassword();
+        })
 
       // 连接失败时的重试出口（规范：网络失败时提供重试按钮）
       if (this.pageParam.retryMessage.length > 0) {

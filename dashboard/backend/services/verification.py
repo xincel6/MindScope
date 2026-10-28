@@ -13,6 +13,11 @@
 
 ────────────────── 策略常量 ──────────────────
 全部集中在顶部，调参不用翻逻辑。
+
+────────────────── 两种用途 ──────────────────
+同一套码机制服务两个流程：`register`（注册）与 `reset`（找回密码）。
+两者的邮箱前提相反（一个要求未注册、一个要求已注册），所以同一邮箱在任一时刻
+只会有一个用途在活动；但码本身仍按用途分桶存放与取用，互不串门。
 """
 
 import hashlib
@@ -32,9 +37,33 @@ CODE_TTL_MINUTES = 5                 # 有效期 5 分钟
 RESEND_COOLDOWN_SECONDS = 60         # 同一邮箱 60 秒内禁止重发
 MAX_ATTEMPTS = 5                     # 同一验证码最多试 5 次，超过作废
 
+# 验证码的两种用途 · 新增用途必须在这里登记，否则 issue/check 会拒绝
+PURPOSE_REGISTER = "register"
+PURPOSE_RESET = "reset"
+PURPOSES = (PURPOSE_REGISTER, PURPOSE_RESET)
+
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc)
+    """当前 UTC 时间 · **naive**（不带 tzinfo）。
+
+    ★ 必须与 `models.py` 的口径一致：那边 `created_at` / `expires_at` 用的是
+      `datetime.utcnow()`（naive）。SQLite 的 DateTime 列不带时区信息，
+      读回来也是 naive。这里一旦用 `datetime.now(timezone.utc)`（aware），
+      到 `check()` 里 `_utcnow() > record.expires_at` 就直接抛
+      `TypeError: can't compare offset-naive and offset-aware datetimes`
+      —— 注册流程从第一步就崩。（2026-10-21 实测踩到，此前线上从未跑通过。）
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _check_purpose(purpose: str) -> str:
+    """用途白名单校验 · 非法值直接 500 暴露配置错误，不静默按 register 兜底。"""
+    if purpose not in PURPOSES:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"未知的验证码用途：{purpose}",
+        )
+    return purpose
 
 
 def _code_hash(email: str, code: str) -> str:
@@ -54,8 +83,17 @@ class VerificationService:
     """验证码的发放与核验 · 路由层只调 issue / check 两个方法。"""
 
     @staticmethod
-    async def issue(db: AsyncSession, email: str) -> None:
-        """给邮箱发一个新验证码（同一邮箱同时只有一条有效码）。"""
+    async def issue(db: AsyncSession, email: str, purpose: str = PURPOSE_REGISTER) -> None:
+        """给邮箱发一个新验证码（同一邮箱同一用途同时只有一条有效码）。
+
+        purpose: "register" 注册 / "reset" 找回密码。
+        冷却按 (邮箱, 用途) 分别计时：两个用途的邮箱前提相反（一个要求未注册、
+        一个要求已注册），正常不会同时活动；唯一重叠的窗口是"刚注册完立刻去
+        找回密码"，那种情况下让用户再等 60 秒没有任何收益，只会变成投诉。
+        滥用面并没有放大：每个用途各自仍是 1 封/分钟，且验证码一码一用、
+        试错 5 次作废。
+        """
+        _check_purpose(purpose)
         if not EmailService.available():
             # 明确失败而不是静默跳过，否则用户永远等不到邮件却不知道原因
             raise HTTPException(
@@ -65,10 +103,11 @@ class VerificationService:
 
         now = _utcnow()
 
-        # ① 冷却检查：看该邮箱最近一条记录（含已消费的），60 秒内不重发
+        # ① 冷却检查：该邮箱该用途最近一条记录（含已消费的），60 秒内不重发
         recent = (await db.execute(
             select(EmailVerification)
-            .where(EmailVerification.email == email.lower())
+            .where(EmailVerification.email == email.lower(),
+                   EmailVerification.purpose == purpose)
             .order_by(EmailVerification.created_at.desc())
             .limit(1)
         )).scalar_one_or_none()
@@ -84,9 +123,11 @@ class VerificationService:
 
         # ② 生成并发信 —— 放在作废旧码之前，发信失败不影响用户手上的旧码
         code = generate_code()
-        await EmailService.send_verification_code(email, code, CODE_TTL_MINUTES)
+        await EmailService.send_verification_code(email, code, CODE_TTL_MINUTES, purpose)
 
         # ③ 发信成功才落库：作废该邮箱所有旧码，写入新码
+        #    （按邮箱而不是按用途作废：同一邮箱同时只应存在一条有效码，
+        #     这是模块顶部承诺的不变式）
         await db.execute(
             update(EmailVerification)
             .where(EmailVerification.email == email.lower(),
@@ -95,6 +136,7 @@ class VerificationService:
         )
         db.add(EmailVerification(
             email=email.lower(),
+            purpose=purpose,
             code_hash=_code_hash(email, code),
             expires_at=now + timedelta(minutes=CODE_TTL_MINUTES),
             created_at=now,
@@ -102,11 +144,17 @@ class VerificationService:
         await db.commit()
 
     @staticmethod
-    async def check(db: AsyncSession, email: str, code: str) -> None:
-        """校验验证码 · 失败抛 400，成功则标记为已消费。"""
+    async def check(db: AsyncSession, email: str, code: str,
+                    purpose: str = PURPOSE_REGISTER) -> None:
+        """校验验证码 · 失败抛 400，成功则标记为已消费。
+
+        按 purpose 取码：注册码不能拿去重置密码，反之亦然。
+        """
+        _check_purpose(purpose)
         record = (await db.execute(
             select(EmailVerification)
             .where(EmailVerification.email == email.lower(),
+                   EmailVerification.purpose == purpose,
                    EmailVerification.consumed.is_(False))
             .order_by(EmailVerification.created_at.desc())
             .limit(1)

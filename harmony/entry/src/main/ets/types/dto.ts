@@ -18,11 +18,30 @@ export interface LoginReqDto {
   password: string;
 }
 
-/** POST /api/auth/register · 请求体（email 为 Optional） */
+/** POST /api/auth/register · 请求体（email 与 verification_code 自 2026-10-21 起为必填） */
 export interface RegisterReqDto {
   username: string;
   password: string;
-  email: string | null;
+  email: string;
+  verification_code: string;
+}
+
+/** POST /api/auth/send-code · 请求体 · purpose: "register" | "reset" */
+export interface SendCodeReqDto {
+  email: string;
+  purpose?: string;
+}
+
+/** POST /api/auth/reset-password · 请求体 */
+export interface ResetPasswordReqDto {
+  email: string;
+  verification_code: string;
+  new_password: string;
+}
+
+/** 只有一句话的响应体（reset-password 成功提示等） */
+export interface MessageOutDto {
+  message: string;
 }
 
 /** POST /api/auth/login | /api/auth/register · 响应体 */

@@ -57,3 +57,11 @@ async def init_db():
             await conn.exec_driver_sql(
                 "ALTER TABLE media_assets ADD COLUMN patient VARCHAR(64)"
             )
+        # email_verifications 是 2026-10-21 新增的表，purpose 列随后补上：
+        # 老库（表已存在但没有 purpose）在这里补一列，历史记录一律算 register。
+        rows = (await conn.exec_driver_sql("PRAGMA table_info(email_verifications)")).fetchall()
+        columns = [row[1] for row in rows]
+        if "purpose" not in columns:
+            await conn.exec_driver_sql(
+                "ALTER TABLE email_verifications ADD COLUMN purpose VARCHAR(16) DEFAULT 'register'"
+            )

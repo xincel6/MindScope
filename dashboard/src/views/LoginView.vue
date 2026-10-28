@@ -11,7 +11,10 @@ const auth = useAuthStore()
 const router = useRouter()
 const route = useRoute()
 
-const mode = ref<'login' | 'register'>('login')
+/** 三种形态：登录 / 注册 / 找回密码。
+ *  「找回密码」不出现在页签上，只能从登录表单的链接进入 —— 它是低频出口，
+ *  不该和登录/注册平级占一个页签。 */
+const mode = ref<'login' | 'register' | 'forgot'>('login')
 
 const loginForm = reactive({ username: '', password: '' })
 const registerForm = reactive({
@@ -21,11 +24,14 @@ const registerForm = reactive({
   confirm: '',
   code: '',
 })
+const forgotForm = reactive({ email: '', code: '', password: '', confirm: '' })
 
 const loginError = ref('')
 const loginErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
 const registerError = ref('')
 const registerErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
+const forgotError = ref('')
+const forgotErrorKind = ref<'' | 'auth' | 'network' | 'other'>('')
 const serverBase = ref('')
 const sendingCode = ref(false)
 const codeSent = ref(false)
@@ -35,6 +41,17 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 const serverLabel = computed(() => serverBase.value || getApiBaseSync() || window.location.origin)
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+/** 密码强度 · 与后端 auth.py 的 _validate_password 逐条对齐（注册与重置共用） */
+function validatePassword(pwd: string): string {
+  if (pwd.length < 6) return '密码至少 6 位，且需包含大写字母、小写字母和特殊字符'
+  const missing: string[] = []
+  if (!/[A-Z]/.test(pwd)) missing.push('大写字母')
+  if (!/[a-z]/.test(pwd)) missing.push('小写字母')
+  if (!/[^A-Za-z0-9]/.test(pwd)) missing.push('特殊字符')
+  if (missing.length) return `密码需同时包含大写字母、小写字母和特殊字符，当前缺少：${missing.join('、')}`
+  return ''
+}
 
 function classifyError(e: unknown): 'auth' | 'network' | 'other' {
   const message = e instanceof Error ? e.message : String(e)
@@ -98,7 +115,7 @@ async function sendRegisterCode() {
   if (sendingCode.value || countdown.value > 0) return
   sendingCode.value = true
   try {
-    const message = await sendCodeApi(email)
+    const message = await sendCodeApi(email, 'register')
     codeSent.value = true
     startCountdown(60)
     ElMessage.success(message)
@@ -106,6 +123,32 @@ async function sendRegisterCode() {
     const kind = classifyError(e)
     registerErrorKind.value = kind
     registerError.value = friendlyError(e, kind)
+  } finally {
+    sendingCode.value = false
+  }
+}
+
+/** 找回密码的发码 · 与注册页共用同一个 60 秒冷却计时器 */
+async function sendForgotCode() {
+  forgotError.value = ''
+  forgotErrorKind.value = ''
+  const email = forgotForm.email.trim()
+  if (!EMAIL_RE.test(email)) {
+    forgotErrorKind.value = 'other'
+    forgotError.value = '请先填写注册时使用的邮箱地址，验证码会发送到该邮箱。'
+    return
+  }
+  if (sendingCode.value || countdown.value > 0) return
+  sendingCode.value = true
+  try {
+    const message = await sendCodeApi(email, 'reset')
+    codeSent.value = true
+    startCountdown(60)
+    ElMessage.success(message)
+  } catch (e: unknown) {
+    const kind = classifyError(e)
+    forgotErrorKind.value = kind
+    forgotError.value = friendlyError(e, kind)
   } finally {
     sendingCode.value = false
   }
@@ -128,8 +171,9 @@ async function submitRegister() {
     ElMessage.warning('请填写有效的邮箱地址')
     return
   }
-  if (registerForm.password.length < 6) {
-    ElMessage.warning('密码至少 6 位')
+  const pwdError = validatePassword(registerForm.password)
+  if (pwdError) {
+    ElMessage.warning(pwdError)
     return
   }
   if (registerForm.password !== registerForm.confirm) {
@@ -151,12 +195,53 @@ async function submitRegister() {
   }
 }
 
-function switchMode(next: 'login' | 'register') {
+async function submitForgot() {
+  forgotError.value = ''
+  forgotErrorKind.value = ''
+  const email = forgotForm.email.trim()
+  if (!EMAIL_RE.test(email)) {
+    ElMessage.warning('请填写有效的邮箱地址')
+    return
+  }
+  if (!/^\d{6}$/.test(forgotForm.code.trim())) {
+    ElMessage.warning('请输入 6 位邮箱验证码')
+    return
+  }
+  const pwdError = validatePassword(forgotForm.password)
+  if (pwdError) {
+    ElMessage.warning(pwdError)
+    return
+  }
+  if (forgotForm.password !== forgotForm.confirm) {
+    ElMessage.warning('两次输入的密码不一致')
+    return
+  }
+  try {
+    const message = await auth.resetPassword(email, forgotForm.code.trim(), forgotForm.password)
+    ElMessage.success(message || '密码已重置，请使用新密码登录')
+    // 重置成功后回登录态并清空表单：用户手里只有新密码，回登录页是最自然的下一步
+    mode.value = 'login'
+    loginForm.username = ''
+    loginForm.password = ''
+    forgotForm.email = ''
+    forgotForm.code = ''
+    forgotForm.password = ''
+    forgotForm.confirm = ''
+  } catch (e: unknown) {
+    const kind = classifyError(e)
+    forgotErrorKind.value = kind
+    forgotError.value = friendlyError(e, kind)
+  }
+}
+
+function switchMode(next: 'login' | 'register' | 'forgot') {
   mode.value = next
   loginError.value = ''
   loginErrorKind.value = ''
   registerError.value = ''
   registerErrorKind.value = ''
+  forgotError.value = ''
+  forgotErrorKind.value = ''
 }
 
 onMounted(async () => {
@@ -215,7 +300,7 @@ const features = [
       <main class="login-form-panel">
         <div class="form-wrapper">
           <div class="form-header">
-            <h2>{{ mode === 'login' ? '登录系统' : '创建账号' }}</h2>
+            <h2>{{ mode === 'login' ? '登录系统' : mode === 'register' ? '创建账号' : '找回密码' }}</h2>
             <p>临床辅助诊断平台 · JWT 安全鉴权</p>
           </div>
 
@@ -240,18 +325,18 @@ const features = [
             </div>
             <div class="field">
               <label>密码</label>
-              <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" size="large" show-password autocomplete="current-password" @keyup.enter="submitLogin" />
+              <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" size="large" autocomplete="current-password" @keyup.enter="submitLogin" />
             </div>
-            <p class="forgot-hint">
-              <strong>忘记密码？</strong>
-              当前版本未开放自助重置密码，请联系系统管理员处理。
+            <p class="forgot-row">
+              <button type="button" class="link-btn" @click="switchMode('forgot')">忘记密码？</button>
+              <span class="forgot-note">通过注册邮箱验证身份后重置密码</span>
             </p>
             <el-button type="primary" class="submit-btn" size="large" :loading="auth.loading" native-type="submit">
               登录系统
             </el-button>
           </form>
 
-          <form v-else class="auth-form" @submit.prevent="submitRegister">
+          <form v-else-if="mode === 'register'" class="auth-form" @submit.prevent="submitRegister">
             <div v-if="registerError" class="auth-error" role="alert">
               <strong class="auth-error-title">
                 {{ registerErrorKind === 'network' ? '无法连接服务端' : '注册失败' }}
@@ -291,19 +376,75 @@ const features = [
             </div>
             <div class="field">
               <label>密码</label>
-              <el-input v-model="registerForm.password" type="password" placeholder="至少 6 位" size="large" show-password autocomplete="new-password" />
+              <el-input v-model="registerForm.password" type="password" placeholder="至少 6 位，含大小写字母与特殊字符" size="large" autocomplete="new-password" />
             </div>
             <div class="field">
               <label>确认密码</label>
-              <el-input v-model="registerForm.confirm" type="password" placeholder="再次输入密码" size="large" show-password autocomplete="new-password" @keyup.enter="submitRegister" />
+              <el-input v-model="registerForm.confirm" type="password" placeholder="再次输入密码" size="large" autocomplete="new-password" @keyup.enter="submitRegister" />
             </div>
             <el-button type="primary" class="submit-btn" size="large" :loading="auth.loading" native-type="submit">
               注册并登录
             </el-button>
           </form>
 
+          <form v-else class="auth-form" @submit.prevent="submitForgot">
+            <div v-if="forgotError" class="auth-error" role="alert">
+              <strong class="auth-error-title">
+                {{ forgotErrorKind === 'network' ? '无法连接服务端' : '重置失败' }}
+              </strong>
+              <span class="auth-error-text">{{ forgotError }}</span>
+              <span v-if="forgotErrorKind === 'network'" class="auth-error-hint">
+                当前服务端地址：{{ serverLabel }}。请确认后端已启动且网络可达，然后重试。
+              </span>
+            </div>
+            <div class="field">
+              <label>注册邮箱</label>
+              <el-input v-model="forgotForm.email" placeholder="example@hospital.org" size="large" clearable autocomplete="email" />
+            </div>
+            <div class="field">
+              <label>邮箱验证码</label>
+              <div class="code-row">
+                <el-input
+                  v-model="forgotForm.code"
+                  placeholder="6 位验证码"
+                  size="large"
+                  maxlength="6"
+                  inputmode="numeric"
+                  autocomplete="one-time-code"
+                />
+                <el-button
+                  class="code-btn"
+                  size="large"
+                  :loading="sendingCode"
+                  :disabled="countdown > 0"
+                  @click="sendForgotCode"
+                >
+                  {{ countdown > 0 ? `${countdown}s 后重发` : codeSent ? '重新发送' : '发送验证码' }}
+                </el-button>
+              </div>
+              <p class="field-hint">验证码 5 分钟内有效；同一邮箱 60 秒内只能发送一次。</p>
+            </div>
+            <div class="field">
+              <label>新密码</label>
+              <el-input v-model="forgotForm.password" type="password" placeholder="至少 6 位，含大小写字母与特殊字符" size="large" autocomplete="new-password" />
+            </div>
+            <div class="field">
+              <label>确认新密码</label>
+              <el-input v-model="forgotForm.confirm" type="password" placeholder="再次输入新密码" size="large" autocomplete="new-password" @keyup.enter="submitForgot" />
+            </div>
+            <el-button type="primary" class="submit-btn" size="large" :loading="auth.loading" native-type="submit">
+              重置密码
+            </el-button>
+            <p class="form-note">
+              老账户（未绑定邮箱时注册的账号）无法通过本页重置，请联系系统管理员。
+            </p>
+            <p class="form-note">
+              <button type="button" class="link-btn" @click="switchMode('login')">返回登录</button>
+            </p>
+          </form>
+
           <p class="server-line">
-            <span class="server-dot" :class="{ 'is-offline': loginErrorKind === 'network' }" aria-hidden="true" />
+            <span class="server-dot" :class="{ 'is-offline': (mode === 'forgot' ? forgotErrorKind : loginErrorKind) === 'network' }" aria-hidden="true" />
             服务端 {{ serverLabel }}
           </p>
         </div>
@@ -516,16 +657,33 @@ const features = [
   color: var(--text-secondary);
 }
 
-.forgot-hint {
+.forgot-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  margin: 0;
+  font-size: var(--font-xs);
+}
+
+.forgot-note { color: var(--text-secondary); }
+
+.link-btn {
+  padding: 0;
+  font-size: var(--font-xs);
+  font-weight: 600;
+  color: var(--color-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+.link-btn:hover { text-decoration: underline; }
+
+.form-note {
   margin: 0;
   font-size: var(--font-xs);
   line-height: 1.6;
   color: var(--text-secondary);
-}
-
-.forgot-hint strong {
-  color: var(--text-primary);
-  font-weight: 600;
 }
 
 .field-hint {

@@ -16,30 +16,40 @@ import os
 
 from pathlib import Path
 
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse
 
 from backup_db import backup_database
 from config import DATABASE_PATH
 from main import app  # 复用现有后端应用
 
+# 隧道/移动网络下 1.5 MB 的未压缩入口包很容易传不完；这里给所有响应加 gzip。
+# 浏览器只在 Accept-Encoding 含 gzip 时才压缩，图片/视频等已是压缩格式的响应基本不受影响。
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
+
 # 前端打包产物目录：backend 的上级目录下的 dist/
 DIST = (Path(__file__).resolve().parent.parent / "dist").resolve()
 INDEX = DIST / "index.html"
+
+# 带内容哈希的 assets 可以长期缓存；index.html 必须每次回源，避免继续引用旧 hash。
+IMMUTABLE_CACHE = {"Cache-Control": "public, max-age=31536000, immutable"}
+REVALIDATE_CACHE = {"Cache-Control": "no-cache"}
 
 
 @app.get("/{full_path:path}", include_in_schema=False)
 async def serve_spa(full_path: str):
     # 根路径或显式 index.html -> 首页
     if full_path in ("", "index.html"):
-        return FileResponse(INDEX)
+        return FileResponse(INDEX, headers=REVALIDATE_CACHE)
 
     # 真实静态文件（如 /assets/xxx.js、/favicon.svg、/icons.svg）
     candidate = (DIST / full_path).resolve()
     if candidate.is_file() and candidate.is_relative_to(DIST):
-        return FileResponse(candidate)
+        headers = IMMUTABLE_CACHE if full_path.startswith("assets/") else REVALIDATE_CACHE
+        return FileResponse(candidate, headers=headers)
 
     # 前端 history 路由统一回退到首页
-    return FileResponse(INDEX)
+    return FileResponse(INDEX, headers=REVALIDATE_CACHE)
 
 
 if __name__ == "__main__":
